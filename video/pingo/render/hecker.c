@@ -1,206 +1,80 @@
+/*----------------------------------------------------------------------------
+
+Texture Test Program - a cheesy test harness for texture mapping
+
+by Chris Hecker for my Game Developer Magazine articles.  See my homepage
+for more information.
+
+NOTE: This is a hacked test program, not a nice example of Windows programming.
+The texture mappers are the only part of this you should look at.
+
+This material is Copyright 1997 Chris Hecker, All Rights Reserved.
+It's for you to read and learn from, not to put in your own articles
+or books or on your website, etc.  Thank you.
+
+Chris Hecker
+checker@d6.com
+http://www.d6.com/users/checker
+
+*/
+
+/******** Perspective texture mapper *********/
+
+#include <math.h>
+#include <assert.h>
 #include "hecker.h"
 
-// Initialize gradients structure
-void InitializeGradients(Gradients *gradients, const Vertex *pVertices) {
-    int Counter;
-    float OneOverdX = 1 / (((pVertices[1].position.x - pVertices[2].position.x) *
-                           (pVertices[0].position.y - pVertices[2].position.y)) -
-                          ((pVertices[0].position.x - pVertices[2].position.x) *
-                           (pVertices[1].position.y - pVertices[2].position.y)));
-    float OneOverdY = -OneOverdX;
+/******** TextureMapTriangle **********/
 
-    for (Counter = 0; Counter < 3; Counter++) {
-        float OneOverZ = 1 / pVertices[Counter].position.z;
-        gradients->aOneOverZ[Counter] = OneOverZ;
-        gradients->aUOverZ[Counter] = pVertices[Counter].uv.x * OneOverZ;
-        gradients->aVOverZ[Counter] = pVertices[Counter].uv.y * OneOverZ;
-    }
-
-    gradients->dOneOverZdX = OneOverdX * (((gradients->aOneOverZ[1] - gradients->aOneOverZ[2]) *
-                                           (pVertices[0].position.y - pVertices[2].position.y)) -
-                                          ((gradients->aOneOverZ[0] - gradients->aOneOverZ[2]) *
-                                           (pVertices[1].position.y - pVertices[2].position.y)));
-    gradients->dOneOverZdY = OneOverdY * (((gradients->aOneOverZ[1] - gradients->aOneOverZ[2]) *
-                                           (pVertices[0].position.x - pVertices[2].position.x)) -
-                                          ((gradients->aOneOverZ[0] - gradients->aOneOverZ[2]) *
-                                           (pVertices[1].position.x - pVertices[2].position.x)));
-
-    gradients->dUOverZdX = OneOverdX * (((gradients->aUOverZ[1] - gradients->aUOverZ[2]) *
-                                         (pVertices[0].position.y - pVertices[2].position.y)) -
-                                        ((gradients->aUOverZ[0] - gradients->aUOverZ[2]) *
-                                         (pVertices[1].position.y - pVertices[2].position.y)));
-    gradients->dUOverZdY = OneOverdY * (((gradients->aUOverZ[1] - gradients->aUOverZ[2]) *
-                                         (pVertices[0].position.x - pVertices[2].position.x)) -
-                                        ((gradients->aUOverZ[0] - gradients->aUOverZ[2]) *
-                                         (pVertices[1].position.x - pVertices[2].position.x)));
-
-    gradients->dVOverZdX = OneOverdX * (((gradients->aVOverZ[1] - gradients->aVOverZ[2]) *
-                                         (pVertices[0].position.y - pVertices[2].position.y)) -
-                                        ((gradients->aVOverZ[0] - gradients->aVOverZ[2]) *
-                                         (pVertices[1].position.y - pVertices[2].position.y)));
-    gradients->dVOverZdY = OneOverdY * (((gradients->aVOverZ[1] - gradients->aVOverZ[2]) *
-                                         (pVertices[0].position.x - pVertices[2].position.x)) -
-                                        ((gradients->aVOverZ[0] - gradients->aVOverZ[2]) *
-                                         (pVertices[1].position.x - pVertices[2].position.x)));
-}
-
-// Initialize edge structure
-void InitializeEdge(Edge *edge, const Gradients *gradients, const Vertex *pVertices, int Top, int Bottom) {
-    edge->y = (int)ceil(pVertices[Top].position.y);
-    int YEnd = (int)ceil(pVertices[Bottom].position.y);
-    float YPrestep = edge->y - pVertices[Top].position.y;
-    float RealHeight = pVertices[Bottom].position.y - pVertices[Top].position.y;
-    float RealWidth = pVertices[Bottom].position.x - pVertices[Top].position.x;
-
-    edge->x = ((RealWidth * YPrestep) / RealHeight) + pVertices[Top].position.x;
-    edge->XStep = RealWidth / RealHeight;
-
-    float XPrestep = edge->x - pVertices[Top].position.x;
-
-    edge->OneOverZ = gradients->aOneOverZ[Top] +
-                     YPrestep * gradients->dOneOverZdY +
-                     XPrestep * gradients->dOneOverZdX;
-    edge->OneOverZStep = edge->XStep * gradients->dOneOverZdX + gradients->dOneOverZdY;
-
-    edge->UOverZ = gradients->aUOverZ[Top] +
-                   YPrestep * gradients->dUOverZdY +
-                   XPrestep * gradients->dUOverZdX;
-    edge->UOverZStep = edge->XStep * gradients->dUOverZdX + gradients->dUOverZdY;
-
-    edge->VOverZ = gradients->aVOverZ[Top] +
-                   YPrestep * gradients->dVOverZdY +
-                   XPrestep * gradients->dVOverZdX;
-    edge->VOverZStep = edge->XStep * gradients->dVOverZdX + gradients->dVOverZdY;
-
-    edge->Height = YEnd - edge->y;
-}
-
-// Step function for Edge
-void EdgeStep(Edge *edge) {
-    edge->x += edge->XStep;
-    edge->y++;
-    edge->Height--;
-
-    edge->OneOverZ += edge->OneOverZStep;
-    edge->UOverZ += edge->UOverZStep;
-    edge->VOverZ += edge->VOverZStep;
-}
-
-// DrawScanLine function
-void DrawScanLine(Texture *pDest, const Gradients *gradients, const Edge *pLeft, const Edge *pRight, const Texture *pTexture) {
-    int XStart = (int)ceil(pLeft->x);
-    float XPrestep = XStart - pLeft->x;
-    Pixel *pDestPixel = pDest->pixels + ((pLeft->y) * pDest->size.x) + XStart;
-    int Width = (int)ceil(pRight->x) - XStart;
-
-    // Interpolated values at the start of the scanline
-    float OneOverZ = pLeft->OneOverZ + XPrestep * gradients->dOneOverZdX;
-    float UOverZ = pLeft->UOverZ + XPrestep * gradients->dUOverZdX;
-    float VOverZ = pLeft->VOverZ + XPrestep * gradients->dVOverZdX;
-
-    if (Width > 0) {
-        while (Width--) {
-            // Interpolated Z value
-            float z = 1 / OneOverZ;
-
-            // Interpolated texture coordinates
-            float u = UOverZ * z;
-            float v = VOverZ * z;
-
-            // Ensure texture coordinates are within bounds [0, 1]
-            u = fmodf(u, 1.0f);
-            if (u < 0) u += 1.0f;
-            v = fmodf(v, 1.0f);
-            if (v < 0) v += 1.0f;
-
-            // Sample the texture at interpolated (u, v) coordinates
-            int tex_x = (int)(u * pTexture->size.x);
-            int tex_y = (int)(v * pTexture->size.y);
-            Pixel tex_color = pTexture->pixels[tex_y * pTexture->size.y + tex_x];
-
-            // Debug output for each pixel
-            // printf("Pixel (%d, %d): u=%f, v=%f, Texture Pixel = (%d, %d, %d, %d)\n", XStart + Width, pLeft->y, u, v, tex_color.r, tex_color.g, tex_color.b, tex_color.a);
-
-            // Draw the pixel
-            *pDestPixel = tex_color;
-            pDestPixel++;
-
-            // Increment interpolated values for next pixel
-            OneOverZ += gradients->dOneOverZdX;
-            UOverZ += gradients->dUOverZdX;
-            VOverZ += gradients->dVOverZdX;
-        }
-    }
-}
-
-// TextureMapTriangle function with additional debug output
-void TextureMapTriangle(Texture *pDest, const Vertex *pVertices, Texture *pTexture) {
-    int Top, Middle, Bottom;
-    int MiddleCompare, BottomCompare;
-    float Y0 = pVertices[0].position.y;
-    float Y1 = pVertices[1].position.y;
-    float Y2 = pVertices[2].position.y;
-
-    // Debug: Print initial vertex positions
-    printf("\nInitial Vertex Positions:\n");
-    for (int i = 0; i < 3; i++) {
-        // printf("V%d: (%f, %f, %f)\n", i, pVertices[i].position.x, pVertices[i].position.y, pVertices[i].position.z);
-    }
+void TextureMapTriangle_suba_fx_fl(const dib_info* Dest, const POINT3D* pVertices, const dib_info* Texture) {
+    int Top, Middle, Bottom, MiddleForCompare, BottomForCompare;
+    fixed28_4 Y0 = pVertices[0].fxfl.Y, Y1 = pVertices[1].fxfl.Y, Y2 = pVertices[2].fxfl.Y;
 
     // Sort vertices in y
     if (Y0 < Y1) {
         if (Y2 < Y0) {
             Top = 2; Middle = 0; Bottom = 1;
-            MiddleCompare = 0; BottomCompare = 1;
+            MiddleForCompare = 0; BottomForCompare = 1;
         } else {
             Top = 0;
             if (Y1 < Y2) {
                 Middle = 1; Bottom = 2;
-                MiddleCompare = 1; BottomCompare = 2;
+                MiddleForCompare = 1; BottomForCompare = 2;
             } else {
                 Middle = 2; Bottom = 1;
-                MiddleCompare = 2; BottomCompare = 1;
+                MiddleForCompare = 2; BottomForCompare = 1;
             }
         }
     } else {
         if (Y2 < Y1) {
             Top = 2; Middle = 1; Bottom = 0;
-            MiddleCompare = 1; BottomCompare = 0;
+            MiddleForCompare = 1; BottomForCompare = 0;
         } else {
             Top = 1;
             if (Y0 < Y2) {
                 Middle = 0; Bottom = 2;
-                MiddleCompare = 0; BottomCompare = 2;
+                MiddleForCompare = 3; BottomForCompare = 2;
             } else {
                 Middle = 2; Bottom = 0;
-                MiddleCompare = 2; BottomCompare = 0;
+                MiddleForCompare = 2; BottomForCompare = 3;
             }
         }
     }
 
-    // Debug: Print sorted vertex indices
-    printf("Sorted Vertices: Top=%d, Middle=%d, Bottom=%d\n", Top, Middle, Bottom);
+    gradients_fx_fl_a Gradients;
+    InitGradients_fx_fl_a(&Gradients, pVertices);
+    edge_fx_fl_a TopToBottom, TopToMiddle, MiddleToBottom;
 
-    Gradients gradients;
-    InitializeGradients(&gradients, pVertices);
-    printf("Gradients Initialized: dOneOverZdX=%f, dOneOverZdY=%f, dUOverZdX=%f, dUOverZdY=%f\n", gradients.dOneOverZdX, gradients.dOneOverZdY, gradients.dUOverZdX, gradients.dUOverZdY);
+    InitEdge_fx_fl_a(&TopToBottom, &Gradients, pVertices, Top, Bottom);
+    InitEdge_fx_fl_a(&TopToMiddle, &Gradients, pVertices, Top, Middle);
+    InitEdge_fx_fl_a(&MiddleToBottom, &Gradients, pVertices, Middle, Bottom);
 
-    Edge TopToBottom, TopToMiddle, MiddleToBottom;
-    InitializeEdge(&TopToBottom, &gradients, pVertices, Top, Bottom);
-    InitializeEdge(&TopToMiddle, &gradients, pVertices, Top, Middle);
-    InitializeEdge(&MiddleToBottom, &gradients, pVertices, Middle, Bottom);
-
-    // Debug: Print edge initialization data
-    printf("Edges Initialized:\n");
-    printf("TopToBottom: y=%d, Height=%d, XStep=%f\n", TopToBottom.y, TopToBottom.Height, TopToBottom.XStep);
-    printf("TopToMiddle: y=%d, Height=%d, XStep=%f\n", TopToMiddle.y, TopToMiddle.Height, TopToMiddle.XStep);
-    printf("MiddleToBottom: y=%d, Height=%d, XStep=%f\n", MiddleToBottom.y, MiddleToBottom.Height, MiddleToBottom.XStep);
-
-    Edge *pLeft, *pRight;
+    edge_fx_fl_a* pLeft;
+    edge_fx_fl_a* pRight;
     int MiddleIsLeft;
 
-    // The triangle is clockwise, so if bottom > middle then middle is right
-    if (BottomCompare > MiddleCompare) {
+    // If bottom > middle, middle is right
+    if (BottomForCompare > MiddleForCompare) {
         MiddleIsLeft = 0;
         pLeft = &TopToBottom; pRight = &TopToMiddle;
     } else {
@@ -208,38 +82,262 @@ void TextureMapTriangle(Texture *pDest, const Vertex *pVertices, Texture *pTextu
         pLeft = &TopToMiddle; pRight = &TopToBottom;
     }
 
-    // Debug: Print which side is left and which is right
-    printf("MiddleIsLeft: %d\n", MiddleIsLeft);
-
     int Height = TopToMiddle.Height;
-    if (Height > 0) {
-        printf("Rendering top half from y=%d for %d scanlines\n", TopToMiddle.y, Height);
-    } else {
-        printf("Skipping top half, no scanlines to draw.\n");
-    }
-
-    while (Height-- > 0) {
-        DrawScanLine(pDest, &gradients, pLeft, pRight, pTexture);
-        EdgeStep(pLeft);
-        EdgeStep(pRight);
+    while (Height--) {
+        DrawScanLine_suba(Dest, &Gradients, pLeft, pRight, Texture);
+        StepEdge_fx_fl_a(&TopToMiddle);
+        StepEdge_fx_fl_a(&TopToBottom);
     }
 
     Height = MiddleToBottom.Height;
-    if (Height > 0) {
-        printf("Rendering bottom half from y=%d for %d scanlines\n", MiddleToBottom.y, Height);
-    } else {
-        printf("Skipping bottom half, no scanlines to draw.\n");
-    }
-
     if (MiddleIsLeft) {
         pLeft = &MiddleToBottom; pRight = &TopToBottom;
     } else {
         pLeft = &TopToBottom; pRight = &MiddleToBottom;
     }
 
-    while (Height-- > 0) {
-        DrawScanLine(pDest, &gradients, pLeft, pRight, pTexture);
-        EdgeStep(pLeft);
-        EdgeStep(pRight);
+    while (Height--) {
+        DrawScanLine_suba(Dest, &Gradients, pLeft, pRight, Texture);
+        StepEdge_fx_fl_a(&MiddleToBottom);
+        StepEdge_fx_fl_a(&TopToBottom);
     }
+}
+
+/********** gradients_fx_fl_a initializer **********/
+
+void InitGradients_fx_fl_a(gradients_fx_fl_a* Gradients, const POINT3D* pVertices) {
+    int Counter;
+
+    fixed28_4 X1Y0 = Fixed28_4Mul(pVertices[1].fxfl.X - pVertices[2].fxfl.X, pVertices[0].fxfl.Y - pVertices[2].fxfl.Y);
+    fixed28_4 X0Y1 = Fixed28_4Mul(pVertices[0].fxfl.X - pVertices[2].fxfl.X, pVertices[1].fxfl.Y - pVertices[2].fxfl.Y);
+    float OneOverdX = 1.0f / Fixed28_4ToFloat(X1Y0 - X0Y1);
+    float OneOverdY = -OneOverdX;
+
+    for (Counter = 0; Counter < 3; Counter++) {
+        float OneOverZ = 1 / pVertices[Counter].fxfl.Z;
+        Gradients->aOneOverZ[Counter] = OneOverZ;
+        Gradients->aUOverZ[Counter] = pVertices[Counter].fxfl.U * OneOverZ;
+        Gradients->aVOverZ[Counter] = pVertices[Counter].fxfl.V * OneOverZ;
+    }
+
+    Gradients->dOneOverZdX = OneOverdX * (((Gradients->aOneOverZ[1] - Gradients->aOneOverZ[2]) * Fixed28_4ToFloat(pVertices[0].fxfl.Y - pVertices[2].fxfl.Y)) -
+                                          ((Gradients->aOneOverZ[0] - Gradients->aOneOverZ[2]) * Fixed28_4ToFloat(pVertices[1].fxfl.Y - pVertices[2].fxfl.Y)));
+    Gradients->dOneOverZdY = OneOverdY * (((Gradients->aOneOverZ[1] - Gradients->aOneOverZ[2]) * Fixed28_4ToFloat(pVertices[0].fxfl.X - pVertices[2].fxfl.X)) -
+                                          ((Gradients->aOneOverZ[0] - Gradients->aOneOverZ[2]) * Fixed28_4ToFloat(pVertices[1].fxfl.X - pVertices[2].fxfl.X)));
+
+    Gradients->dUOverZdX = OneOverdX * (((Gradients->aUOverZ[1] - Gradients->aUOverZ[2]) * Fixed28_4ToFloat(pVertices[0].fxfl.Y - pVertices[2].fxfl.Y)) -
+                                        ((Gradients->aUOverZ[0] - Gradients->aUOverZ[2]) * Fixed28_4ToFloat(pVertices[1].fxfl.Y - pVertices[2].fxfl.Y)));
+    Gradients->dUOverZdY = OneOverdY * (((Gradients->aUOverZ[1] - Gradients->aUOverZ[2]) * Fixed28_4ToFloat(pVertices[0].fxfl.X - pVertices[2].fxfl.X)) -
+                                        ((Gradients->aUOverZ[0] - Gradients->aUOverZ[2]) * Fixed28_4ToFloat(pVertices[1].fxfl.X - pVertices[2].fxfl.X)));
+
+    Gradients->dVOverZdX = OneOverdX * (((Gradients->aVOverZ[1] - Gradients->aVOverZ[2]) * Fixed28_4ToFloat(pVertices[0].fxfl.Y - pVertices[2].fxfl.Y)) -
+                                        ((Gradients->aVOverZ[0] - Gradients->aVOverZ[2]) * Fixed28_4ToFloat(pVertices[1].fxfl.Y - pVertices[2].fxfl.Y)));
+    Gradients->dVOverZdY = OneOverdY * (((Gradients->aVOverZ[1] - Gradients->aVOverZ[2]) * Fixed28_4ToFloat(pVertices[0].fxfl.X - pVertices[2].fxfl.X)) -
+                                        ((Gradients->aVOverZ[0] - Gradients->aVOverZ[2]) * Fixed28_4ToFloat(pVertices[1].fxfl.X - pVertices[2].fxfl.X)));
+
+    // Set up rounding modifiers
+    // Originally platform-specific modifiers
+    // fixed16_16 Half = 0x8000;          // Windows-specific
+    // fixed16_16 PosModifier = Half;     // Windows-specific
+    // fixed16_16 NegModifier = Half - 1; // Windows-specific
+
+    fixed16_16 Half = (fixed16_16)(1 << 15); // Generic
+    fixed16_16 PosModifier = Half;            // Generic
+    fixed16_16 NegModifier = Half - 1;        // Generic
+
+    float dUdXIndicator = Gradients->dUOverZdX * Gradients->aOneOverZ[0] - Gradients->aUOverZ[0] * Gradients->dOneOverZdX;
+
+    if (dUdXIndicator > 0) {
+        Gradients->dUdXModifier = PosModifier;
+    } else if (dUdXIndicator < 0) {
+        Gradients->dUdXModifier = NegModifier;
+    } else {
+        float dUdYIndicator = Gradients->dUOverZdY * Gradients->aOneOverZ[0] - Gradients->aUOverZ[0] * Gradients->dOneOverZdY;
+
+        if (dUdYIndicator >= 0) {
+            Gradients->dUdXModifier = PosModifier;
+        } else {
+            Gradients->dUdXModifier = NegModifier;
+        }
+    }
+
+    float dVdXIndicator = Gradients->dVOverZdX * Gradients->aOneOverZ[0] - Gradients->aVOverZ[0] * Gradients->dOneOverZdX;
+
+    if (dVdXIndicator > 0) {
+        Gradients->dVdXModifier = PosModifier;
+    } else if (dVdXIndicator < 0) {
+        Gradients->dVdXModifier = NegModifier;
+    } else {
+        float dVdYIndicator = Gradients->dVOverZdY * Gradients->aOneOverZ[0] - Gradients->aVOverZ[0] * Gradients->dOneOverZdY;
+
+        if (dVdYIndicator >= 0) {
+            Gradients->dVdXModifier = PosModifier;
+        } else {
+            Gradients->dVdXModifier = NegModifier;
+        }
+    }
+}
+
+/********** edge_fx_fl_a initializer **********/
+
+void InitEdge_fx_fl_a(edge_fx_fl_a* Edge, const gradients_fx_fl_a* Gradients, const POINT3D* pVertices, int Top, int Bottom) {
+    Edge->Y = Ceil28_4(pVertices[Top].fxfl.Y);
+    int YEnd = Ceil28_4(pVertices[Bottom].fxfl.Y);
+    Edge->Height = YEnd - Edge->Y;
+
+    if (Edge->Height) {
+        int dN = pVertices[Bottom].fxfl.Y - pVertices[Top].fxfl.Y;
+        int dM = pVertices[Bottom].fxfl.X - pVertices[Top].fxfl.X;
+
+        int InitialNumerator = dM * 16 * Edge->Y - dM * pVertices[Top].fxfl.Y + dN * pVertices[Top].fxfl.X - 1 + dN * 16;
+        FloorDivMod(InitialNumerator, dN * 16, &Edge->X, &Edge->ErrorTerm);  // Pass addresses
+        FloorDivMod(dM * 16, dN * 16, &Edge->XStep, &Edge->Numerator);       // Pass addresses
+        Edge->Denominator = dN * 16;
+
+        float YPrestep = Fixed28_4ToFloat(Edge->Y * 16 - pVertices[Top].fxfl.Y);
+        float XPrestep = Fixed28_4ToFloat(Edge->X * 16 - pVertices[Top].fxfl.X);
+
+        Edge->OneOverZ = Gradients->aOneOverZ[Top] + YPrestep * Gradients->dOneOverZdY + XPrestep * Gradients->dOneOverZdX;
+        Edge->OneOverZStep = Edge->XStep * Gradients->dOneOverZdX + Gradients->dOneOverZdY;
+        Edge->OneOverZStepExtra = Gradients->dOneOverZdX;
+
+        Edge->UOverZ = Gradients->aUOverZ[Top] + YPrestep * Gradients->dUOverZdY + XPrestep * Gradients->dUOverZdX;
+        Edge->UOverZStep = Edge->XStep * Gradients->dUOverZdX + Gradients->dUOverZdY;
+        Edge->UOverZStepExtra = Gradients->dUOverZdX;
+
+        Edge->VOverZ = Gradients->aVOverZ[Top] + YPrestep * Gradients->dVOverZdY + XPrestep * Gradients->dVOverZdX;
+        Edge->VOverZStep = Edge->XStep * Gradients->dVOverZdX + Gradients->dVOverZdY;
+        Edge->VOverZStepExtra = Gradients->dVOverZdX;
+    }
+}
+
+/********** Edge step function **********/
+
+int StepEdge_fx_fl_a(edge_fx_fl_a* Edge) {
+    Edge->X += Edge->XStep;
+    Edge->Y++;
+    Edge->Height--;
+
+    Edge->UOverZ += Edge->UOverZStep;
+    Edge->VOverZ += Edge->VOverZStep;
+    Edge->OneOverZ += Edge->OneOverZStep;
+
+    Edge->ErrorTerm += Edge->Numerator;
+    if (Edge->ErrorTerm >= Edge->Denominator) {
+        Edge->X++;
+        Edge->ErrorTerm -= Edge->Denominator;
+        Edge->OneOverZ += Edge->OneOverZStepExtra;
+        Edge->UOverZ += Edge->UOverZStepExtra;
+        Edge->VOverZ += Edge->VOverZStepExtra;
+    }
+    return Edge->Height;
+}
+
+/********** DrawScanLine ************/
+
+void DrawScanLine_suba(const dib_info* Dest, const gradients_fx_fl_a* Gradients, edge_fx_fl_a* pLeft, edge_fx_fl_a* pRight, const dib_info* Texture) {
+    int XStart = pLeft->X;
+    int Width = pRight->X - XStart;
+
+    unsigned char* pDestBits = Dest->pBits;
+    unsigned char const* pTextureBits = Texture->pBits;
+    pDestBits += pLeft->Y * Dest->DeltaScan + XStart;
+    int TextureDeltaScan = Texture->DeltaScan;
+
+    int const AffineLength = 8;
+
+    float OneOverZLeft = pLeft->OneOverZ;
+    float UOverZLeft = pLeft->UOverZ;
+    float VOverZLeft = pLeft->VOverZ;
+
+    float dOneOverZdXAff = Gradients->dOneOverZdX * AffineLength;
+    float dUOverZdXAff = Gradients->dUOverZdX * AffineLength;
+    float dVOverZdXAff = Gradients->dVOverZdX * AffineLength;
+
+    float OneOverZRight = OneOverZLeft + dOneOverZdXAff;
+    float UOverZRight = UOverZLeft + dUOverZdXAff;
+    float VOverZRight = VOverZLeft + dVOverZdXAff;
+
+    float ZLeft = 1 / OneOverZLeft;
+    float ULeft = ZLeft * UOverZLeft;
+    float VLeft = ZLeft * VOverZLeft;
+
+    float ZRight, URight, VRight;
+    fixed16_16 U, V, DeltaU, DeltaV;
+
+    if (Width > 0) {
+        int Subdivisions = Width / AffineLength;
+        int WidthModLength = Width % AffineLength;
+
+        if (!WidthModLength) {
+            Subdivisions--;
+            WidthModLength = AffineLength;
+        }
+
+        while (Subdivisions-- > 0) {
+            ZRight = 1 / OneOverZRight;
+            URight = ZRight * UOverZRight;
+            VRight = ZRight * VOverZRight;
+
+            U = FloatToFixed16_16(ULeft) + Gradients->dUdXModifier;
+            V = FloatToFixed16_16(VLeft) + Gradients->dVdXModifier;
+            DeltaU = FloatToFixed16_16(URight - ULeft) / AffineLength;
+            DeltaV = FloatToFixed16_16(VRight - VLeft) / AffineLength;
+
+            for (int Counter = 0; Counter < AffineLength; Counter++) {
+                int UInt = U >> 16;
+                int VInt = V >> 16;
+
+                *(pDestBits++) = *(pTextureBits + UInt + (VInt * TextureDeltaScan));
+
+                U += DeltaU;
+                V += DeltaV;
+            }
+
+            ZLeft = ZRight;
+            ULeft = URight;
+            VLeft = VRight;
+
+            OneOverZRight += dOneOverZdXAff;
+            UOverZRight += dUOverZdXAff;
+            VOverZRight += dVOverZdXAff;
+        }
+
+        if (WidthModLength) {
+            ZRight = 1 / (pRight->OneOverZ - Gradients->dOneOverZdX);
+            URight = ZRight * (pRight->UOverZ - Gradients->dUOverZdX);
+            VRight = ZRight * (pRight->VOverZ - Gradients->dVOverZdX);
+
+            U = FloatToFixed16_16(ULeft) + Gradients->dUdXModifier;
+            V = FloatToFixed16_16(VLeft) + Gradients->dVdXModifier;
+
+            if (--WidthModLength) {
+                DeltaU = FloatToFixed16_16(URight - ULeft) / WidthModLength;
+                DeltaV = FloatToFixed16_16(VRight - VLeft) / WidthModLength;
+            }
+
+            for (int Counter = 0; Counter <= WidthModLength; Counter++) {
+                int UInt = U >> 16;
+                int VInt = V >> 16;
+
+                *(pDestBits++) = *(pTextureBits + UInt + (VInt * TextureDeltaScan));
+
+                U += DeltaU;
+                V += DeltaV;
+            }
+        }
+    }
+}
+
+/* ----------------------------------------------------------------------------
+Additional Agon/Pingo-specific code 
+*/
+
+dib_info texture_to_dib_info(Texture *texture) {
+    dib_info info;
+    info.pBits = (unsigned char *)texture->pixels;
+    info.Width = texture->size.x;
+    info.Height = texture->size.y;
+    info.DeltaScan = texture->size.x;
+    return info;
 }

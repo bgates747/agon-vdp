@@ -25,6 +25,7 @@
 extern void show_pixel(float x, float y, uint8_t a, uint8_t b, uint8_t g, uint8_t r);
 #endif
 
+dib_info frameBufferDib;
 
 int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     printf("Initalizing Renderer\n");
@@ -37,6 +38,7 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     r->backEnd = backEnd;
 
     r->frameBuffer.size = size;
+    frameBufferDib = texture_to_dib_info(& r->frameBuffer);
     printf("Frame buffer initialized\n");
 
     int zsize = sizeof(PingoDepth) * size.x * size.y;
@@ -397,6 +399,12 @@ int renderObjectHecker(Mat4 object_transform, Renderer * r, Renderable ren) {
     Vec2f * tex_coords = o->textCoord;
     // printf("Texture coordinates: %p\n", tex_coords);
 
+    // Initialize dib texture if uv coordinates are available
+    dib_info dib_texture;
+    if (tex_coords) {
+        dib_texture = texture_to_dib_info(o->material->texture);
+    }
+
     // MODEL MATRIX
     Mat4 m = mat4MultiplyM( &o->transform, &object_transform );
     // printf("Model matrix\n");
@@ -457,20 +465,32 @@ int renderObjectHecker(Mat4 object_transform, Renderer * r, Renderable ren) {
         to_raster(scrSize, (Vec3f *)&c);
         // printf("Converted to raster space\n");
 
-        // Set up the Vertex structure for TextureMapTriangle
-        Vertex vertices[3];
-        vertices[0].position = *(Vec3f *)&a;
-        vertices[1].position = *(Vec3f *)&b;
-        vertices[2].position = *(Vec3f *)&c;
+        // Set up the POINT3D structure for TextureMapTriangle
+        POINT3D vertices[3];
 
+        // Assign position values to POINT3D (using fxfl type)
+        vertices[0].fxfl.X = FloatToFixed28_4(a.x);
+        vertices[0].fxfl.Y = FloatToFixed28_4(a.y);
+        vertices[0].fxfl.Z = a.z;
+        vertices[1].fxfl.X = FloatToFixed28_4(b.x);
+        vertices[1].fxfl.Y = FloatToFixed28_4(b.y);
+        vertices[1].fxfl.Z = b.z;
+        vertices[2].fxfl.X = FloatToFixed28_4(c.x);
+        vertices[2].fxfl.Y = FloatToFixed28_4(c.y);
+        vertices[2].fxfl.Z = c.z;
+
+        // Assign texture coordinates if available
         if (tex_coords) {
-            vertices[0].uv = tex_coords[o->tex_indices[i + 0]];
-            vertices[1].uv = tex_coords[o->tex_indices[i + 1]];
-            vertices[2].uv = tex_coords[o->tex_indices[i + 2]];
+            vertices[0].fxfl.U = tex_coords[o->tex_indices[i + 0]].x;
+            vertices[0].fxfl.V = tex_coords[o->tex_indices[i + 0]].y;
+            vertices[1].fxfl.U = tex_coords[o->tex_indices[i + 1]].x;
+            vertices[1].fxfl.V = tex_coords[o->tex_indices[i + 1]].y;
+            vertices[2].fxfl.U = tex_coords[o->tex_indices[i + 2]].x;
+            vertices[2].fxfl.V = tex_coords[o->tex_indices[i + 2]].y;
         }
 
-        // Call TextureMapTriangle to render the triangle without manual perspective correction
-        TextureMapTriangle(&r->frameBuffer, vertices, o->material->texture);
+        // Render the triangle
+        TextureMapTriangle_suba_fx_fl(&frameBufferDib, vertices, &dib_texture);
     }
 
     return 0;
