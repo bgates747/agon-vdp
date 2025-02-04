@@ -640,46 +640,46 @@ void sz_unsrt_o4(unsigned char *in, unsigned char *out, uint4 length, uint4 inde
 #include "qsort_u4.c"
 
 void sz_srt_BW(unsigned char *inout, uint4 length, uint4 *indexfirst)
-{	uint4 i, counts[256], counts1[256], *contextp, start;
+{   uint4 i, counts[256], counts1[256], *contextp, start;
 
-	for (i=0; i<256; i++)
-		counts[i] = 0;
-	for (i=0; i<length; i++)
-		counts[inout[i]]++;
-	counts1[0] = 0;
-	for (i=0; i<255; i++) 
-		counts1[i+1] = counts1[i] + counts[i];
-	
-	contextp = (uint4*) calloc(length, sizeof(uint4));
-	if (contextp == NULL)
-		sz_error(SZ_NOMEM_SORT);
+    for (i=0; i<256; i++)
+        counts[i] = 0;
+    for (i=0; i<length; i++)
+        counts[inout[i]]++;
+    counts1[0] = 0;
+    for (i=0; i<255; i++) 
+        counts1[i+1] = counts1[i] + counts[i];
+    
+    contextp = (uint4*) calloc(length, sizeof(uint4));
+    if (contextp == NULL)
+        sz_error(SZ_NOMEM_SORT);
 
-	for (i=0; i<length; i++)
-		contextp[counts1[inout[i]]++] = i;
+    for (i=0; i<length; i++)
+        contextp[counts1[inout[i]]++] = i;
 
-	start = 0;
-	for (i=0; i<256; i++)
-    {   if (verbosity&1) fputc((char)('0'+i%10),stderr);
+    start = 0;
+    for (i=0; i<256; i++)
+    {   
         if (counts[i])
-        {	qsort_u4(contextp+start, counts[i], inout, i==inout[0]?0:1);
-			if (i==inout[length-1]) // search for indexfirst
-			{	uint4 j=start;
+        {   qsort_u4(contextp+start, counts[i], inout, i==inout[0]?0:1);
+            if (i==inout[length-1]) // search for indexfirst
+            {   uint4 j=start;
                 while(contextp[j]!=(length-1))
                     j++;
-				*indexfirst = j;
-			}
+                *indexfirst = j;
+            }
             start += counts[i];
-		}
+        }
     }
 
-	contextp[*indexfirst] = 0;
-	for(i=0; i<length; i++)
-		contextp[i] = inout[contextp[i]+1];
-	contextp[*indexfirst] = inout[0];
-	for(i=0; i<length; i++)
-		inout[i] = contextp[i];
+    contextp[*indexfirst] = 0;
+    for(i=0; i<length; i++)
+        contextp[i] = inout[contextp[i]+1];
+    contextp[*indexfirst] = inout[0];
+    for(i=0; i<length; i++)
+        inout[i] = contextp[i];
 
-	free(contextp);
+    free(contextp);
 }
 
 

@@ -15,6 +15,7 @@
 #include "buffers.h"
 #include "buffer_stream.h"
 #include "compression.h"
+#include "compression_szip.h"
 #include "mem_helpers.h"
 #include "multi_buffer_stream.h"
 #include "sprites.h"
@@ -235,6 +236,16 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 			bufferCompress(bufferId, sourceBufferId);
 		}	break;
 		case BUFFERED_DECOMPRESS: {
+			auto sourceBufferId = readWord_t();
+			if (sourceBufferId == -1) return;
+			bufferDecompress(bufferId, sourceBufferId);
+		}	break;
+		case BUFFERED_COMPRESS_SZIP: {
+			auto sourceBufferId = readWord_t();
+			if (sourceBufferId == -1) return;
+			bufferCompress(bufferId, sourceBufferId);
+		}	break;
+		case BUFFERED_DECOMPRESS_SZIP: {
 			auto sourceBufferId = readWord_t();
 			if (sourceBufferId == -1) return;
 			bufferDecompress(bufferId, sourceBufferId);
