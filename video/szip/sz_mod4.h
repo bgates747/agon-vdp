@@ -11,7 +11,7 @@
 #define CACHESIZE 32
 #define MTFSIZE 20
 #define MTFHISTSIZE 4096  /* must pe power of 2 */
-#define MODELGLOBAL
+// #define MODELGLOBAL // we don't want to use this model globally
 
 typedef struct {
     uint sym, next;
@@ -52,6 +52,9 @@ typedef struct {
 #endif
 
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 /* initialisation if the model */
 /* headersize -1 means decompression */
 /* first is the first byte written by the arithcoder */
@@ -66,6 +69,8 @@ void deletemodel(sz_model *m);
 /* encode/decode a run of equal symbols */
 void sz_encode(sz_model *m, uint symbol, uint4 runlength);
 void sz_decode(sz_model *m, uint *symbol, uint4 *runlength);
-
-
+#ifdef __cplusplus
+}
 #endif
+
+#endif // SZ_MODEL4_H

@@ -437,7 +437,8 @@ void sz_encode(sz_model *m, uint symbol, uint4 runlength)
         tmp->sy_f = tmp->weight;
         MOD.newest = tmp;
     }
-    finishupdate(M,symbol);
+    // finishupdate(M,symbol);
+    finishupdate(m,symbol); // uppercase M only if we define MODELGLOBAL in sz_mod4.h
 }
 
 
