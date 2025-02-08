@@ -2511,38 +2511,99 @@ void VDUStreamProcessor::bufferCompressSzip(uint16_t bufferId, uint16_t sourceBu
 // Replaces the target buffer with the new one.
 //
 void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t sourceBufferId) {
+    #ifdef DEBUG
+    auto start = millis();
+    #endif
+
+    // Locate source buffer
     auto sourceBufferIter = buffers.find(sourceBufferId);
     if (sourceBufferIter == buffers.end()) {
-        printf("bufferDecompressSzip: buffer %d not found\n", sourceBufferId);
+        printf("bufferDecompressSzip: source buffer %d not found\n", sourceBufferId);
         return;
     }
     auto &sourceBuffer = sourceBufferIter->second;
 
-    printf("Source buffer count: %zu\n", sourceBuffer.size());
-
-    size_t total_size = 0;
-    for (const auto &block : sourceBuffer) {
-        total_size += block->size();
-    }
-    printf("Total source buffer size: %zu bytes\n", total_size);
-
-    // Dump each block
-    size_t block_index = 0;
-    for (const auto &block : sourceBuffer) {
-        size_t block_size = block->size();
-        printf("Block %zu size: %zu bytes\n", block_index++, block_size);
-
-        const uint8_t* data = block->getBuffer();
-        for (size_t i = 0; i < block_size; i += 16) {
-            printf("%08zx: ", i);
-            for (size_t j = 0; j < 16 && (i + j) < block_size; j++) {
-                printf("%02X ", data[i + j]);
-            }
-            printf("\n");
-        }
+    if (sourceBuffer.empty() || sourceBuffer[0]->size() < sizeof(SzipFileHeader)) {
+        printf("bufferDecompressSzip: buffer too small for header\n");
+        return;
     }
 
-    printf("Buffer dump complete.\n");
+    // Initialize stream reader
+    SzipBufferStream stream = { sourceBuffer[0]->getBuffer(), sourceBuffer[0]->size(), 0 };
+
+    // Read and validate global SZIP header
+    if (szip_read_global_header(&stream) < 0) {
+        printf("bufferDecompressSzip: invalid SZIP header\n");
+        return;
+    }
+    printf("SZIP global header validated.\n");
+
+    // Read block header, correctly extracting block type
+    uint32_t block_size;
+    uint8_t block_type;
+    if (szip_read_block_header(&stream, &block_size, &block_type) < 0) {
+        printf("bufferDecompressSzip: invalid block header\n");
+        return;
+    }
+    printf("Block size extracted: %u\n", block_size);
+    printf("Block type read: %02X (should be 01 for compressed)\n", block_type);
+
+    if (block_type != 0x01) {
+        printf("ERROR: Unexpected block type %02X! Expected 0x01 for compressed block.\n", block_type);
+        return;
+    }
+
+    // Read index_last
+    uint32_t index_last = szip_read_uint3(&stream);
+    printf("Next 3 bytes (index_last): %02X %02X %02X\n",
+           (index_last >> 16) & 0xFF, (index_last >> 8) & 0xFF, index_last & 0xFF);
+    printf("Index Last: %u (expected < block_size)\n", index_last);
+
+    // Read the order byte
+    uint8_t order = szip_read_byte(&stream);
+    printf("Next byte (order): %02X\n", order);
+    printf("Order extracted: %u\n", order);
+
+    // Validate index_last
+    if (index_last >= block_size) {
+        printf("ERROR: index_last (%u) is greater than block_size (%u)! Possible misalignment.\n",
+               index_last, block_size);
+        return;
+    }
+
+    // Create output buffer
+    auto bufferStream = make_shared_psram<BufferStream>(block_size);
+    if (!bufferStream || !bufferStream->getBuffer()) {
+        printf("bufferDecompressSzip: failed to create buffer %d\n", bufferId);
+        return;
+    }
+
+    uint8_t *outBuffer = bufferStream->getBuffer();
+    size_t outSize = block_size;
+
+    // Configure decompression parameters
+    SzipConfig config = { block_size, order, 0, 1 };  // Use extracted values
+
+    printf("Starting decompression for buffer %u using block size %u, order %u...\n",
+           bufferId, block_size, order);
+
+    // Perform decompression
+    szip_decompress(sourceBuffer[0]->getBuffer(), block_size, outBuffer, &outSize, &config);
+
+    // Store decompressed buffer
+    bufferClear(bufferId);
+    buffers[bufferId].push_back(bufferStream);
+
+    uint32_t compressionRatio = (outSize * 100) / block_size;
+    printf("Decompressed %u bytes to %u bytes (%u%%)\n", block_size, outSize, compressionRatio);
+
+    if (outSize != block_size) {
+        printf("Warning: decompressed size %u does not match expected %u\n", outSize, block_size);
+    }
+
+    #ifdef DEBUG
+    printf("Decompression took %u ms\n", millis() - start);
+    #endif
 }
 
 

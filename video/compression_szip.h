@@ -14,6 +14,10 @@
 extern "C" {
 #endif
 
+// Define SZIP version numbers
+#define MAJOR_VERSION 1
+#define MINOR_VERSION 12
+
 #pragma pack(push, 1)
 typedef struct {
     uint8_t marker[3];   // "SZ\n"
@@ -71,8 +75,8 @@ static inline void szip_write_global_header(SzipBufferStream *stream) {
     szip_write_byte(stream, 0x5A); // 'Z'
     szip_write_byte(stream, 0x0A); // Newline
     szip_write_byte(stream, 0x04); // Type
-    szip_write_byte(stream, 0x01); // Version Major
-    szip_write_byte(stream, 0x0B); // Version Minor
+    szip_write_byte(stream, MAJOR_VERSION);
+    szip_write_byte(stream, MINOR_VERSION);
 }
 
 // Reads and validates the SZIP global header
@@ -86,58 +90,39 @@ static inline int szip_read_global_header(SzipBufferStream *stream) {
     return (vmay == EOF || vmin == EOF) ? -1 : 0;
 }
 
-// Writes a block header
+// Writes a block header, including the extra 0x00 byte
 static inline void szip_write_block_header(SzipBufferStream *stream, uint32_t uncompressed_size) {
     szip_write_byte(stream, 0x42); // 'B'
     szip_write_byte(stream, 0x48); // 'H'
     szip_write_uint3(stream, uncompressed_size);
+    szip_write_byte(stream, 0x00); // Extra empty 'filename' byte
 }
 
-// Reads a block header
-static inline int szip_read_block_header(SzipBufferStream *stream, uint32_t *uncompressed_size) {
+// Reads a block header, correctly skipping the orphaned byte
+static inline int szip_read_block_header(SzipBufferStream *stream, uint32_t *uncompressed_size, uint8_t *block_type) {
     if (szip_read_byte(stream) != 0x42 || szip_read_byte(stream) != 0x48)
         return -1;
+    
     *uncompressed_size = szip_read_uint3(stream);
+
+    // Skip the extra orphaned byte (0x00)
+    if (szip_read_byte(stream) != 0x00) {
+        printf("ERROR: Expected orphaned byte 0x00 but found something else.\n");
+        return -1;
+    }
+
+    // Read the block type (should be 0x01 for compressed)
+    *block_type = szip_read_byte(stream);
     return 0;
 }
 
-// Compress a block using SZIP
-static void szip_write_szip_block(SzipBufferStream *stream, uint8_t *buffer, uint32_t buflen, SzipConfig *config) {
-    uint32_t index_last;
-    SzipModel m;
-
-    szip_write_byte(stream, 1); // 1 means szip block
-    szip_write_uint3(stream, index_last); // Placeholder, filled after sorting
-    szip_write_byte(stream, config->order);
-
-    initmodel(&m, 0, &(config->recordsize));
-
-    uint8_t *end = buffer + buflen;
-    *end = ~*(end - 1); // Ensure end of run
-
-    uint8_t *begin = buffer;
-    uint8_t ch = *(buffer++);
-    while (*buffer == ch) buffer++;
-    sz_encode(&m, ch, buffer - begin);
-
-    fixafterfirst(&m);
-    while (buffer < end) {
-        begin = buffer;
-        ch = *(buffer++);
-        while (*buffer == ch) buffer++;
-        sz_encode(&m, ch, buffer - begin);
-    }
-
-    deletemodel(&m);
-}
-
-// Decompress a block using SZIP
+// Reads a compressed block
 static void szip_read_szip_block(SzipBufferStream *stream, uint8_t *buffer, uint32_t buflen, SzipConfig *config) {
-    uint32_t index_last = szip_read_uint3(stream);
-    uint8_t order = szip_read_byte(stream);
+    uint32_t index_last = szip_read_uint3(stream); // Read 3-byte index_last
+    uint8_t order = szip_read_byte(stream); // Read order byte
     uint32_t bytes_left = buflen;
     SzipModel m;
-
+    
     initmodel(&m, -1, &(config->recordsize));
 
     uint32_t runlength;
@@ -146,10 +131,10 @@ static void szip_read_szip_block(SzipBufferStream *stream, uint8_t *buffer, uint
     if (runlength > bytes_left) return;
     bytes_left -= runlength;
     memset(buffer, ch, runlength);
-
+    
     fixafterfirst(&m);
     buffer += runlength;
-
+    
     while (bytes_left) {
         sz_decode(&m, &ch, &runlength);
         if (runlength > bytes_left) return;
@@ -157,26 +142,8 @@ static void szip_read_szip_block(SzipBufferStream *stream, uint8_t *buffer, uint
         memset(buffer, ch, runlength);
         buffer += runlength;
     }
-
+    
     deletemodel(&m);
-}
-
-// Compress function for ESP32
-void szip_compress(uint8_t *input, uint32_t input_size, uint8_t *output, uint32_t *output_size, SzipConfig *config) {
-    SzipBufferStream in_stream = {input, input_size, 0};
-    SzipBufferStream out_stream = {output, *output_size, 0};
-
-    szip_write_global_header(&out_stream);
-
-    uint32_t remaining = input_size;
-    while (remaining > 0) {
-        uint32_t chunk_size = (remaining > config->block_size) ? config->block_size : remaining;
-        szip_write_block_header(&out_stream, chunk_size);
-        szip_write_szip_block(&out_stream, input + (input_size - remaining), chunk_size, config);
-        remaining -= chunk_size;
-    }
-
-    *output_size = out_stream.pos;
 }
 
 // Decompress function for ESP32
@@ -184,11 +151,28 @@ void szip_decompress(uint8_t *input, uint32_t input_size, uint8_t *output, uint3
     SzipBufferStream in_stream = {input, input_size, 0};
     SzipBufferStream out_stream = {output, *output_size, 0};
 
-    if (szip_read_global_header(&in_stream) < 0) return;
+    if (szip_read_global_header(&in_stream) < 0) {
+        printf("ERROR: Invalid SZIP global header!\n");
+        return;
+    }
 
     uint32_t uncompressed_size;
+    uint8_t block_type;
+
     while (in_stream.pos < in_stream.size) {
-        if (szip_read_block_header(&in_stream, &uncompressed_size) < 0) return;
+        // Read block header correctly
+        if (szip_read_block_header(&in_stream, &uncompressed_size, &block_type) < 0) {
+            printf("ERROR: Failed to read block header!\n");
+            return;
+        }
+
+        // Ensure block type is valid before proceeding
+        if (block_type != 0x01) {
+            printf("ERROR: Unexpected block type %02X! Expected 0x01 for compressed block.\n", block_type);
+            return;
+        }
+
+        // Read and decompress block data
         szip_read_szip_block(&in_stream, output + out_stream.pos, uncompressed_size, config);
         out_stream.pos += uncompressed_size;
     }
