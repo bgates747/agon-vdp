@@ -28,21 +28,27 @@ SzipModel mod;
 void initmodel(SzipModel *m, int headersize, uint8_t *first) {
     int i;
 
-    /* Initialize the arithmetic coder */
+    printf("initmodel: Starting initialization (compress=%d)\n", headersize >= 0);
+    
+    // Initialize arithmetic coder
     m->compress = (headersize >= 0);
     if (m->compress) {
+        printf("initmodel: Starting encoding initialization...\n");
         start_encoding(&(m->ac), *first, headersize);
     } else {
+        printf("initmodel: Starting decoding initialization...\n");
         *first = start_decoding(&(m->ac));
     }
 
-    /* Initialize full model */
+    printf("initmodel: Initializing bitmodel...\n");
     init_bitmodel(&(m->full), ALPHABETSIZE, 40 * ALPHABETSIZE, 10 * ALPHABETSIZE, NULL);
+    
+    printf("initmodel: Clearing lastseen array...\n");
     for (i = 0; i < ALPHABETSIZE; i++) {
         m->lastseen[i] = FULLFLAG;
     }
 
-    /* Initialize cache with symbols */
+    printf("initmodel: Initializing cache...\n");
     CachePtr tmp = m->cache;
     for (i = 0; i < CACHESIZE - 1; i++) {
         tmp->next = tmp + 1;
@@ -55,40 +61,48 @@ void initmodel(SzipModel *m, int headersize, uint8_t *first) {
         tmp->what = 0;
         tmp++;
     }
+
+    printf("initmodel: Completing cache initialization...\n");
     m->cache[0].prev = m->cache + (CACHESIZE - 1);
     tmp->next = m->cache;
     tmp->prev = tmp - 1;
     tmp->sy_f = 0;
-
     m->newest = m->cache + (CACHESIZE - 2);
     m->lastnew = m->cache + (CACHESIZE - 7);
     m->cachetotf = CACHESIZE;
 
-    /* Initialize whatmodel */
+    printf("initmodel: Initializing whatmodel and mtf models...\n");
     m->whatmod[0] = 41;
     m->whatmod[1] = 8;
     m->whatmod[2] = 15;
 
-    /* Initialize MTF models */
     m->mtfhist[0].next = MTFHISTSIZE - 1;
     m->mtfhist[0].sym = CACHESIZE;
     for (i = 1; i < MTFSIZE << 1; i++) {
         m->mtfhist[i].next = i - 1;
         m->mtfhist[i].sym = CACHESIZE + i;
     }
+
     for (; i < MTFHISTSIZE; i++) {
         m->mtfhist[i].next = 0xFFFF;
     }
+    
+    printf("initmodel: Initializing mtfsize values...\n");
     m->mtfsize = MTFSIZE << 1;
     m->mtfsizeact = 0;
     m->mtffirst = (MTFSIZE << 1) - 1;
+    
+    printf("initmodel: Initializing qsmodel...\n");
     init_qsmodel(&(m->mtfmod), MTFSIZE, MTFSHIFT, 400, NULL, m->compress);
 
-    /* Initialize run-length models */
+    printf("initmodel: Initializing run-length models...\n");
     for (i = 0; i < 5; i++) {
         init_qsmodel(m->rlemod + i, 7, RLSHIFT, 150, NULL, m->compress);
     }
+
+    printf("initmodel: Completed successfully.\n");
 }
+
 
 /* Call after encoding/decoding first run */
 void fixafterfirst(SzipModel *m) {

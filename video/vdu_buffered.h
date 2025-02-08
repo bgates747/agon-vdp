@@ -2522,85 +2522,54 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
         return;
     }
     auto &sourceBuffer = sourceBufferIter->second;
-
+    
     if (sourceBuffer.empty() || sourceBuffer[0]->size() < sizeof(SzipFileHeader)) {
         printf("bufferDecompressSzip: buffer too small for header\n");
         return;
     }
-
-    // Initialize stream reader
-    SzipBufferStream stream = { sourceBuffer[0]->getBuffer(), sourceBuffer[0]->size(), 0 };
-
-    // Read and validate global SZIP header
-    if (szip_read_global_header(&stream) < 0) {
-        printf("bufferDecompressSzip: invalid SZIP header\n");
+    
+    // Retrieve the compressed input buffer and its size.
+    uint8_t* compressedData = sourceBuffer[0]->getBuffer();
+    uint32_t compressedSize = sourceBuffer[0]->size();
+    
+    // Set up decompression configuration.
+    SzipConfig config;
+    // Set config.block_size to the maximum block size expected (if known)
+    // Otherwise, it is used only for compression; decompression reads each block's size.
+    config.block_size = 0; // not used during decompression
+    config.order = 0;      // will be read from the block header
+    config.verbosity = 0;
+    config.recordsize = 1;
+    
+    printf("Starting dynamic decompression for buffer %u...\n", bufferId);
+    
+    uint32_t decompressedSize = 0;
+    uint8_t* decompressedData = szip_decompress_dynamic(compressedData, compressedSize, &decompressedSize, &config);
+    if (!decompressedData) {
+        printf("ERROR: Decompression failed for buffer %u.\n", bufferId);
         return;
     }
-    printf("SZIP global header validated.\n");
-
-    // Read block header, correctly extracting block type
-    uint32_t block_size;
-    uint8_t block_type;
-    if (szip_read_block_header(&stream, &block_size, &block_type) < 0) {
-        printf("bufferDecompressSzip: invalid block header\n");
-        return;
-    }
-    printf("Block size extracted: %u\n", block_size);
-    printf("Block type read: %02X (should be 01 for compressed)\n", block_type);
-
-    if (block_type != 0x01) {
-        printf("ERROR: Unexpected block type %02X! Expected 0x01 for compressed block.\n", block_type);
-        return;
-    }
-
-    // Read index_last
-    uint32_t index_last = szip_read_uint3(&stream);
-    printf("Next 3 bytes (index_last): %02X %02X %02X\n",
-           (index_last >> 16) & 0xFF, (index_last >> 8) & 0xFF, index_last & 0xFF);
-    printf("Index Last: %u (expected < block_size)\n", index_last);
-
-    // Read the order byte
-    uint8_t order = szip_read_byte(&stream);
-    printf("Next byte (order): %02X\n", order);
-    printf("Order extracted: %u\n", order);
-
-    // Validate index_last
-    if (index_last >= block_size) {
-        printf("ERROR: index_last (%u) is greater than block_size (%u)! Possible misalignment.\n",
-               index_last, block_size);
-        return;
-    }
-
-    // Create output buffer
-    auto bufferStream = make_shared_psram<BufferStream>(block_size);
-    if (!bufferStream || !bufferStream->getBuffer()) {
-        printf("bufferDecompressSzip: failed to create buffer %d\n", bufferId);
-        return;
-    }
-
-    uint8_t *outBuffer = bufferStream->getBuffer();
-    size_t outSize = block_size;
-
-    // Configure decompression parameters
-    SzipConfig config = { block_size, order, 0, 1 };  // Use extracted values
-
-    printf("Starting decompression for buffer %u using block size %u, order %u...\n",
-           bufferId, block_size, order);
-
-    // Perform decompression
-    szip_decompress(sourceBuffer[0]->getBuffer(), block_size, outBuffer, &outSize, &config);
-
-    // Store decompressed buffer
+    
+    printf("Decompressed %u bytes from %u compressed bytes.\n", decompressedSize, compressedSize);
+    
+    // Store the decompressed buffer.
     bufferClear(bufferId);
-    buffers[bufferId].push_back(bufferStream);
-
-    uint32_t compressionRatio = (outSize * 100) / block_size;
-    printf("Decompressed %u bytes to %u bytes (%u%%)\n", block_size, outSize, compressionRatio);
-
-    if (outSize != block_size) {
-        printf("Warning: decompressed size %u does not match expected %u\n", outSize, block_size);
+    // Here, assume that make_shared_psram<BufferStream> accepts an externally allocated buffer.
+    // Otherwise, wrap decompressedData into a BufferStream as appropriate.
+    auto bufferStream = make_shared_psram<BufferStream>(decompressedSize);
+    if (!bufferStream || !bufferStream->getBuffer()) {
+        printf("bufferDecompressSzip: failed to create output buffer for buffer %d\n", bufferId);
+        heap_caps_free(decompressedData);
+        return;
     }
-
+    memcpy(bufferStream->getBuffer(), decompressedData, decompressedSize);
+    buffers[bufferId].push_back(bufferStream);
+    
+    uint32_t compressionRatio = (decompressedSize * 100) / compressedSize;
+    printf("Decompressed %u bytes to %u bytes (%u%%)\n", compressedSize, decompressedSize, compressionRatio);
+    
+    heap_caps_free(decompressedData);
+    
     #ifdef DEBUG
     printf("Decompression took %u ms\n", millis() - start);
     #endif
