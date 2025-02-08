@@ -2511,131 +2511,38 @@ void VDUStreamProcessor::bufferCompressSzip(uint16_t bufferId, uint16_t sourceBu
 // Replaces the target buffer with the new one.
 //
 void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t sourceBufferId) {
-    #ifdef DEBUG
-    auto start = millis();
-    #endif
-
     auto sourceBufferIter = buffers.find(sourceBufferId);
     if (sourceBufferIter == buffers.end()) {
-        debug_log("bufferDecompressSzip: buffer %d not found\n\r", sourceBufferId);
+        printf("bufferDecompressSzip: buffer %d not found\n", sourceBufferId);
         return;
     }
     auto &sourceBuffer = sourceBufferIter->second;
 
-    if (sourceBuffer.empty() || sourceBuffer[0]->size() < sizeof(CompressionSzipFileHeader)) {
-        debug_log("bufferDecompressSzip: buffer too small for global header\n\r");
-        return;
-    }
+    printf("Source buffer count: %zu\n", sourceBuffer.size());
 
-    auto p_hdr = (const CompressionSzipFileHeader*) sourceBuffer[0]->getBuffer();
-    debug_log("SZIP Header: Marker=[%c%c%c] Type=0x%02X Version=%d.%d\n\r",
-              p_hdr->marker[0], p_hdr->marker[1], p_hdr->marker[2],
-              p_hdr->type, p_hdr->major, p_hdr->minor);
-    if (p_hdr->marker[0] != 'S' || p_hdr->marker[1] != 'Z' || p_hdr->marker[2] != '\n' ||
-        p_hdr->type != 0x04) {
-        debug_log("bufferDecompressSzip: global header is invalid\n\r");
-        return;
-    }
-
-    uint32_t total_uncompressed_size = 0;
-    uint32_t input_offset = sizeof(CompressionSzipFileHeader);
+    size_t total_size = 0;
     for (const auto &block : sourceBuffer) {
-        if (block->size() <= input_offset) {
-            input_offset = 0;
-            continue;
-        }
-        uint8_t* p_data = block->getBuffer() + input_offset;
-        if (p_data[0] != 'B' || p_data[1] != 'H') {
-            debug_log("bufferDecompressSzip: Invalid block header in size computation (got [%c%c])\n\r",
-                      p_data[0], p_data[1]);
-            return;
-        }
-        uint32_t block_size = ((uint32_t)p_data[2] << 16) |
-                              ((uint32_t)p_data[3] << 8)  |
-                               (uint32_t)p_data[4];
-        total_uncompressed_size += block_size;
-        input_offset = 0;
+        total_size += block->size();
     }
-    debug_log("Total uncompressed size computed: %u bytes\n\r", total_uncompressed_size);
+    printf("Total source buffer size: %zu bytes\n", total_size);
 
-    auto bufferStream = make_shared_psram<BufferStream>(total_uncompressed_size);
-    if (!bufferStream || !bufferStream->getBuffer()) {
-        debug_log("bufferDecompressSzip: failed to create output buffer for buffer %d\n\r", bufferId);
-        return;
-    }
-    uint8_t* output_buffer = bufferStream->getBuffer();
-    uint32_t output_offset = 0;
-
-    input_offset = sizeof(CompressionSzipFileHeader);
+    // Dump each block
+    size_t block_index = 0;
     for (const auto &block : sourceBuffer) {
-        uint32_t block_len = block->size();
-        if (block_len <= input_offset) {
-            input_offset = 0;
-            continue;
-        }
-        uint8_t* p_data = block->getBuffer() + input_offset;
-        input_offset = 0;
-        
-        if (p_data[0] != 'B' || p_data[1] != 'H') {
-            debug_log("bufferDecompressSzip: Invalid block header (Expected 'BH', got [%c%c])\n\r",
-                      p_data[0], p_data[1]);
-            return;
-        }
-        
-        uint32_t block_size = ((uint32_t)p_data[2] << 16) |
-                              ((uint32_t)p_data[3] << 8)  |
-                               (uint32_t)p_data[4];
-        uint8_t block_type = p_data[5];
-        p_data += 6;
-        
-        debug_log("Block Header: Type=%u, Uncompressed Block Size=%u bytes\n\r", block_type, block_size);
-        
-        if (block_type == 0) {
-            memcpy(output_buffer + output_offset, p_data, block_size);
-            output_offset += block_size;
-        } else if (block_type == 1) {
-            uint32_t index_last = ((uint32_t)p_data[0]) |
-                                  (((uint32_t)p_data[1]) << 8) |
-                                  (((uint32_t)p_data[2]) << 16);
-            uint8_t order = p_data[3];
-            p_data += 4;
-            debug_log("Compressed block: index_last=%u, order=%u\n\r", index_last, order);
-            
-            sz_model m;
-			uint8_t recordsize = 1;
-			initmodel(&m, -1, &recordsize);
-            
-            uint32_t bytes_left = block_size;
-            uint8_t* out_ptr = output_buffer + output_offset;
-            while (bytes_left) {
-                uint32_t runlength;
-                uint32_t ch;
-                sz_decode(&m, &ch, &runlength);
-                if (runlength > bytes_left) {
-                    debug_log("bufferDecompressSzip: Corrupt data detected (runlength=%u, bytes_left=%u)\n\r",
-                              runlength, bytes_left);
-                    deletemodel(&m);
-                    return;
-                }
-                memset(out_ptr, (uint8_t)ch, runlength);
-                out_ptr += runlength;
-                bytes_left -= runlength;
+        size_t block_size = block->size();
+        printf("Block %zu size: %zu bytes\n", block_index++, block_size);
+
+        const uint8_t* data = block->getBuffer();
+        for (size_t i = 0; i < block_size; i += 16) {
+            printf("%08zx: ", i);
+            for (size_t j = 0; j < 16 && (i + j) < block_size; j++) {
+                printf("%02X ", data[i + j]);
             }
-            deletemodel(&m);
-            output_offset += block_size;
-        } else {
-            debug_log("bufferDecompressSzip: Unknown block type %u\n\r", block_type);
-            return;
+            printf("\n");
         }
     }
 
-    bufferClear(bufferId);
-    buffers[bufferId].push_back(bufferStream);
-
-    debug_log("Decompression completed: Output size = %u bytes\n\r", output_offset);
-    #ifdef DEBUG
-    debug_log("Decompression completed in %u ms\n\r", millis() - start);
-    #endif
+    printf("Buffer dump complete.\n");
 }
 
 
