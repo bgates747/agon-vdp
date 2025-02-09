@@ -40,6 +40,10 @@
 
 #include "port.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     int n,             /* number of symbols */
         left,          /* symbols to next rescale */
@@ -93,4 +97,8 @@ int qsgetsym( qsmodel *m, int lt_f );
 /* sym  symbol that occurred (must be <n from init)    */
 void qsupdate( qsmodel *m, int sym );
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif

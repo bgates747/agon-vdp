@@ -49,6 +49,10 @@
 
 #define EXCLUDEONUPDATE
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     int n,             /* number of symbols */
         totalfreq,     /* total frequency count (without excluded symbols) */
@@ -120,4 +124,8 @@ void bitdeactivate( bitmodel *m, int sym );
 void bitreactivate( bitmodel *m, int sym );
 #endif
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif

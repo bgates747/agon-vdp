@@ -3,6 +3,9 @@
 
 #define swap(x,y) {uint4 tmp = *(x); *(x) = *(y); *(y) = tmp;}
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 /* prototypes for local routines */
 static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatch );
@@ -286,3 +289,7 @@ static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatc
     /* A[i] <= A[j] for i <= j, j > lo, which implies A[i] <= A[j] for i < j,
        so array is sorted */
 }
+
+#ifdef __cplusplus
+}
+#endif

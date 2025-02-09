@@ -77,6 +77,10 @@ typedef unsigned int uint2;
 
 extern char coderversion[];
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef uint4 code_value;       /* Type of an rangecode value       */
                                 /* must accomodate 32 bits          */
 /* it is highly recommended that the total frequency count is less  */
@@ -175,4 +179,8 @@ unsigned short decode_short(rangecoder *rc);
 /* rc is the range coder to be used                          */
 void done_decoding( rangecoder *rc );
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif

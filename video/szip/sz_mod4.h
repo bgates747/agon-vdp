@@ -13,6 +13,10 @@
 #define MTFHISTSIZE 4096  /* must pe power of 2 */
 #define MODELGLOBAL
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 typedef struct {
     uint sym, next;
 } mtfentry;
@@ -68,4 +72,8 @@ void sz_encode(sz_model *m, uint symbol, uint4 runlength);
 void sz_decode(sz_model *m, uint *symbol, uint4 *runlength);
 
 
+#endif
+
+#ifdef __cplusplus
+}
 #endif

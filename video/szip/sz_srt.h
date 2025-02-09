@@ -2,6 +2,9 @@
 #define SZ_SRT_H
 #include "port.h"
 
+#ifdef __cplusplus
+extern "C" {
+#endif
 
 // inout: bytes to be sorted; sorted bytes on return. must be length+order bytes long
 // length: number of bytes in inout
@@ -49,4 +52,8 @@ void sz_srt_BW(unsigned char *inout, uint4 length, uint4 *indexfirst);
 void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length,
 			   uint4 indexfirst, uint4 *counts);
 #endif
+#endif
+
+#ifdef __cplusplus
+}
 #endif
