@@ -23,7 +23,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  qsmodel is a quasistatic probability model that periodically
+  Qsmodel is a quasistatic probability model that periodically
   (at chooseable intervals) updates probabilities of symbols;
   it also allows to initialize probabilities. Updating is done more
   frequent in the beginning, so it adapts very fast even without
@@ -39,121 +39,137 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-/* Default table size 1 << TBLSHIFT */
+/* default tablesize 1<<TBLSHIFT */
 #define TBLSHIFT 7
 
-/* Rescale frequency counts */
-static void qsmodel_rescale(qsmodel *m) {
-    int i, cf, missing;
-    if (m->nextleft) { /* We have some more before actual rescaling */
-        m->incr++;
+/* rescale frequency counts */
+static void dorescale( qsmodel *m)
+{   int i, cf, missing;
+    if (m->nextleft)  /* we have some more before actual rescaling */
+    {   m->incr++;
         m->left = m->nextleft;
         m->nextleft = 0;
         return;
     }
-    if (m->rescale < m->targetrescale) { /* Double rescale interval if needed */
-        m->rescale <<= 1;
+    if (m->rescale < m->targetrescale)  /* double rescale interval if needed */
+    {   m->rescale <<= 1;
         if (m->rescale > m->targetrescale)
             m->rescale = m->targetrescale;
     }
-    cf = missing = m->cf[m->n]; /* Do actual rescaling */
-    for (i = m->n - 1; i; i--) {
-        int tmp = m->newf[i];
+    cf = missing = m->cf[m->n];  /* do actual rescaling */
+    for(i=m->n-1; i; i--)
+    {   int tmp = m->newf[i];
         cf -= tmp;
         m->cf[i] = cf;
-        tmp = tmp >> 1 | 1;
+        tmp = tmp>>1 | 1;
         missing -= tmp;
         m->newf[i] = tmp;
     }
-    if (cf != m->newf[0]) {
-        fprintf(stderr, "BUG: rescaling left %d total frequency\n", cf);
+    if (cf!=m->newf[0])
+    {   fprintf(stderr,"BUG: rescaling left %d total frequency\n",cf);
         deleteqsmodel(m);
         exit(1);
     }
-    m->newf[0] = m->newf[0] >> 1 | 1;
+    m->newf[0] = m->newf[0]>>1 | 1;
     missing -= m->newf[0];
     m->incr = missing / m->rescale;
     m->nextleft = missing % m->rescale;
     m->left = m->rescale - m->nextleft;
-    if (m->search != NULL) {
-        i = m->n;
-        while (i) {
-            int start, end;
-            end = (m->cf[i] - 1) >> m->searchshift;
+    if (m->search != NULL)
+    {   i=m->n;
+        while (i)
+        {   int start, end;
+            end = (m->cf[i]-1) >> m->searchshift;
             i--;
             start = m->cf[i] >> m->searchshift;
-            while (start <= end) {
-                m->search[start] = i;
+            while (start<=end)
+            {   m->search[start] = i;
                 start++;
             }
         }
     }
 }
 
-/* Initialization of qsmodel */
-void initqsmodel(qsmodel *m, int n, int lg_totf, int rescale, int *init, int compress) {
-    m->n = n;
+
+/* initialisation of qsmodel                           */
+/* m   qsmodel to be initialized                       */
+/* n   number of symbols in that model                 */
+/* lg_totf  base2 log of total frequency count         */
+/* rescale  desired rescaling interval, should be < 1<<(lg_totf+1) */
+/* init  array of int's to be used for initialisation (NULL ok) */
+/* compress  set to 1 on compression, 0 on decompression */
+void initqsmodel( qsmodel *m, int n, int lg_totf, int rescale, int *init, int compress )
+{   m->n = n;
     m->targetrescale = rescale;
     m->searchshift = lg_totf - TBLSHIFT;
     if (m->searchshift < 0)
         m->searchshift = 0;
-    
-    m->cf = (uint16_t*) heap_caps_malloc((n + 1) * sizeof(uint16_t), MALLOC_CAP_8BIT);
-    m->newf = (uint16_t*) heap_caps_malloc((n + 1) * sizeof(uint16_t), MALLOC_CAP_8BIT);
-    m->cf[n] = 1 << lg_totf;
+    m->cf = (uint2*) malloc((n+1)*sizeof(uint2));
+    m->newf = (uint2*) malloc((n+1)*sizeof(uint2));
+    m->cf[n] = 1<<lg_totf;
     m->cf[0] = 0;
-    
     if (compress)
         m->search = NULL;
-    else {
-        m->search = (uint16_t*) heap_caps_malloc(((1 << TBLSHIFT) + 1) * sizeof(uint16_t), MALLOC_CAP_8BIT);
-        m->search[1 << TBLSHIFT] = n - 1;
+    else
+    {   m->search = (uint2*) malloc(((1<<TBLSHIFT)+1)*sizeof(uint2));
+        m->search[1<<TBLSHIFT] = n-1;
     }
     resetqsmodel(m, init);
 }
 
-/* Reinitialization of qsmodel */
-void resetqsmodel(qsmodel *m, int *init) {
-    int i, end, initval;
-    m->rescale = m->n >> 4 | 2;
+
+/* reinitialisation of qsmodel                         */
+/* m   qsmodel to be initialized                       */
+/* init  array of int's to be used for initialisation (NULL ok) */
+void resetqsmodel( qsmodel *m, int *init)
+{   int i, end, initval;
+    m->rescale = m->n>>4 | 2;
     m->nextleft = 0;
-    if (init == NULL) {
-        initval = m->cf[m->n] / m->n;
+    if (init == NULL)
+    {   initval = m->cf[m->n] / m->n;
         end = m->cf[m->n] % m->n;
-        for (i = 0; i < end; i++)
-            m->newf[i] = initval + 1;
-        for (; i < m->n; i++)
+        for (i=0; i<end; i++)
+            m->newf[i] = initval+1;
+        for (; i<m->n; i++)
             m->newf[i] = initval;
-    } else {
-        for (i = 0; i < m->n; i++)
+    } else
+        for(i=0; i<m->n; i++)
             m->newf[i] = init[i];
-    }
-    qsmodel_rescale(m);
+    dorescale(m);
 }
 
-/* Deletion of qsmodel */
-void deleteqsmodel(qsmodel *m) {
-    if (m->cf)
-        heap_caps_free(m->cf);
-    if (m->newf)
-        heap_caps_free(m->newf);
-    if (m->search)
-        heap_caps_free(m->search);
+
+/* deletion of qsmodel m                               */
+void deleteqsmodel( qsmodel *m )
+{   free(m->cf);
+    free(m->newf);
+    if (m->search != NULL)
+        free(m->search);
 }
 
-/* Retrieval of estimated frequencies for a symbol */
-void qsgetfreq(qsmodel *m, int sym, int *sy_f, int *lt_f) {
-    *sy_f = m->cf[sym + 1] - (*lt_f = m->cf[sym]);
-}
 
-/* Find symbol for a given cumulative frequency */
-int qsgetsym(qsmodel *m, int lt_f) {
-    int lo, hi;
-    uint16_t *tmp = m->search + (lt_f >> m->searchshift);
+/* retrieval of estimated frequencies for a symbol     */
+/* m   qsmodel to be questioned                        */
+/* sym  symbol for which data is desired; must be <n   */
+/* sy_f frequency of that symbol                       */
+/* lt_f frequency of all smaller symbols together      */
+/* the total frequency is 1<<lg_totf                   */
+void qsgetfreq( qsmodel *m, int sym, int *sy_f, int *lt_f )
+{   *sy_f = m->cf[sym+1] - (*lt_f = m->cf[sym]);
+}	
+
+
+/* find out symbol for a given cumulative frequency    */
+/* m   qsmodel to be questioned                        */
+/* lt_f  cumulative frequency                          */
+int qsgetsym( qsmodel *m, int lt_f )
+{   int lo, hi;
+    uint2 *tmp;
+    tmp = m->search+(lt_f>>m->searchshift);
     lo = *tmp;
-    hi = *(tmp + 1) + 1;
-    while (lo + 1 < hi) {
-        int mid = (lo + hi) >> 1;
+    hi = *(tmp+1) + 1;
+    while (lo+1 < hi )
+    {   int mid = (lo+hi)>>1;
         if (lt_f < m->cf[mid])
             hi = mid;
         else
@@ -162,10 +178,13 @@ int qsgetsym(qsmodel *m, int lt_f) {
     return lo;
 }
 
-/* Update qsmodel */
-void qsupdate(qsmodel *m, int sym) {
-    if (m->left <= 0)
-        qsmodel_rescale(m);
+
+/* update model                                        */
+/* m   qsmodel to be updated                           */
+/* sym  symbol that occurred (must be <n from init)    */
+void qsupdate( qsmodel *m, int sym )
+{   if (m->left <= 0)
+        dorescale(m);
     m->left--;
     m->newf[sym] += m->incr;
 }

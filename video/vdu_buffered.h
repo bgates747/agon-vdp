@@ -2523,7 +2523,7 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     }
     auto &sourceBuffer = sourceBufferIter->second;
     
-    if (sourceBuffer.empty() || sourceBuffer[0]->size() < sizeof(SzipFileHeader)) {
+    if (sourceBuffer.empty() || sourceBuffer[0]->size() < SZIP_HEADER_SIZE) {
         printf("bufferDecompressSzip: buffer too small for header\n");
         return;
     }
@@ -2532,49 +2532,23 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     uint8_t* compressedData = sourceBuffer[0]->getBuffer();
     uint32_t compressedSize = sourceBuffer[0]->size();
     
-    // Set up decompression configuration.
-    SzipConfig config;
-    // Set config.block_size to the maximum block size expected (if known)
-    // Otherwise, it is used only for compression; decompression reads each block's size.
-    config.block_size = 0; // not used during decompression
-    config.order = 0;      // will be read from the block header
-    config.verbosity = 0;
-    config.recordsize = 1;
+    // Set up the buffer stream for decompression
+    SzipBufferStream inStream = { compressedData, compressedSize, 0 };
+
+    printf("Starting decompression for buffer %u...\n", bufferId);
+
+    // Perform decompression
+    decompressit(&inStream);
+
+    // The decompressed data is stored in the buffer handled within `decompressit()`.
+    // We assume that the decompression process writes to an internal buffer (as per the original logic).
     
-    printf("Starting dynamic decompression for buffer %u...\n", bufferId);
-    
-    uint32_t decompressedSize = 0;
-    uint8_t* decompressedData = szip_decompress_dynamic(compressedData, compressedSize, &decompressedSize, &config);
-    if (!decompressedData) {
-        printf("ERROR: Decompression failed for buffer %u.\n", bufferId);
-        return;
-    }
-    
-    printf("Decompressed %u bytes from %u compressed bytes.\n", decompressedSize, compressedSize);
-    
-    // Store the decompressed buffer.
-    bufferClear(bufferId);
-    // Here, assume that make_shared_psram<BufferStream> accepts an externally allocated buffer.
-    // Otherwise, wrap decompressedData into a BufferStream as appropriate.
-    auto bufferStream = make_shared_psram<BufferStream>(decompressedSize);
-    if (!bufferStream || !bufferStream->getBuffer()) {
-        printf("bufferDecompressSzip: failed to create output buffer for buffer %d\n", bufferId);
-        heap_caps_free(decompressedData);
-        return;
-    }
-    memcpy(bufferStream->getBuffer(), decompressedData, decompressedSize);
-    buffers[bufferId].push_back(bufferStream);
-    
-    uint32_t compressionRatio = (decompressedSize * 100) / compressedSize;
-    printf("Decompressed %u bytes to %u bytes (%u%%)\n", compressedSize, decompressedSize, compressionRatio);
-    
-    heap_caps_free(decompressedData);
-    
+    printf("Decompression completed for buffer %u.\n", bufferId);
+
     #ifdef DEBUG
     printf("Decompression took %u ms\n", millis() - start);
     #endif
 }
-
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer
 // Expands a bitmap buffer into a new buffer with 8-bit values

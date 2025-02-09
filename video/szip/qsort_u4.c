@@ -5,7 +5,7 @@
 
 
 /* prototypes for local routines */
-void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatch );
+static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatch );
 
 static Inline int qscmp(uint4 a, uint4 b, unsigned char *data, uint4 *ml)
 {	unsigned char *a1,*b1;
@@ -255,7 +255,7 @@ recurse:
 *
 *******************************************************************************/
 
-void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatch )
+static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatch )
 {
     uint4 *p, *max, ml;
 

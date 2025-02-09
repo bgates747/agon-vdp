@@ -60,52 +60,119 @@
   will destroy thread savety. To enabble this feature uncomment the
   #define GLOBALRANGECODER line below.
 */
-
-#include "port.h"
-#include <stdint.h>
-#include <esp_heap_caps.h>
-
 #define GLOBALRANGECODER
 
-typedef uint32_t code_value; /* Type of a range code value (must accommodate 32 bits) */
 
-/* Recommended total frequency count limits */
-typedef uint32_t freq;
-
-typedef struct {
-    uint32_t low;       /* Low end of interval */
-    uint32_t range;     /* Length of interval */
-    uint32_t help;      /* Bytes_to_follow resp. intermediate value */
-    uint8_t buffer;     /* Buffer for input/output */
-    uint32_t bytecount; /* Counter for output bytes */
-} rangecoder;
-
-#ifdef __cplusplus
-extern "C" {
+#include "port.h"
+#if 0    /* done in port.h */
+#include <limits.h>
+#if INT_MAX > 0xffff
+typedef unsigned int uint4;
+typedef unsigned short uint2;
+#else
+typedef unsigned long uint4;
+typedef unsigned int uint2;
+#endif
 #endif
 
-/* Function prototypes */
-void start_encoding(rangecoder *rc, char c, int initlength);
-void encode_freq(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
-void encode_shift(rangecoder *rc, freq sy_f, freq lt_f, freq shift);
-uint32_t done_encoding(rangecoder *rc);
+extern char coderversion[];
 
-int start_decoding(rangecoder *rc);
-freq decode_culfreq(rangecoder *rc, freq tot_f);
-freq decode_culshift(rangecoder *rc, freq shift);
-void decode_update(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
-void done_decoding(rangecoder *rc);
+typedef uint4 code_value;       /* Type of an rangecode value       */
+                                /* must accomodate 32 bits          */
+/* it is highly recommended that the total frequency count is less  */
+/* than 1 << 19 to minimize rounding effects.                       */
+/* the total frequency count MUST be less than 1<<23                */
 
+typedef uint4 freq; 
+
+/* make the following private in the arithcoder object in C++	    */
+
+typedef struct {
+    uint4 low,           /* low end of interval */
+          range,         /* length of interval */
+          help;          /* bytes_to_follow resp. intermediate value */
+    unsigned char buffer;/* buffer for input/output */
+/* the following is used only when encoding */
+    uint4 bytecount;     /* counter for outputed bytes  */
+/* insert fields you need for input/output below this line! */
+} rangecoder;
+
+
+/* supply the following as methods of the arithcoder object  */
+/* omit the first parameter then (C++)                       */
+#ifdef GLOBALRANGECODER
+#define start_encoding(rc,a,b) M_start_encoding(a,b)
+#define encode_freq(rc,a,b,c) M_encode_freq(a,b,c)
+#define encode_shift(rc,a,b,c) M_encode_shift(a,b,c)
+#define done_encoding(rc) M_done_encoding()
+#define start_decoding(rc) M_start_decoding()
+#define decode_culfreq(rc,a) M_decode_culfreq(a)
+#define decode_culshift(rc,a) M_decode_culshift(a)
+#define decode_update(rc,a,b,c) M_decode_update(a,b,c)
+#define decode_byte(rc) M_decode_byte()
+#define decode_short(rc) M_decode_short()
+#define done_decoding(rc) M_done_decoding()
+#endif
+
+
+/* Start the encoder                                         */
+/* rc is the range coder to be used                          */
+/* c is written as first byte in the datastream (header,...) */
+void start_encoding( rangecoder *rc, char c, int initlength);
+
+
+/* Encode a symbol using frequencies                         */
+/* rc is the range coder to be used                          */
+/* sy_f is the interval length (frequency of the symbol)     */
+/* lt_f is the lower end (frequency sum of < symbols)        */
+/* tot_f is the total interval length (total frequency sum)  */
+/* or (a lot faster): tot_f = 1<<shift                       */
+void encode_freq( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f );
+void encode_shift( rangecoder *rc, freq sy_f, freq lt_f, freq shift );
+
+/* Encode a byte/short without modelling                     */
+/* rc is the range coder to be used                          */
+/* b,s is the data to be encoded                             */
+#define encode_byte(ac,b)  encode_shift(ac,(freq)1,(freq)(b),(freq)8)
+#define encode_short(ac,s) encode_shift(ac,(freq)1,(freq)(s),(freq)16)
+
+
+/* Finish encoding                                           */
+/* rc is the range coder to be shut down                     */
+/* returns number of bytes written                           */
+uint4 done_encoding( rangecoder *rc );
+
+
+
+/* Start the decoder                                         */
+/* rc is the range coder to be used                          */
+/* returns the char from start_encoding or EOF               */
+int start_decoding( rangecoder *rc );
+
+/* Calculate culmulative frequency for next symbol. Does NO update!*/
+/* rc is the range coder to be used                          */
+/* tot_f is the total frequency                              */
+/* or: totf is 1<<shift                                      */
+/* returns the <= culmulative frequency                      */
+freq decode_culfreq( rangecoder *rc, freq tot_f );
+freq decode_culshift( rangecoder *ac, freq shift );
+
+/* Update decoding state                                     */
+/* rc is the range coder to be used                          */
+/* sy_f is the interval length (frequency of the symbol)     */
+/* lt_f is the lower end (frequency sum of < symbols)        */
+/* tot_f is the total interval length (total frequency sum)  */
+void decode_update( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
+#define decode_update_shift(rc,f1,f2,f3) decode_update((rc),(f1),(f2),(freq)1<<(f3));
+
+/* Decode a byte/short without modelling                     */
+/* rc is the range coder to be used                          */
 unsigned char decode_byte(rangecoder *rc);
 unsigned short decode_short(rangecoder *rc);
 
-#ifdef __cplusplus
-}
+
+/* Finish decoding                                           */
+/* rc is the range coder to be used                          */
+void done_decoding( rangecoder *rc );
+
 #endif
-
-/* Macros */
-#define encode_byte(rc, b)  encode_shift(rc, (freq)1, (freq)(b), (freq)8)
-#define encode_short(rc, s) encode_shift(rc, (freq)1, (freq)(s), (freq)16)
-#define decode_update_shift(rc, f1, f2, f3) decode_update((rc), (f1), (f2), (freq)1 << (f3))
-
-#endif /* rangecod_h */

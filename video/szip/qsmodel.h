@@ -26,7 +26,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  qsmodel is a quasistatic probability model that periodically
+  Qsmodel is a quasistatic probability model that periodically
   (at chooseable intervals) updates probabilities of symbols;
   it also allows to initialize probabilities. Updating is done more
   frequent in the beginning, so it adapts very fast even without
@@ -39,46 +39,58 @@
 */
 
 #include "port.h"
-#include <stdint.h>
-#include <esp_heap_caps.h>
 
 typedef struct {
-    int n;             /* Number of symbols */
-    int left;          /* Symbols to next rescale */
-    int nextleft;      /* Symbols with other increment */
-    int rescale;       /* Intervals between rescales */
-    int targetrescale; /* Should be interval between rescales */
-    int incr;          /* Increment per update */
-    int searchshift;   /* Shift for lt_freq before using as index */
-    uint16_t *cf;      /* Array of cumulative frequencies */
-    uint16_t *newf;    /* Array for collecting statistics */
-    uint16_t *search;  /* Structure for searching on decompression */
+    int n,             /* number of symbols */
+        left,          /* symbols to next rescale */
+        nextleft,      /* symbols with other increment */
+        rescale,       /* intervals between rescales */
+        targetrescale, /* should be interval between rescales */
+        incr,          /* increment per update */
+        searchshift;   /* shift for lt_freq before using as index */
+    uint2 *cf,         /* array of cumulative frequencies */
+        *newf,         /* array for collecting ststistics */
+        *search;       /* structure for searching on decompression */
 } qsmodel;
 
-#ifdef __cplusplus
-extern "C" {
+/* initialisation of qsmodel                           */
+/* m   qsmodel to be initialized                       */
+/* n   number of symbols in that model                 */
+/* lg_totf  base2 log of total frequency count         */
+/* rescale  desired rescaling interval, should be < 1<<(lg_totf+1) */
+/* init  array of int's to be used for initialisation (NULL ok) */
+/* compress  set to 1 on compression, 0 on decompression */
+void initqsmodel( qsmodel *m, int n, int lg_totf, int rescale,
+   int *init, int compress );
+
+/* reinitialisation of qsmodel                         */
+/* m   qsmodel to be initialized                       */
+/* init  array of int's to be used for initialisation (NULL ok) */
+void resetqsmodel( qsmodel *m, int *init);
+
+
+/* deletion of qsmodel m                               */
+void deleteqsmodel( qsmodel *m );
+
+
+/* retrieval of estimated frequencies for a symbol     */
+/* m   qsmodel to be questioned                        */
+/* sym  symbol for which data is desired; must be <n   */
+/* sy_f frequency of that symbol                       */
+/* lt_f frequency of all smaller symbols together      */
+/* the total frequency is 1<<lg_totf                   */
+void qsgetfreq( qsmodel *m, int sym, int *sy_f, int *lt_f );
+
+
+/* find out symbol for a given cumulative frequency    */
+/* m   qsmodel to be questioned                        */
+/* lt_f  cumulative frequency                          */
+int qsgetsym( qsmodel *m, int lt_f );
+
+
+/* update model                                        */
+/* m   qsmodel to be updated                           */
+/* sym  symbol that occurred (must be <n from init)    */
+void qsupdate( qsmodel *m, int sym );
+
 #endif
-
-/* Initialization of qsmodel */
-void initqsmodel(qsmodel *m, int n, int lg_totf, int rescale, int *init, int compress);
-
-/* Reinitialization of qsmodel */
-void resetqsmodel(qsmodel *m, int *init);
-
-/* Deletion of qsmodel */
-void deleteqsmodel(qsmodel *m);
-
-/* Retrieval of estimated frequencies for a symbol */
-void qsgetfreq(qsmodel *m, int sym, int *sy_f, int *lt_f);
-
-/* Find symbol for a given cumulative frequency */
-int qsgetsym(qsmodel *m, int lt_f);
-
-/* Update model */
-void qsupdate(qsmodel *m, int sym);
-
-#ifdef __cplusplus
-}
-#endif
-
-#endif /* QSMODEL_H */

@@ -30,7 +30,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  bitmodel implements bit indexed trees for frequency storage described
+  Bitmodel implements bit indexed trees for frequency storage described
   by Peter Fenwick: A New Data Structure for Cumulative Probability Tables
   Technical Report 88, Dep. of Computer Science, University of Auckland, NZ.
   It features a fast method for cumulative frequency storage and updating.
@@ -46,59 +46,78 @@
 */
 
 #include "port.h"
-#include <stdint.h>
-#include <esp_heap_caps.h>
 
 #define EXCLUDEONUPDATE
 
 typedef struct {
-    int n;             /* Number of symbols */
-    int totalfreq;     /* Total frequency count (without excluded symbols) */
-    int max_totf;      /* Maximum allowed total frequency count */
-    int incr;          /* Increment per update */
-    int mask;          /* Initial bitmask used for search */
-    uint16_t *f;       /* Frequency for the symbol; first bit set if excluded */
-    uint16_t *cf;      /* Array of cumulative frequencies */
+    int n,             /* number of symbols */
+        totalfreq,     /* total frequency count (without excluded symbols) */
+        max_totf,      /* maximum allowed total frequency count */
+        incr,          /* increment per update */
+        mask;          /* initial bitmask used for search */
+    uint2 *f,          /* frequency for the symbol; first bit set if excluded */
+        *cf;           /* array of cumulative frequencies */
 } bitmodel;
 
-#ifdef __cplusplus
-extern "C" {
-#endif
+/* initialisation of bitmodel                          */
+/* m   bitmodel to be initialized                      */
+/* n   number of symbols in that model                 */
+/* max_totf  maximum allowed total frequency count     */
+/* rescale  desired rescaling interval, must be <max_totf/2 */
+/* init  array of int's to be used for initialisation (NULL ok) */
+void initbitmodel( bitmodel *m, int n, int max_totf, int rescale,
+   int *init );
 
-/* Initialization of bitmodel */
-void initbitmodel(bitmodel *m, int n, int max_totf, int rescale, int *init);
+/* reinitialisation of bitmodel                        */
+/* m   bitmodel to be initialized                      */
+/* init  array of int's to be used for initialisation (NULL ok) */
+void resetbitmodel( bitmodel *m, int *init);
 
-/* Reinitialization of bitmodel */
-void resetbitmodel(bitmodel *m, int *init);
 
-/* Deletion of bitmodel */
-void deletebitmodel(bitmodel *m);
+/* deletion of bitmodel m                              */
+void deletebitmodel( bitmodel *m );
 
-/* Retrieval of estimated frequencies for a symbol */
-void bitgetfreq(bitmodel *m, int sym, int *sy_f, int *lt_f);
 
-/* Find total frequency */
-#define bitmodel_total_freq(m) ((m)->totalfreq)
+/* retrieval of estimated frequencies for a symbol     */
+/* m   bitmodel to be questioned                       */
+/* sym  symbol for which data is desired; must be <n   */
+/* sy_f frequency of that symbol                       */
+/* lt_f frequency of all smaller symbols together      */
+/* the total frequency can be obtained with bit_totf   */
+void bitgetfreq( bitmodel *m, int sym, int *sy_f, int *lt_f);
 
-/* Find symbol for a given cumulative frequency */
-int bitgetsym(bitmodel *m, int lt_f);
+/* find out total frequency for a bitmodel             */
+/* m   bitmodel to be questioned                       */
+#define bittotf(m) ((m)->totalfreq)
 
-/* Update model */
-void bitupdate(bitmodel *m, int sym);
+/* find out symbol for a given cumulative frequency    */
+/* m   bitmodel to be questioned                       */
+/* lt_f  cumulative frequency                          */
+int bitgetsym( bitmodel *m, int lt_f );
+
+
+/* update model                                        */
+/* m   bitmodel to be updated                          */
+/* sym  symbol that occurred (must be <n from init)    */
+void bitupdate( bitmodel *m, int sym );
+
 
 #ifdef EXCLUDEONUPDATE
-/* Update model and exclude symbol */
-void bitupdate_ex(bitmodel *m, int sym);
+/* update model and exclude symbol                     */
+/* m   bitmodel to be updated                          */
+/* sym  symbol that occurred (must be <n from init)    */
+void bitupdate_ex( bitmodel *m, int sym );
 
-/* Deactivate symbol */
-void bitdeactivate(bitmodel *m, int sym);
 
-/* Reactivate symbol */
-void bitreactivate(bitmodel *m, int sym);
+/* deactivate symbol                                   */
+/* m   bitmodel to be updated                          */
+/* sym  symbol to be deactivated                       */
+void bitdeactivate( bitmodel *m, int sym );
+
+/* reactivate symbol                                   */
+/* m   bitmodel to be updated                          */
+/* sym  symbol to be reactivated                       */
+void bitreactivate( bitmodel *m, int sym );
 #endif
 
-#ifdef __cplusplus
-}
 #endif
-
-#endif /* BITMODEL_H */
