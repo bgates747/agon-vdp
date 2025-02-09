@@ -30,7 +30,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  Bitmodel implements bit indexed trees for frequency storage described
+  bitmodel implements bit indexed trees for frequency storage described
   by Peter Fenwick: A New Data Structure for Cumulative Probability Tables
   Technical Report 88, Dep. of Computer Science, University of Auckland, NZ.
   It features a fast method for cumulative frequency storage and updating.
@@ -59,42 +59,42 @@ typedef struct {
     int mask;          /* Initial bitmask used for search */
     uint16_t *f;       /* Frequency for the symbol; first bit set if excluded */
     uint16_t *cf;      /* Array of cumulative frequencies */
-} BitModel;
+} bitmodel;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Initialization of BitModel */
-void init_bitmodel(BitModel *m, int n, int max_totf, int rescale, int *init);
+/* Initialization of bitmodel */
+void initbitmodel(bitmodel *m, int n, int max_totf, int rescale, int *init);
 
-/* Reinitialization of BitModel */
-void reset_bitmodel(BitModel *m, int *init);
+/* Reinitialization of bitmodel */
+void resetbitmodel(bitmodel *m, int *init);
 
-/* Deletion of BitModel */
-void delete_bitmodel(BitModel *m);
+/* Deletion of bitmodel */
+void deletebitmodel(bitmodel *m);
 
 /* Retrieval of estimated frequencies for a symbol */
-void bitmodel_get_freq(BitModel *m, int sym, int *sy_f, int *lt_f);
+void bitgetfreq(bitmodel *m, int sym, int *sy_f, int *lt_f);
 
 /* Find total frequency */
 #define bitmodel_total_freq(m) ((m)->totalfreq)
 
 /* Find symbol for a given cumulative frequency */
-int bitmodel_get_symbol(BitModel *m, int lt_f);
+int bitgetsym(bitmodel *m, int lt_f);
 
 /* Update model */
-void bitmodel_update(BitModel *m, int sym);
+void bitupdate(bitmodel *m, int sym);
 
 #ifdef EXCLUDEONUPDATE
 /* Update model and exclude symbol */
-void bitmodel_update_ex(BitModel *m, int sym);
+void bitupdate_ex(bitmodel *m, int sym);
 
 /* Deactivate symbol */
-void bitmodel_deactivate(BitModel *m, int sym);
+void bitdeactivate(bitmodel *m, int sym);
 
 /* Reactivate symbol */
-void bitmodel_reactivate(BitModel *m, int sym);
+void bitreactivate(bitmodel *m, int sym);
 #endif
 
 #ifdef __cplusplus

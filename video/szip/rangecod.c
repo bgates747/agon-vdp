@@ -80,7 +80,7 @@
 #define EXTRA_BITS ((CODE_BITS - 2) % 8 + 1)
 #define Bottom_value (Top_value >> 8)
 
-static inline void enc_normalize(RangeCoder *rc) {
+static inline void enc_normalize(rangecoder *rc) {
     while (rc->range <= Bottom_value) {
         if (rc->low < (code_value)0xff << SHIFT_BITS) {
             outbyte(rc, rc->buffer);
@@ -99,7 +99,7 @@ static inline void enc_normalize(RangeCoder *rc) {
     }
 }
 
-void start_encoding(RangeCoder *rc, char c, int initlength) {
+void start_encoding(rangecoder *rc, char c, int initlength) {
     rc->low = 0;
     rc->range = Top_value;
     rc->buffer = c;
@@ -107,7 +107,7 @@ void start_encoding(RangeCoder *rc, char c, int initlength) {
     rc->bytecount = initlength;
 }
 
-void encode_freq(RangeCoder *rc, freq sy_f, freq lt_f, freq tot_f) {
+void encode_freq(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f) {
     code_value r, tmp;
     enc_normalize(rc);
     r = rc->range / tot_f;
@@ -116,7 +116,7 @@ void encode_freq(RangeCoder *rc, freq sy_f, freq lt_f, freq tot_f) {
     rc->range = r * sy_f;
 }
 
-void encode_shift(RangeCoder *rc, freq sy_f, freq lt_f, freq shift) {
+void encode_shift(rangecoder *rc, freq sy_f, freq lt_f, freq shift) {
     code_value r, tmp;
     enc_normalize(rc);
     r = rc->range >> shift;
@@ -125,7 +125,7 @@ void encode_shift(RangeCoder *rc, freq sy_f, freq lt_f, freq shift) {
     rc->range = r * sy_f;
 }
 
-uint32_t done_encoding(RangeCoder *rc) {
+uint32_t done_encoding(rangecoder *rc) {
     uint32_t tmp;
     enc_normalize(rc);
     rc->bytecount += 5;
@@ -149,7 +149,7 @@ uint32_t done_encoding(RangeCoder *rc) {
     return rc->bytecount;
 }
 
-int start_decoding(RangeCoder *rc) {
+int start_decoding(rangecoder *rc) {
     int c = inbyte(rc);
     if (c == EOF) return EOF;
     rc->buffer = inbyte(rc);
@@ -158,7 +158,7 @@ int start_decoding(RangeCoder *rc) {
     return c;
 }
 
-static inline void dec_normalize(RangeCoder *rc) {
+static inline void dec_normalize(rangecoder *rc) {
     while (rc->range <= Bottom_value) {
         rc->low = (rc->low << 8) | ((rc->buffer << EXTRA_BITS) & 0xff);
         rc->buffer = inbyte(rc);
@@ -167,7 +167,7 @@ static inline void dec_normalize(RangeCoder *rc) {
     }
 }
 
-freq decode_culfreq(RangeCoder *rc, freq tot_f) {
+freq decode_culfreq(rangecoder *rc, freq tot_f) {
     freq tmp;
     dec_normalize(rc);
     rc->help = rc->range / tot_f;
@@ -175,7 +175,7 @@ freq decode_culfreq(RangeCoder *rc, freq tot_f) {
     return tmp;
 }
 
-freq decode_culshift(RangeCoder *rc, freq shift) {
+freq decode_culshift(rangecoder *rc, freq shift) {
     freq tmp;
     dec_normalize(rc);
     rc->help = rc->range >> shift;
@@ -183,25 +183,25 @@ freq decode_culshift(RangeCoder *rc, freq shift) {
     return tmp;
 }
 
-void decode_update(RangeCoder *rc, freq sy_f, freq lt_f, freq tot_f) {
+void decode_update(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f) {
     code_value tmp;
     tmp = rc->help * lt_f;
     rc->low -= tmp;
     rc->range = rc->help * sy_f;
 }
 
-unsigned char decode_byte(RangeCoder *rc) {
+unsigned char decode_byte(rangecoder *rc) {
     unsigned char tmp = decode_culshift(rc, 8);
     decode_update(rc, 1, tmp, (freq)1 << 8);
     return tmp;
 }
 
-unsigned short decode_short(RangeCoder *rc) {
+unsigned short decode_short(rangecoder *rc) {
     unsigned short tmp = decode_culshift(rc, 16);
     decode_update(rc, 1, tmp, (freq)1 << 16);
     return tmp;
 }
 
-void done_decoding(RangeCoder *rc) {
+void done_decoding(rangecoder *rc) {
     dec_normalize(rc);
 }

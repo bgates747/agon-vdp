@@ -78,26 +78,26 @@ typedef struct {
     uint32_t help;      /* Bytes_to_follow resp. intermediate value */
     uint8_t buffer;     /* Buffer for input/output */
     uint32_t bytecount; /* Counter for output bytes */
-} RangeCoder;
+} rangecoder;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 /* Function prototypes */
-void start_encoding(RangeCoder *rc, char c, int initlength);
-void encode_freq(RangeCoder *rc, freq sy_f, freq lt_f, freq tot_f);
-void encode_shift(RangeCoder *rc, freq sy_f, freq lt_f, freq shift);
-uint32_t done_encoding(RangeCoder *rc);
+void start_encoding(rangecoder *rc, char c, int initlength);
+void encode_freq(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
+void encode_shift(rangecoder *rc, freq sy_f, freq lt_f, freq shift);
+uint32_t done_encoding(rangecoder *rc);
 
-int start_decoding(RangeCoder *rc);
-freq decode_culfreq(RangeCoder *rc, freq tot_f);
-freq decode_culshift(RangeCoder *rc, freq shift);
-void decode_update(RangeCoder *rc, freq sy_f, freq lt_f, freq tot_f);
-void done_decoding(RangeCoder *rc);
+int start_decoding(rangecoder *rc);
+freq decode_culfreq(rangecoder *rc, freq tot_f);
+freq decode_culshift(rangecoder *rc, freq shift);
+void decode_update(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
+void done_decoding(rangecoder *rc);
 
-unsigned char decode_byte(RangeCoder *rc);
-unsigned short decode_short(RangeCoder *rc);
+unsigned char decode_byte(rangecoder *rc);
+unsigned short decode_short(rangecoder *rc);
 
 #ifdef __cplusplus
 }

@@ -17,30 +17,30 @@
 typedef struct {
     uint32_t sym;
     uint32_t next;
-} MTFEntry;
+} mtfentry;
 
-typedef struct CacheEntryS *CachePtr;
+typedef struct cacheS *cacheptr;
 
-typedef struct CacheEntryS {
+typedef struct cacheS {
     uint8_t symbol, sy_f, weight, what;
-    CachePtr next, prev;
-} CacheEntry;
+    cacheptr next, prev;
+} cacheentry;
 
 typedef struct {
     uint32_t whatmod[3];    // Probabilities for the submodels
-    CachePtr newest;        // Points to the newest element in cache
-    CachePtr lastnew;       // Points to the last element with higher weight
+    cacheptr newest;        // Points to the newest element in cache
+    cacheptr lastnew;       // Points to the last element with higher weight
     uint32_t cachetotf;     // Total frequency count in cache
     uint32_t mtffirst;      // Position of the newest entry in mtfhist
     uint32_t mtfsize;       // Size of the MTF list
     uint32_t mtfsizeact;    // Size of the active MTF list
-    CachePtr lastseen[ALPHABETSIZE]; // Tracks symbol positions in cache
-    CacheEntry cache[CACHESIZE];     // Cache
-    MTFEntry mtfhist[MTFHISTSIZE];   // MTF history
-    BitModel full;          // Fallback model
-    QSModel mtfmod;         // Probabilities for MTF ranks
-    QSModel rlemod[5];      // Run-length encoding models
-    RangeCoder ac;
+    cacheptr lastseen[ALPHABETSIZE]; // Tracks symbol positions in cache
+    cacheentry cache[CACHESIZE];     // Cache
+    mtfentry mtfhist[MTFHISTSIZE];   // MTF history
+    bitmodel full;          // Fallback model
+    qsmodel mtfmod;         // Probabilities for MTF ranks
+    qsmodel rlemod[5];      // Run-length encoding models
+    rangecoder ac;
     uint32_t compress;      // 1 for compression, 0 for decompression
 } SzipModel;
 

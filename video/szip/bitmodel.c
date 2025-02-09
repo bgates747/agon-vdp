@@ -27,7 +27,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  Bitmodel implements bit indexed trees for frequency storage described
+  bitmodel implements bit indexed trees for frequency storage described
   by Peter Fenwick: A New Data Structure for Cumulative Probability Tables
   Technical Report 88, Dep. of Computer Science, University of Auckland, NZ.
   It features a fast method for cumulative frequency storage and updating.
@@ -47,7 +47,7 @@
 #include <stdlib.h>
 #include "esp_heap_caps.h"
 
-static inline void build_cf(BitModel *m) {
+static inline void build_cf(bitmodel *m) {
     int i;
     uint16_t *cf = m->cf;
     m->totalfreq = 0;
@@ -66,7 +66,7 @@ static inline void build_cf(BitModel *m) {
     }
 }
 
-static void scale_freq(BitModel *m) {
+static void scale_freq(bitmodel *m) {
     for (uint16_t *f = m->f, *endf = f + m->n; f < endf; f++)
 #ifdef EXCLUDEONUPDATE
         *f = ((1 + (*f & 0x7FFF)) >> 1) | (*f & 0x8000);
@@ -76,7 +76,7 @@ static void scale_freq(BitModel *m) {
     build_cf(m);
 }
 
-void init_bitmodel(BitModel *m, int n, int max_totf, int rescale, int *init) {
+void initbitmodel(bitmodel *m, int n, int max_totf, int rescale, int *init) {
     m->n = n;
     if (max_totf < n << 1) max_totf = n << 1;
     m->max_totf = max_totf;
@@ -87,10 +87,10 @@ void init_bitmodel(BitModel *m, int n, int max_totf, int rescale, int *init) {
     m->mask = 1;
     while (n >>= 1)
         m->mask <<= 1;
-    reset_bitmodel(m, init);
+    resetbitmodel(m, init);
 }
 
-void reset_bitmodel(BitModel *m, int *init) {
+void resetbitmodel(bitmodel *m, int *init) {
     if (init == NULL) {
         for (int i = 0; i < m->n; i++)
             m->f[i] = 1;
@@ -107,13 +107,13 @@ void reset_bitmodel(BitModel *m, int *init) {
     build_cf(m);
 }
 
-void delete_bitmodel(BitModel *m) {
+void deletebitmodel(bitmodel *m) {
     free(m->f);
     free(m->cf);
     m->n = 0;
 }
 
-void bitmodel_get_freq(BitModel *m, int sym, int *sy_f, int *lt_f) {
+void bitgetfreq(bitmodel *m, int sym, int *sy_f, int *lt_f) {
     int cul;
     uint16_t *cf = m->cf;
     *sy_f = m->f[sym];
@@ -124,7 +124,7 @@ void bitmodel_get_freq(BitModel *m, int sym, int *sy_f, int *lt_f) {
     *lt_f = cul - *sy_f;
 }
 
-int bitmodel_get_symbol(BitModel *m, int lt_f) {
+int bitgetsym(bitmodel *m, int lt_f) {
     int sym = 0, mask = m->mask, n = m->n;
     uint16_t *cf = m->cf;
     do {
@@ -137,7 +137,7 @@ int bitmodel_get_symbol(BitModel *m, int lt_f) {
     return sym;
 }
 
-void bitmodel_update(BitModel *m, int sym) {
+void bitupdate(bitmodel *m, int sym) {
     m->f[sym] += m->incr;
     m->totalfreq += m->incr;
     if (m->totalfreq > m->max_totf)
@@ -153,7 +153,7 @@ void bitmodel_update(BitModel *m, int sym) {
 }
 
 #ifdef EXCLUDEONUPDATE
-void bitmodel_update_ex(BitModel *m, int sym) {
+void bitupdate_ex(bitmodel *m, int sym) {
     int delta = -m->f[sym];
     m->f[sym] = (m->f[sym] + m->incr) | 0x8000;
     m->totalfreq += delta;
@@ -161,12 +161,12 @@ void bitmodel_update_ex(BitModel *m, int sym) {
         scale_freq(m);
 }
 
-void bitmodel_deactivate(BitModel *m, int sym) {
+void bitdeactivate(bitmodel *m, int sym) {
     m->totalfreq -= m->f[sym];
     m->f[sym] |= 0x8000;
 }
 
-void bitmodel_reactivate(BitModel *m, int sym) {
+void bitreactivate(bitmodel *m, int sym) {
     m->f[sym] &= 0x7FFF;
     m->totalfreq += m->f[sym];
 }

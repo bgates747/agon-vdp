@@ -23,7 +23,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  Qsmodel is a quasistatic probability model that periodically
+  qsmodel is a quasistatic probability model that periodically
   (at chooseable intervals) updates probabilities of symbols;
   it also allows to initialize probabilities. Updating is done more
   frequent in the beginning, so it adapts very fast even without
@@ -43,7 +43,7 @@
 #define TBLSHIFT 7
 
 /* Rescale frequency counts */
-static void qsmodel_rescale(QSModel *m) {
+static void qsmodel_rescale(qsmodel *m) {
     int i, cf, missing;
     if (m->nextleft) { /* We have some more before actual rescaling */
         m->incr++;
@@ -67,7 +67,7 @@ static void qsmodel_rescale(QSModel *m) {
     }
     if (cf != m->newf[0]) {
         fprintf(stderr, "BUG: rescaling left %d total frequency\n", cf);
-        delete_qsmodel(m);
+        deleteqsmodel(m);
         exit(1);
     }
     m->newf[0] = m->newf[0] >> 1 | 1;
@@ -90,8 +90,8 @@ static void qsmodel_rescale(QSModel *m) {
     }
 }
 
-/* Initialization of QSModel */
-void init_qsmodel(QSModel *m, int n, int lg_totf, int rescale, int *init, int compress) {
+/* Initialization of qsmodel */
+void initqsmodel(qsmodel *m, int n, int lg_totf, int rescale, int *init, int compress) {
     m->n = n;
     m->targetrescale = rescale;
     m->searchshift = lg_totf - TBLSHIFT;
@@ -109,11 +109,11 @@ void init_qsmodel(QSModel *m, int n, int lg_totf, int rescale, int *init, int co
         m->search = (uint16_t*) heap_caps_malloc(((1 << TBLSHIFT) + 1) * sizeof(uint16_t), MALLOC_CAP_8BIT);
         m->search[1 << TBLSHIFT] = n - 1;
     }
-    reset_qsmodel(m, init);
+    resetqsmodel(m, init);
 }
 
-/* Reinitialization of QSModel */
-void reset_qsmodel(QSModel *m, int *init) {
+/* Reinitialization of qsmodel */
+void resetqsmodel(qsmodel *m, int *init) {
     int i, end, initval;
     m->rescale = m->n >> 4 | 2;
     m->nextleft = 0;
@@ -131,8 +131,8 @@ void reset_qsmodel(QSModel *m, int *init) {
     qsmodel_rescale(m);
 }
 
-/* Deletion of QSModel */
-void delete_qsmodel(QSModel *m) {
+/* Deletion of qsmodel */
+void deleteqsmodel(qsmodel *m) {
     if (m->cf)
         heap_caps_free(m->cf);
     if (m->newf)
@@ -142,12 +142,12 @@ void delete_qsmodel(QSModel *m) {
 }
 
 /* Retrieval of estimated frequencies for a symbol */
-void qsmodel_get_freq(QSModel *m, int sym, int *sy_f, int *lt_f) {
+void qsgetfreq(qsmodel *m, int sym, int *sy_f, int *lt_f) {
     *sy_f = m->cf[sym + 1] - (*lt_f = m->cf[sym]);
 }
 
 /* Find symbol for a given cumulative frequency */
-int qsmodel_get_symbol(QSModel *m, int lt_f) {
+int qsgetsym(qsmodel *m, int lt_f) {
     int lo, hi;
     uint16_t *tmp = m->search + (lt_f >> m->searchshift);
     lo = *tmp;
@@ -162,8 +162,8 @@ int qsmodel_get_symbol(QSModel *m, int lt_f) {
     return lo;
 }
 
-/* Update QSModel */
-void qsmodel_update(QSModel *m, int sym) {
+/* Update qsmodel */
+void qsupdate(qsmodel *m, int sym) {
     if (m->left <= 0)
         qsmodel_rescale(m);
     m->left--;

@@ -26,7 +26,7 @@
   Foundation, Inc., 59 Temple Place - Suite 330, Boston,
   MA 02111-1307, USA.
 
-  Qsmodel is a quasistatic probability model that periodically
+  qsmodel is a quasistatic probability model that periodically
   (at chooseable intervals) updates probabilities of symbols;
   it also allows to initialize probabilities. Updating is done more
   frequent in the beginning, so it adapts very fast even without
@@ -53,29 +53,29 @@ typedef struct {
     uint16_t *cf;      /* Array of cumulative frequencies */
     uint16_t *newf;    /* Array for collecting statistics */
     uint16_t *search;  /* Structure for searching on decompression */
-} QSModel;
+} qsmodel;
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Initialization of QSModel */
-void init_qsmodel(QSModel *m, int n, int lg_totf, int rescale, int *init, int compress);
+/* Initialization of qsmodel */
+void initqsmodel(qsmodel *m, int n, int lg_totf, int rescale, int *init, int compress);
 
-/* Reinitialization of QSModel */
-void reset_qsmodel(QSModel *m, int *init);
+/* Reinitialization of qsmodel */
+void resetqsmodel(qsmodel *m, int *init);
 
-/* Deletion of QSModel */
-void delete_qsmodel(QSModel *m);
+/* Deletion of qsmodel */
+void deleteqsmodel(qsmodel *m);
 
 /* Retrieval of estimated frequencies for a symbol */
-void qsmodel_get_freq(QSModel *m, int sym, int *sy_f, int *lt_f);
+void qsgetfreq(qsmodel *m, int sym, int *sy_f, int *lt_f);
 
 /* Find symbol for a given cumulative frequency */
-int qsmodel_get_symbol(QSModel *m, int lt_f);
+int qsgetsym(qsmodel *m, int lt_f);
 
 /* Update model */
-void qsmodel_update(QSModel *m, int sym);
+void qsupdate(qsmodel *m, int sym);
 
 #ifdef __cplusplus
 }
