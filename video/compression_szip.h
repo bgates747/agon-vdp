@@ -27,6 +27,17 @@ static void no_szip() {
     exit(1);
 }
 
+static void hex_dump(const unsigned char *buf, uint4 len) {
+    uint4 i;
+    for (i = 0; i < len; i++) {
+        debug_log("%02X ", buf[i]);
+        if ((i + 1) % 16 == 0)
+        debug_log("\n");
+    }
+    if (len % 16 != 0)
+    debug_log("\n");
+}
+
 static void readglobalheader() {
     int ch, vmay;
     ch = sz_stream_getchar();
