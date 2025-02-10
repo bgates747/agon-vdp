@@ -2510,6 +2510,7 @@ void VDUStreamProcessor::bufferCompressSzip(uint16_t bufferId, uint16_t sourceBu
 // Decompress (blocks from) a buffer into a new buffer using 'szip' compression.
 // Replaces the target buffer with the new one.
 //
+
 void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t sourceBufferId) {
     #ifdef DEBUG
     auto start = millis();
@@ -2534,15 +2535,37 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     
     // Set up the buffer stream for decompression
     SzipBufferStream inStream = { compressedData, compressedSize, 0 };
+    szip_global_stream = &inStream;
 
     printf("Starting decompression for buffer %u...\n", bufferId);
 
-    // Perform decompression
-    decompressit(&inStream);
+    // Prepare decompressed buffer
+    unsigned char *decompressedData = NULL;
+    uint32_t decompressedSize = 0;  // Capture the decompressed size
+    decompressit(&decompressedData, &decompressedSize);
 
-    // The decompressed data is stored in the buffer handled within `decompressit()`.
-    // We assume that the decompression process writes to an internal buffer (as per the original logic).
-    
+    if (!decompressedData || decompressedSize == 0) {
+        printf("Decompression failed: No data output.\n");
+        return;
+    }
+
+    // Allocate a BufferStream of the correct size
+    auto bufferStream = make_shared_psram<BufferStream>(decompressedSize);
+    if (!bufferStream || !bufferStream->getBuffer()) {
+        printf("Failed to allocate bufferStream\n");
+        free(decompressedData);
+        return;
+    }
+
+    // Copy decompressed data into the BufferStream
+    memcpy(bufferStream->getBuffer(), decompressedData, decompressedSize);
+
+    // Store the decompressed data
+    buffers[bufferId].push_back(bufferStream);
+
+    // Free the decompressed data buffer since we copied it
+    free(decompressedData);
+
     printf("Decompression completed for buffer %u.\n", bufferId);
 
     #ifdef DEBUG

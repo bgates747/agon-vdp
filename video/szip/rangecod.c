@@ -81,6 +81,7 @@
 #include <stdio.h>		/* fprintf(), getchar(), putchar(), NULL */
 #include "port.h"
 #include "rangecod.h"
+#include "sz_stream.h"
 
 /* SIZE OF RANGE ENCODING CODE VALUES. */
 
@@ -92,7 +93,8 @@
 /* no checking is done - do it here if you want it             */
 /* cod is a pointer to the used rangecoder                     */
 #define outbyte(cod,x) putchar(x)
-#define inbyte(cod)    getchar()
+// #define inbyte(cod)    getchar()
+#define inbyte(cod)    sz_stream_getchar()
 
 
 #ifdef RENORM95
