@@ -2519,13 +2519,13 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     // Locate source buffer
     auto sourceBufferIter = buffers.find(sourceBufferId);
     if (sourceBufferIter == buffers.end()) {
-        printf("bufferDecompressSzip: source buffer %d not found\n", sourceBufferId);
+        debug_log("bufferDecompressSzip: source buffer %d not found\n", sourceBufferId);
         return;
     }
     auto &sourceBuffer = sourceBufferIter->second;
     
     if (sourceBuffer.empty() || sourceBuffer[0]->size() < SZIP_HEADER_SIZE) {
-        printf("bufferDecompressSzip: buffer too small for header\n");
+        debug_log("bufferDecompressSzip: buffer too small for header\n");
         return;
     }
     
@@ -2537,7 +2537,7 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     SzipBufferStream inStream = { compressedData, compressedSize, 0 };
     szip_global_stream = &inStream;
 
-    printf("Starting decompression for buffer %u...\n", bufferId);
+    debug_log("Starting decompression for buffer %u...\n", bufferId);
 
     // Prepare decompressed buffer
     unsigned char *decompressedData = NULL;
@@ -2545,14 +2545,14 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     decompressit(&decompressedData, &decompressedSize);
 
     if (!decompressedData || decompressedSize == 0) {
-        printf("Decompression failed: No data output.\n");
+        debug_log("Decompression failed: No data output.\n");
         return;
     }
 
     // Allocate a BufferStream of the correct size
     auto bufferStream = make_shared_psram<BufferStream>(decompressedSize);
     if (!bufferStream || !bufferStream->getBuffer()) {
-        printf("Failed to allocate bufferStream\n");
+        debug_log("Failed to allocate bufferStream\n");
         free(decompressedData);
         return;
     }
@@ -2560,16 +2560,17 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     // Copy decompressed data into the BufferStream
     memcpy(bufferStream->getBuffer(), decompressedData, decompressedSize);
 
-    // Store the decompressed data
+    // Clear the target buffer and store the decompressed data
+	bufferClear(bufferId);
     buffers[bufferId].push_back(bufferStream);
 
     // Free the decompressed data buffer since we copied it
     free(decompressedData);
 
-    printf("Decompression completed for buffer %u.\n", bufferId);
+    debug_log("Decompression completed for buffer %u.\n", bufferId);
 
     #ifdef DEBUG
-    printf("Decompression took %u ms\n", millis() - start);
+    debug_log("Decompression took %u ms\n", millis() - start);
     #endif
 }
 

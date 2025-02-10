@@ -15,11 +15,15 @@ static char vmayor = 1, vminor = 12;
 
 /* parameter values */
 uint4 blocksize = 32768; // 32 KB = 0x8000, ESP32-friendly default
-uint order = 6, verbosity = 0, compress = 1;
+uint order = 6;
+#define VERBOSITY 1
+uint compress = 1;
 unsigned char recordsize = 1;
 
+extern void debug_log(const char * format, ...);		// Debug log function
+
 static void no_szip() {
-    printf("probably not an szip file; could be szip version prior to 1.10\n");
+    debug_log("probably not an szip file; could be szip version prior to 1.10\n");
     exit(1);
 }
 
@@ -36,7 +40,7 @@ static void readglobalheader() {
     ch = sz_stream_getchar();
     if (ch == EOF) no_szip();
     if (vmay > vmayor || (vmay == vmayor && ch > vminor)) {
-        printf("This file is szip version %d.%d, this program is %d.%d.\n Please update\n",
+        debug_log("This file is szip version %d.%d, this program is %d.%d.\n Please update\n",
                vmay, ch, vmayor, vminor);
         exit(1);
     }
@@ -62,19 +66,19 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
 #ifndef MODELGLOBAL
     sz_model m;
 #endif
-    if (verbosity & 1) printf("Decoding %d bytes ", buflen);
+    debug_log("Decoding %d bytes ", buflen);
     indexlast = sz_stream_readuint3();
     order = sz_stream_getchar();
 
     memset(charcount, 0, sizeof(charcount));
     initmodel(&m, -1, &recordsize);
 
-    if (verbosity & 1) {
-        if (order != 6) printf("-o%d ", order);
-        if ((recordsize & 0x7F) != 1) printf("-r%d ", recordsize & 0x7F);
-        if (recordsize & 0x80) printf("-i ");
-        printf("...");
-    }
+    #if VERBOSITY == 1
+        if (order != 6) debug_log("-o%d ", order);
+        if ((recordsize & 0x7F) != 1) debug_log("-r%d ", recordsize & 0x7F);
+        if (recordsize & 0x80) debug_log("-i ");
+        debug_log("...");
+    #endif
 
     tmp = buffer;
     bytesleft = buflen;
@@ -82,7 +86,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         uint ch;
         sz_decode(&m, &ch, &runlength);
         if (runlength > bytesleft) {
-            printf("input file corrupt\n");
+            debug_log("input file corrupt\n");
             exit(1);
         }
         bytesleft -= runlength;
@@ -97,7 +101,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         uint ch;
         sz_decode(&m, &ch, &runlength);
         if (runlength > bytesleft) {
-            printf("input file corrupt\n");
+            debug_log("input file corrupt\n");
             exit(1);
         }
         bytesleft -= runlength;
@@ -108,7 +112,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     }
     deletemodel(&m);
 
-    if (verbosity & 1) printf(" processing ...");
+    debug_log(" processing ...");
 
     if (recordsize == 1) {
         if (order == 0)
@@ -118,7 +122,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     } else {
         tmp = (unsigned char *)malloc(buflen);
         if (tmp == NULL) {
-            printf("memory allocation failure\n");
+            debug_log("memory allocation failure\n");
             exit(1);
         }
         if (order == 0)
@@ -160,19 +164,30 @@ static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
             *inoutbuffer_ptr = (unsigned char *)malloc(blocklen);
             blocksize = blocklen;
             if (*inoutbuffer_ptr == NULL) {
-                printf("memory allocation error\n");
+                debug_log("memory allocation error\n");
                 exit(1);
             }
         }
 
         ch = sz_stream_getchar();
-        if (ch == 1)
+        if (ch == 1) {
+            debug_log("[DEBUG] Reading compressed block, size=%d bytes\n", blocklen);
             readszipblock(dirsize + 1, blocklen, *inoutbuffer_ptr);
-        else
+        } else {
+            debug_log("[ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
             no_szip();
-
+        }
+        
         *outSize = blocklen;  // Update the output size
-
-        if (verbosity & 1) printf(" done\n");
+        
+        #if VERBOSITY == 1
+        debug_log("[DEBUG] Decompressed Data (Hexdump):\n");
+        for (uint32_t i = 0; i < blocklen; i++) {
+            debug_log("%02X ", (*inoutbuffer_ptr)[i]);
+            if ((i + 1) % 16 == 0) debug_log("\n"); // Format output in 16-byte rows
+        }
+        debug_log("\n");
+        debug_log(" done\n");
+        #endif
     }
 }
