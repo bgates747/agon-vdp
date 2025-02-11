@@ -6,6 +6,7 @@
 #include "port.h"
 #include "sz_err.h"
 #include "sz_srt.h"
+#include "szip_debug.h"
 
 #if defined SZ_UNSRT_O4
 #include "sz_hash2.h"		// only used in sz_unsrt_o4
@@ -343,97 +344,90 @@ static void maketable(unsigned char *inflags, uint4 *table, unsigned char *in,
 // order: order of context used in sorting (must be >=3)
 // the code assumes length>=order
 void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast,
-			uint4 *counts, unsigned int order)
-{	uint4 i, j;
+              uint4 *counts, unsigned int order) {
+    uint4 i, j;
     static uint4 *table;
-	static unsigned char *flags1=NULL;
-	static unsigned char *flags2=NULL;
-	unsigned char nocounts;
+    static unsigned char *flags1 = NULL;
+    static unsigned char *flags2 = NULL;
+    unsigned char nocounts;
 
-	// get counts if not supplied
-	nocounts = counts==NULL;
-	if (nocounts)
-	{	counts = (uint4*) calloc(256, sizeof(uint4));
-		for (i=0; i<length; i++)
-			counts[in[i]]++;
-	}
-	// sum counts
-	j = length;
-	for (i=256; i--; )
-	{	j -= counts[i];
-		counts[i] = j;
-	}
+    if (out == NULL) {
+        szip_debug_log("ERROR: sz_unsrt() called with NULL output buffer!\n");
+        sz_error(SZ_NOMEM_SORT);
+    }
 
-	if (flags1==NULL){
-		flags1 = (unsigned char*) calloc((length+8)>>3,1);
-		if (flags1 == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	} else 
-		memset(flags1,0,(length+8)>>3);
+    // Get counts if not supplied
+    nocounts = (counts == NULL);
+    if (nocounts) {
+        counts = (uint4 *)calloc(256, sizeof(uint4));
+        if (!counts) sz_error(SZ_NOMEM_SORT);
+        for (i = 0; i < length; i++)
+            counts[in[i]]++;
+    }
 
-	makeorder2(flags1, in, counts, length);
-	
-	// now incease the order to desired order-1
-	if (flags2==NULL){
-		flags2 = (unsigned char*) calloc((length+8)>>3,1);
-		if (flags2 == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	} else 
-		memset(flags2,0,(length+8)>>3);
-	for (i=2; i<order-1; i++)
-	{	unsigned char *tmpflags;
-		increaseorder(flags1, flags2, in, counts, length);
-		tmpflags = flags1;
-		flags1 = flags2;		// flags1 now contains the updated beginflags
-		flags2 = tmpflags;		// no need to clear, the set bits will be set again
-	}
-//	free(flags2);
+    // Sum counts
+    j = length;
+    for (i = 256; i--; ) {
+        j -= counts[i];
+        counts[i] = j;
+    }
 
-	// construct permutation table
-	if (table==NULL) {
-		table = (uint4*)malloc((length+1)*sizeof(uint4));
-		if (table == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	}
-	maketable(flags1, table, in, counts, length);
-	table[length] = INDIRECT;
-//	free(flags1);
-	if (nocounts)
-		free(counts);
+    // Allocate or reset flags1
+    if (flags1 == NULL) {
+        flags1 = (unsigned char *)calloc((length + 8) >> 3, 1);
+        if (!flags1) sz_error(SZ_NOMEM_SORT);
+    } else {
+        memset(flags1, 0, (length + 8) >> 3);
+    }
 
-	// do the actual unsorting
-	j = indexlast;
-	if (out == NULL)
-		for (i=0; i<length; i++)
-		{	uint4 tmp = table[j];
-			if (tmp & INDIRECT)
-			{	j = table[tmp & ~INDIRECT]++;
-#ifdef CHECKINDIRECT
-				if (j&INDIRECT)
-					sz_error(SZ_DOUBLEINDIRECT);
-#endif
-			}
-			else
-			{	table[j]++;
-				j = tmp;
-			}
-			putc(in[j],stdout);
-		}
-	else
-		for (i=0; i<length; i++)
-		{	uint4 tmp = table[j];
-			if (tmp & INDIRECT)
-				j = table[tmp & ~INDIRECT]++;
-			else
-			{	table[j]++;
-				j = tmp;
-			}
-			out[i] = in[j];
-		}
+    // Compute initial ordering flags
+    makeorder2(flags1, in, counts, length);
 
-	if (j != indexlast)
-		sz_error(SZ_NOTCYCLIC);
-//	free(table);
+    // Increase order
+    if (flags2 == NULL) {
+        flags2 = (unsigned char *)calloc((length + 8) >> 3, 1);
+        if (!flags2) sz_error(SZ_NOMEM_SORT);
+    } else {
+        memset(flags2, 0, (length + 8) >> 3);
+    }
+
+    for (i = 2; i < order - 1; i++) {
+        unsigned char *tmpflags;
+        increaseorder(flags1, flags2, in, counts, length);
+        tmpflags = flags1;
+        flags1 = flags2;
+        flags2 = tmpflags;
+    }
+
+    // Construct permutation table
+    if (table == NULL) {
+        table = (uint4 *)malloc((length + 1) * sizeof(uint4));
+        if (!table) sz_error(SZ_NOMEM_SORT);
+    }
+
+    maketable(flags1, table, in, counts, length);
+    table[length] = INDIRECT;
+
+    if (nocounts)
+        free(counts);
+
+    // Do the actual unsorting
+    j = indexlast;
+    for (i = 0; i < length; i++) {
+        uint4 tmp = table[j];
+
+        if (tmp & INDIRECT) {
+            j = table[tmp & ~INDIRECT]++;
+        } else {
+            table[j]++;
+            j = tmp;
+        }
+
+        out[i] = in[j];
+    }
+
+    if (j != indexlast)
+        sz_error(SZ_NOTCYCLIC);
 }
 
 
@@ -685,57 +679,60 @@ void sz_srt_BW(unsigned char *inout, uint4 length, uint4 *indexfirst)
 
 
 void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length,
-			   uint4 indexfirst, uint4 *counts)
-{	uint4 i, *transvec;
-	unsigned char nocounts;
+                 uint4 indexfirst, uint4 *counts) {
+    uint4 i, *transvec;
+    unsigned char nocounts;
 
-	// get counts if not supplied
-	nocounts = counts==NULL;
-	if (nocounts)
-	{	counts = (uint4*) calloc(256, sizeof(uint4));
-		if (counts == NULL)
-			sz_error(SZ_NOMEM_SORT);
-		for (i=0; i<length; i++)
-			counts[in[i]]++;
-	}
-    
-  {	uint4 sum = length;
-	for (i=0x100; i--; )
-	{	sum -= counts[i];
-		counts[i] = sum;
-	}
-  }
+    if (out == NULL) {
+        szip_debug_log("ERROR: sz_unsrt_BW() called with NULL output buffer!\n");
+        sz_error(SZ_NOMEM_SORT);
+    }
 
-	// prepare transposition vector
-	transvec = (uint4*)malloc((length)*sizeof(uint4));
-	if (transvec == NULL)
-		sz_error(SZ_NOMEM_SORT);
+    // Get counts if not supplied
+    nocounts = (counts == NULL);
+    if (nocounts) {
+        counts = (uint4 *)calloc(256, sizeof(uint4));
+        if (!counts) sz_error(SZ_NOMEM_SORT);
+        for (i = 0; i < length; i++)
+            counts[in[i]]++;
+    }
 
-	transvec[indexfirst] = counts[in[indexfirst]]++;
-	for (i=0; i<indexfirst; i++)
-		transvec[i] = counts[in[i]]++;
-	for (i=indexfirst+1; i<length; i++)
-		transvec[i] = counts[in[i]]++;
+    // Sum counts
+    {
+        uint4 sum = length;
+        for (i = 0x100; i--; ) {
+            sum -= counts[i];
+            counts[i] = sum;
+        }
+    }
 
+    // Prepare transposition vector
+    transvec = (uint4 *)malloc(length * sizeof(uint4));
+    if (!transvec)
+        sz_error(SZ_NOMEM_SORT);
 
-	if (nocounts)
-		free(counts);
+    transvec[indexfirst] = counts[in[indexfirst]]++;
+    for (i = 0; i < indexfirst; i++)
+        transvec[i] = counts[in[i]]++;
+    for (i = indexfirst + 1; i < length; i++)
+        transvec[i] = counts[in[i]]++;
 
-	// undo the blocksort
-  {	uint4 ic=indexfirst;
-	if (out==NULL)
-		for (i=0; i<length; i++)
-		{	putc(in[ic], stdout);
-			ic = transvec[ic];
-		}
-	else
-		for (i=0; i<length; i++)
-		{	out[i] = in[ic];
-			ic = transvec[ic];
-		}
-	if (ic != indexfirst)
-		sz_error(SZ_NOTCYCLIC);
-  }
-	free(transvec);
+    if (nocounts)
+        free(counts);
+
+    // Undo the blocksort
+    {
+        uint4 ic = indexfirst;
+        for (i = 0; i < length; i++) {
+            out[i] = in[ic];  // Always write to buffer
+            ic = transvec[ic];
+        }
+
+        if (ic != indexfirst)
+            sz_error(SZ_NOTCYCLIC);
+    }
+
+    free(transvec);
 }
+
 #endif

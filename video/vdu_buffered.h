@@ -2516,6 +2516,9 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     auto start = millis();
     #endif
 
+	// Consolidate source buffer
+	bufferConsolidate(sourceBufferId);
+
     // Locate source buffer
     auto sourceBufferIter = buffers.find(sourceBufferId);
     if (sourceBufferIter == buffers.end()) {

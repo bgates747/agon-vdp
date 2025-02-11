@@ -16,7 +16,7 @@ static char vmayor = 1, vminor = 12;
 /* parameter values */
 uint4 blocksize = 32768; // 32 KB = 0x8000, ESP32-friendly default
 uint order = 6;
-#define VERBOSITY 1
+#define VERBOSITY 0
 uint compress = 1;
 unsigned char recordsize = 1;
 
@@ -72,7 +72,7 @@ static uint readblockdir(uint4 *buflen) {
 }
 
 static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
-    unsigned char *tmp;
+    unsigned char *out_buffer;  // Explicit output buffer
     uint4 indexlast, charcount[256], bytesleft;
 #ifndef MODELGLOBAL
     sz_model m;
@@ -84,16 +84,12 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     memset(charcount, 0, sizeof(charcount));
     initmodel(&m, -1, &recordsize);
 
-    #if VERBOSITY == 1
-        if (order != 6) debug_log("-o%d ", order);
-        if ((recordsize & 0x7F) != 1) debug_log("-r%d ", recordsize & 0x7F);
-        if (recordsize & 0x80) debug_log("-i ");
-        debug_log("...");
-    #endif
-
+    // Decode data into `buffer`
+    unsigned char *tmp = buffer;
     tmp = buffer;
     bytesleft = buflen;
-    {   uint4 runlength;
+    {   
+        uint4 runlength;
         uint ch;
         sz_decode(&m, &ch, &runlength);
         if (runlength > bytesleft) {
@@ -125,32 +121,38 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
 
     debug_log(" processing ...");
 
+    // Allocate a separate output buffer
+    out_buffer = (unsigned char *)malloc(buflen);
+    if (out_buffer == NULL) {
+        debug_log("memory allocation failure\n");
+        exit(1);
+    }
+
+    // Perform unsorting into `out_buffer`
     if (recordsize == 1) {
         if (order == 0)
-            sz_unsrt_BW(buffer, NULL, buflen, indexlast, charcount);
+            sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
         else
-            sz_unsrt(buffer, NULL, buflen, indexlast, charcount, order);
+            sz_unsrt(buffer, out_buffer, buflen, indexlast, charcount, order);
     } else {
-        tmp = (unsigned char *)malloc(buflen);
-        if (tmp == NULL) {
-            debug_log("memory allocation failure\n");
-            exit(1);
-        }
         if (order == 0)
-            sz_unsrt_BW(buffer, tmp, buflen, indexlast, charcount);
+            sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
         else
-            sz_unsrt(buffer, tmp, buflen, indexlast, charcount, order);
+            sz_unsrt(buffer, out_buffer, buflen, indexlast, charcount, order);
         if (recordsize & 0x80) {
             uint4 i;
-            unsigned char c = *tmp;
+            unsigned char c = *out_buffer;
             for (i = 1; i < buflen; i++) {
-                c = (c + tmp[i]) & 0xFF;
-                tmp[i] = c;
+                c = (c + out_buffer[i]) & 0xFF;
+                out_buffer[i] = c;
             }
         }
-        unreorder(tmp, buffer, buflen, recordsize & 0x7F);
-        free(tmp);
+        unreorder(out_buffer, buffer, buflen, recordsize & 0x7F);
     }
+
+    // Copy back final output
+    memcpy(buffer, out_buffer, buflen);
+    free(out_buffer);
 }
 
 static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
