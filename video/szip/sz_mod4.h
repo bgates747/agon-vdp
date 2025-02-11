@@ -2,6 +2,7 @@
 #ifndef SZ_MODEL4_H
 #define SZ_MODEL4_H
 
+#include "szip_config.h"
 #include "port.h"
 #include "qsmodel.h"
 #include "bitmodel.h"

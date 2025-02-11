@@ -405,6 +405,7 @@ static unsigned char writerun(qsmodel *rlmod, uint4 n)
 	return 4;
 }
 
+#ifdef DO_COMPRESSION
 void sz_encode(sz_model *m, uint symbol, uint4 runlength)
 {   cacheptr tmp;
 
@@ -439,7 +440,7 @@ void sz_encode(sz_model *m, uint symbol, uint4 runlength)
     }
     finishupdate(M,symbol);
 }
-
+#endif // DO_COMPRESSION
 
 static int activatenext(sz_model *m, uint *next)
 {   while (MOD.mtfsize>MOD.mtfsizeact)
