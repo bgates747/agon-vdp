@@ -14,9 +14,9 @@ static char vmayor = 1, vminor = 12;
 
 
 /* parameter values */
-uint4 blocksize = 32768; // 32 KB = 0x8000, ESP32-friendly default
+// uint4 blocksize = 32768; // 32 KB = 0x8000, ESP32-friendly default
 uint order = 6;
-#define VERBOSITY 0
+#define VERBOSITY 1
 uint compress = 1;
 unsigned char recordsize = 1;
 
@@ -55,6 +55,7 @@ static void readglobalheader() {
                vmay, ch, vmayor, vminor);
         exit(1);
     }
+    debug_log("readglobalheader: szip version %d.%d\n", vmay, ch);
 }
 
 static uint readblockdir(uint4 *buflen) {
@@ -68,6 +69,7 @@ static uint readblockdir(uint4 *buflen) {
     if (sz_stream_getchar() != 0x48) no_szip();
     *buflen = sz_stream_readuint3();
     if (sz_stream_getchar() != 0) no_szip();
+    debug_log("readblockdir: block size %d\n", *buflen);
     return 6;
 }
 
@@ -77,12 +79,14 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
 #ifndef MODELGLOBAL
     sz_model m;
 #endif
-    debug_log("Decoding %d bytes ", buflen);
+    debug_log("readszipblock: Decoding %d bytes ", buflen);
     indexlast = sz_stream_readuint3();
     order = sz_stream_getchar();
+    debug_log("readszipblock: indexlast=%d order=%d\n", indexlast, order);
 
     memset(charcount, 0, sizeof(charcount));
     initmodel(&m, -1, &recordsize);
+    debug_log("readszipblock: model initialized\n");
 
     // Decode data into `buffer`
     unsigned char *tmp = buffer;
@@ -103,6 +107,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         }
     }
     fixafterfirst(&m);
+    debug_log("readszipblock: first run decoded, bytesleft=%d\n", bytesleft);
     while (bytesleft) {
         uint4 runlength;
         uint ch;
@@ -117,6 +122,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
             *(tmp++) = ch;
         }
     }
+    debug_log("readszipblock: all runs decoded, bytesleft=%d\n", bytesleft);
     deletemodel(&m);
 
     debug_log(" processing ...");
@@ -148,15 +154,17 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
             }
         }
         unreorder(out_buffer, buffer, buflen, recordsize & 0x7F);
+        debug_log("readszipblock: unsorted\n");
     }
 
     // Copy back final output
     memcpy(buffer, out_buffer, buflen);
     free(out_buffer);
+    debug_log("readszipblock: done\n");
 }
 
 static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
-    blocksize = 0;
+    uint4 blocksize = 0;
     readglobalheader();  // Uses global stream
 
     *outSize = 0;  // Reset output size
@@ -184,23 +192,23 @@ static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
 
         ch = sz_stream_getchar();
         if (ch == 1) {
-            debug_log("[DEBUG] Reading compressed block, size=%d bytes\n", blocklen);
+            debug_log("decompressit: Reading compressed block, size=%d bytes\n", blocklen);
             readszipblock(dirsize + 1, blocklen, *inoutbuffer_ptr);
         } else {
-            debug_log("[ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
+            debug_log("decompressit: [ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
             no_szip();
         }
         
         *outSize = blocklen;  // Update the output size
         
-        #if VERBOSITY == 1
-        debug_log("[DEBUG] Decompressed Data (Hexdump):\n");
-        for (uint32_t i = 0; i < blocklen; i++) {
-            debug_log("%02X ", (*inoutbuffer_ptr)[i]);
-            if ((i + 1) % 16 == 0) debug_log("\n"); // Format output in 16-byte rows
-        }
-        debug_log("\n");
-        debug_log(" done\n");
-        #endif
+        // #if VERBOSITY == 1
+        // debug_log("decompressit:  Decompressed Data (Hexdump):\n");
+        // for (uint32_t i = 0; i < blocklen; i++) {
+        //     debug_log("%02X ", (*inoutbuffer_ptr)[i]);
+        //     if ((i + 1) % 16 == 0) debug_log("\n"); // Format output in 16-byte rows
+        // }
+        // debug_log("\n");
+        // debug_log(" done\n");
+        // #endif
     }
 }
