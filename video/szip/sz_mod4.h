@@ -11,8 +11,8 @@
 #define ALPHABETSIZE 256
 #define CACHESIZE 32
 #define MTFSIZE 20
-#define MTFHISTSIZE 4096  /* must pe power of 2 */
-#define MODELGLOBAL
+#define MTFHISTSIZE 256  /* must pe power of 2 */
+// #define MODELGLOBAL
 
 #ifdef __cplusplus
 extern "C" {

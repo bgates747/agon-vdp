@@ -2420,9 +2420,9 @@ void VDUStreamProcessor::bufferCompress(uint16_t bufferId, uint16_t sourceBuffer
 // Replaces the target buffer with the new one.
 //
 void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBufferId) {
-	// #ifdef DEBUG
+	#ifdef DEBUG
 	auto start = millis();
-	// #endif
+	#endif
 	auto sourceBufferIter = buffers.find(sourceBufferId);
 	if (sourceBufferIter == buffers.end()) {
 		debug_log("bufferDeompress: buffer %d not found\n\r", sourceBufferId);
@@ -2494,9 +2494,9 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 		debug_log("Decompressed buffer size %u does not equal original size %u\r\n",
 					dd.output_count, orig_size);
 	}
-	// #ifdef DEBUG
-	printf("Decompress took %u ms\n\r", millis() - start);
-	// #endif
+	#ifdef DEBUG
+	debug_log("Decompress took %u ms\n\r", millis() - start);
+	#endif
 }
 
 // VDU 23, 0, &A0, bufferId; &42, sourceBufferId; : Compress blocks from a buffer
@@ -2512,9 +2512,9 @@ void VDUStreamProcessor::bufferCompressSzip(uint16_t bufferId, uint16_t sourceBu
 //
 
 void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t sourceBufferId) {
-    // #ifdef DEBUG
+    #ifdef DEBUG
     auto start = millis();
-    // #endif
+    #endif
 
 	// Consolidate source buffer
 	bufferConsolidate(sourceBufferId);
@@ -2572,9 +2572,9 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
 
     debug_log("Decompression completed for buffer %u.\n", bufferId);
 
-    // #ifdef DEBUG
-    printf("Decompression took %u ms\n", millis() - start);
-    // #endif
+    #ifdef DEBUG
+    debug_log("Decompression took %u ms\n", millis() - start);
+    #endif
 }
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer

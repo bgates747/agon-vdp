@@ -14,10 +14,8 @@ static char vmayor = 1, vminor = 12;
 
 
 /* parameter values */
-// uint4 blocksize = 32768; // 32 KB = 0x8000, ESP32-friendly default
 uint order = 6;
-#define VERBOSITY 1
-uint compress = 1;
+#define VERBOSITY 0
 unsigned char recordsize = 1;
 
 extern void debug_log(const char * format, ...);		// Debug log function
@@ -76,26 +74,53 @@ static uint readblockdir(uint4 *buflen) {
 static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     unsigned char *out_buffer;  // Explicit output buffer
     uint4 indexlast, charcount[256], bytesleft;
+
 #ifndef MODELGLOBAL
-    sz_model m;
+    // Instead of putting 'sz_model m;' on the stack, we now allocate it dynamically.
+    sz_model *m = NULL;
 #endif
-    debug_log("readszipblock: Decoding %d bytes ", buflen);
+
+    debug_log("readszipblock: Decoding %d bytes\n", buflen);
+
+    // Read the block header info from your compressed stream:
     indexlast = sz_stream_readuint3();
     order = sz_stream_getchar();
     debug_log("readszipblock: indexlast=%d order=%d\n", indexlast, order);
 
+    // Initialize charcount to zero
     memset(charcount, 0, sizeof(charcount));
-    initmodel(&m, -1, &recordsize);
+
+#ifndef MODELGLOBAL
+    // Dynamically allocate the sz_model
+    m = (sz_model *)malloc(sizeof(sz_model));
+    if (!m) {
+        debug_log("readszipblock: memory allocation for sz_model failed\n");
+        exit(1);
+    }
+    // Initialize the model for DEcompression
+    initmodel(m, -1, &recordsize);
+#else
+    // If MODELGLOBAL is defined, you presumably have a global 'mod'.
+    initmodel(&mod, -1, &recordsize);
+#endif
+
     debug_log("readszipblock: model initialized\n");
 
-    // Decode data into `buffer`
+    // === Begin decoding runs into `buffer` ===
     unsigned char *tmp = buffer;
-    tmp = buffer;
     bytesleft = buflen;
-    {   
+
+    // Decode the *first* run
+    {
         uint4 runlength;
         uint ch;
-        sz_decode(&m, &ch, &runlength);
+
+#ifndef MODELGLOBAL
+        sz_decode(m, &ch, &runlength);
+#else
+        sz_decode(&mod, &ch, &runlength);
+#endif
+
         if (runlength > bytesleft) {
             debug_log("input file corrupt\n");
             exit(1);
@@ -106,12 +131,26 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
             *(tmp++) = ch;
         }
     }
-    fixafterfirst(&m);
+
+#ifndef MODELGLOBAL
+    fixafterfirst(m);
+#else
+    fixafterfirst(&mod);
+#endif
+
     debug_log("readszipblock: first run decoded, bytesleft=%d\n", bytesleft);
+
+    // Decode the rest of the runs
     while (bytesleft) {
         uint4 runlength;
         uint ch;
-        sz_decode(&m, &ch, &runlength);
+
+#ifndef MODELGLOBAL
+        sz_decode(m, &ch, &runlength);
+#else
+        sz_decode(&mod, &ch, &runlength);
+#endif
+
         if (runlength > bytesleft) {
             debug_log("input file corrupt\n");
             exit(1);
@@ -123,11 +162,17 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         }
     }
     debug_log("readszipblock: all runs decoded, bytesleft=%d\n", bytesleft);
-    deletemodel(&m);
+
+    // Done with the model
+#ifndef MODELGLOBAL
+    deletemodel(m);
+#else
+    deletemodel(&mod);
+#endif
 
     debug_log(" processing ...");
 
-    // Allocate a separate output buffer
+    // Allocate a separate output buffer for "unsorting"
     out_buffer = (unsigned char *)malloc(buflen);
     if (out_buffer == NULL) {
         debug_log("memory allocation failure\n");
@@ -145,6 +190,8 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
             sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
         else
             sz_unsrt(buffer, out_buffer, buflen, indexlast, charcount, order);
+
+        // Perform the optional delta restoration if (recordsize & 0x80)
         if (recordsize & 0x80) {
             uint4 i;
             unsigned char c = *out_buffer;
@@ -153,13 +200,20 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
                 out_buffer[i] = c;
             }
         }
+        // Perform "unreorder" step
         unreorder(out_buffer, buffer, buflen, recordsize & 0x7F);
         debug_log("readszipblock: unsorted\n");
     }
 
-    // Copy back final output
+    // Copy final output back into `buffer`
     memcpy(buffer, out_buffer, buflen);
     free(out_buffer);
+
+#ifndef MODELGLOBAL
+    // Finally, free the dynamically allocated sz_model
+    free(m);
+#endif
+
     debug_log("readszipblock: done\n");
 }
 
