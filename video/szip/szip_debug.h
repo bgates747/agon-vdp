@@ -5,7 +5,7 @@
 #include <stdio.h>
 #include "port.h"
 
-#define SZ_DEBUG 1  // Enable debugging output
+#define SZ_DEBUG 0  // Enable debugging output
 
 // Declare the functions (not define)
 void szip_debug_log(const char *format, ...);

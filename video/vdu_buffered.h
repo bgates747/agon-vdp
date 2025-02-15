@@ -2512,9 +2512,9 @@ void VDUStreamProcessor::bufferCompressSzip(uint16_t bufferId, uint16_t sourceBu
 //
 
 void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t sourceBufferId) {
-    #ifdef DEBUG
+    // #ifdef DEBUG
     auto start = millis();
-    #endif
+    // #endif
 
 	// Consolidate source buffer
 	bufferConsolidate(sourceBufferId);
@@ -2572,9 +2572,9 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
 
     debug_log("Decompression completed for buffer %u.\n", bufferId);
 
-    #ifdef DEBUG
-    debug_log("Decompression took %u ms\n", millis() - start);
-    #endif
+    // #ifdef DEBUG
+    printf("Decompression took %u ms\n", millis() - start);
+    // #endif
 }
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer

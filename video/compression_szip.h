@@ -169,8 +169,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
 #else
     deletemodel(&mod);
 #endif
-
-    debug_log(" processing ...");
+    debug_log("readszipblock: model deleted\n");
 
     // Allocate a separate output buffer for "unsorting"
     out_buffer = (unsigned char *)malloc(buflen);

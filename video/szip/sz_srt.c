@@ -294,57 +294,93 @@ static void makeorder2(unsigned char *flags, unsigned char *in, uint4 *counts,
 	}
 }
 
-
 static void increaseorder(unsigned char *inflags, unsigned char *outflags,
-						  unsigned char *in, uint4 *counts, uint4 length)
-{	uint4 i, contextstart, lastseen[256], ct[256];
-	memcpy(ct, counts, 256*sizeof(uint4));
-	contextstart = 0;
-	memset(lastseen, 0xff, 256*sizeof(uint4)); 
-	for (i=0; i<length; i++)
-	{	int ch;
-		if (getbit(inflags, i))			// ch = -1 + getbit(inflags,i);
-			contextstart = i;			// contextstart = (contextstart&ch) | (i&~ch);
-		ch = in[i];
-		if (lastseen[ch] != contextstart)	// use a bitfield instead of lastseen
-		{	lastseen[ch] = contextstart;	// in hardware!
-			setbit(outflags, ct[ch]);
-		}
-		ct[ch]++;
-	}
+                          unsigned char *in, uint4 *counts, uint4 length)
+{
+    // Allocate memory for lastseen and ct instead of using stack
+    uint4 *lastseen = (uint4 *)malloc(256 * sizeof(uint4));
+    uint4 *ct = (uint4 *)malloc(256 * sizeof(uint4));
+
+    // Copy counts into ct
+    memcpy(ct, counts, 256 * sizeof(uint4));
+    uint4 contextstart = 0;
+    memset(lastseen, 0xFF, 256 * sizeof(uint4));
+
+    for (uint4 i = 0; i < length; i++)
+    {
+        if (getbit(inflags, i)) {
+            contextstart = i;
+        }
+
+        int ch = in[i];
+
+        if (lastseen[ch] != contextstart)
+        {
+            lastseen[ch] = contextstart;
+            setbit(outflags, ct[ch]);
+        }
+
+        ct[ch]++;
+    }
+
+    free(lastseen);
+    free(ct);
 }
 
-
+// Constructs the permutation table used for unsorting
 static void maketable(unsigned char *inflags, uint4 *table, unsigned char *in,
-					  uint4 *counts, uint4 length)
-{	uint4 i, contextstart, firstseen[256], ct[256];
-	memcpy(ct, counts, 256*sizeof(uint4));
-	contextstart = 0;
-	memset(firstseen, 0, 256*sizeof(uint4)); 
-	for (i=0; i<length; i++)
-	{	int ch;
-		if (getbit(inflags, i))
-			contextstart = i;
-		ch = in[i];
-		if (firstseen[ch] <= contextstart)
-		{	table[i] = ct[ch];
-			firstseen[ch] = i+1;
-		}
-		else
-			table[i] = (firstseen[ch]-1) | INDIRECT;
-		ct[ch]++;
-	}
+                      uint4 *counts, uint4 length)
+{
+    // Dynamically allocate arrays rather than on the stack:
+    uint4 *ct = (uint4 *)malloc(256 * sizeof(uint4));
+    uint4 *firstseen = (uint4 *)malloc(256 * sizeof(uint4));
+
+    // Copy counts into ct
+    memcpy(ct, counts, 256 * sizeof(uint4));
+
+    // Initialize
+    uint4 contextstart = 0;
+    memset(firstseen, 0, 256 * sizeof(uint4));
+
+    // Main loop
+    for (uint4 i = 0; i < length; i++)
+    {
+        if (getbit(inflags, i)) {
+            contextstart = i;
+        }
+
+        int ch = in[i];
+
+        // If not yet "seen" in current context
+        if (firstseen[ch] <= contextstart)
+        {
+            table[i] = ct[ch];
+            firstseen[ch] = i + 1; // mark as "seen" at position i
+        }
+        else
+        {
+            table[i] = (firstseen[ch] - 1) | INDIRECT;
+        }
+
+        ct[ch]++;
+    }
+
+    free(ct);
+    free(firstseen);
 }
 
-// in: bytes to be unsorted
-// out: unsorted bytes; if out==NULL output is written to stdout
-// length: number of bytes in in (and out)
-// indexlast: position of last context (as returned bt sorttrans)
-// counts: number of occurances of each byte in in (if NULL it will be calculated)
-// order: order of context used in sorting (must be >=3)
-// the code assumes length>=order
+/*
+ * in: bytes to be unsorted
+ * out: unsorted bytes; if out==NULL output is written to stdout
+ * length: number of bytes in in (and out)
+ * indexlast: position of last context (as returned by sorttrans)
+ * counts: number of occurrences of each byte in in (if NULL it will be calculated)
+ * order: order of context used in sorting (must be >=3)
+ * the code assumes length>=order
+ */
 void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast,
-              uint4 *counts, unsigned int order) {
+              uint4 *counts, unsigned int order)
+{
     uint4 i, j;
     static uint4 *table;
     static unsigned char *flags1 = NULL;
@@ -352,22 +388,23 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
     unsigned char nocounts;
 
     if (out == NULL) {
-        szip_debug_log("ERROR: sz_unsrt() called with NULL output buffer!\n");
-        sz_error(SZ_NOMEM_SORT);
+        sz_error(SZ_NOMEM_SORT);  // Original check
     }
 
     // Get counts if not supplied
     nocounts = (counts == NULL);
     if (nocounts) {
         counts = (uint4 *)calloc(256, sizeof(uint4));
-        if (!counts) sz_error(SZ_NOMEM_SORT);
-        for (i = 0; i < length; i++)
+        if (!counts) sz_error(SZ_NOMEM_SORT);  // Original check
+
+        for (i = 0; i < length; i++) {
             counts[in[i]]++;
+        }
     }
 
     // Sum counts
     j = length;
-    for (i = 256; i--; ) {
+    for (i = 256; i--;) {
         j -= counts[i];
         counts[i] = j;
     }
@@ -375,7 +412,7 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
     // Allocate or reset flags1
     if (flags1 == NULL) {
         flags1 = (unsigned char *)calloc((length + 8) >> 3, 1);
-        if (!flags1) sz_error(SZ_NOMEM_SORT);
+        if (!flags1) sz_error(SZ_NOMEM_SORT);  // Original check
     } else {
         memset(flags1, 0, (length + 8) >> 3);
     }
@@ -386,7 +423,7 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
     // Increase order
     if (flags2 == NULL) {
         flags2 = (unsigned char *)calloc((length + 8) >> 3, 1);
-        if (!flags2) sz_error(SZ_NOMEM_SORT);
+        if (!flags2) sz_error(SZ_NOMEM_SORT);  // Original check
     } else {
         memset(flags2, 0, (length + 8) >> 3);
     }
@@ -394,6 +431,7 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
     for (i = 2; i < order - 1; i++) {
         unsigned char *tmpflags;
         increaseorder(flags1, flags2, in, counts, length);
+
         tmpflags = flags1;
         flags1 = flags2;
         flags2 = tmpflags;
@@ -402,14 +440,15 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
     // Construct permutation table
     if (table == NULL) {
         table = (uint4 *)malloc((length + 1) * sizeof(uint4));
-        if (!table) sz_error(SZ_NOMEM_SORT);
+        if (!table) sz_error(SZ_NOMEM_SORT);  // Original check
     }
 
     maketable(flags1, table, in, counts, length);
     table[length] = INDIRECT;
 
-    if (nocounts)
+    if (nocounts) {
         free(counts);
+    }
 
     // Do the actual unsorting
     j = indexlast;
@@ -426,8 +465,9 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
         out[i] = in[j];
     }
 
-    if (j != indexlast)
-        sz_error(SZ_NOTCYCLIC);
+    if (j != indexlast) {
+        sz_error(SZ_NOTCYCLIC);  // Original check
+    }
 }
 
 
