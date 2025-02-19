@@ -1,4 +1,26 @@
-/*********************** simz.h **************************/
+/*
+   Combined "simz.h" + block-based decompression logic
+   that aligns with the PC command-line code. 
+   (No file I/O, purely in-memory, for ESP32 or similar.)
+
+   You previously had a "simz.h" with:
+     - SIMZ_HEADER_SIZE (10)
+     - simz_header struct
+     - simz_read_header()
+     - stubs for simz_decompressit() 
+   This file merges all of that plus a corrected
+   simz_decompressit() using the same block-based approach
+   as your original PC version.
+*/
+
+#include <stdint.h>
+#include <stddef.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+
+/*********************** simz.h (original content) **************************/
+
 #ifndef SIMZ_H
 #define SIMZ_H
 
@@ -17,28 +39,13 @@ extern "C" {
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Basic integer types */
-typedef unsigned short uint2;  /* two-byte integer (for large arrays) */
-typedef unsigned int   uint4;  /* four-byte integer (range needed) */
-typedef unsigned int   uint;   /* fast unsigned integer, 2 or 4 bytes */
+/* Basic integer types (some might have been used in your original file) */
+// typedef unsigned short uint2;  /* two-byte integer (for large arrays) */
+// typedef unsigned int   uint4;  /* four-byte integer (range needed) */
+// typedef unsigned int   uint;   /* fast unsigned integer, 2 or 4 bytes */
 
 /******************** SIMZ Range Coder *************************/
-/* Define SIMZ range coder types */
-typedef uint4 simz_code_value; /* 32-bit range coder value */
-typedef uint4 simz_freq;       /* Frequency count type */
-
-/* The range coder structure for decoding (in-memory) */
-typedef struct {
-    simz_code_value low;       /* low end of interval */
-    simz_code_value range;     /* length of interval */
-    simz_code_value help;      /* intermediate value */
-    uint8_t buffer;            /* current input byte */
-    uint4 bytecount;           /* count of processed bytes */
-    /* In-memory input buffer info: */
-    const uint8_t *input;      /* pointer to entire input buffer */
-    size_t input_size;         /* total size of input buffer */
-    size_t input_pos;          /* current read position in input buffer */
-} simz_rangecoder;
+/* We'll re-implement the actual decode structure in this file. */
 
 /******************** SIMZ Header *****************************/
 /*
@@ -56,7 +63,8 @@ typedef struct {
 
 #define SIMZ_HEADER_SIZE 10
 
-/* Error handling: if the header is invalid, call no_simz() */
+/* If the header is invalid, we call no_simz(), which in your original
+   code might just exit(1). You can adapt that as needed. */
 void no_simz(void) {
     fprintf(stderr, "no_simz: Not a SIMZ file\n");
     exit(1);
@@ -65,15 +73,15 @@ void no_simz(void) {
 /*
  * simz_read_header:
  *  Reads and validates the header from the given input buffer.
- *  Expects at least 10 bytes. If the header is invalid, calls no_simz().
- *  Otherwise, fills in *hdr with the header information.
+ *  If the header is invalid, calls no_simz().
+ *  Otherwise, fills in *hdr with the header info.
  */
 inline void simz_read_header(const uint8_t *input, size_t input_size, simz_header *hdr) {
     if (input_size < SIMZ_HEADER_SIZE) {
-        no_simz();  // Not enough data for a valid SIMZ header.
+        no_simz();  // Not enough data
     }
     if (input[0] != 'S' || input[1] != 'I' || input[2] != 'M' || input[3] != 'Z') {
-        no_simz();  // Header magic invalid.
+        no_simz();  // bad magic
     }
     hdr->major = input[4];
     hdr->minor = input[5];
@@ -83,124 +91,239 @@ inline void simz_read_header(const uint8_t *input, size_t input_size, simz_heade
                              ((uint32_t)input[9] << 24);
 }
 
-/****************** Range Coder Decoding Functions ******************/
-
-/* Constants for range coding */
-#define SIMZ_CODE_BITS 32
-#define SIMZ_TOP_VALUE ((simz_code_value)1 << (SIMZ_CODE_BITS - 1))
-#define SIMZ_SHIFT_BITS (SIMZ_CODE_BITS - 9)
-#define SIMZ_EXTRA_BITS (((SIMZ_CODE_BITS - 2) % 8) + 1)
-#define SIMZ_BOTTOM_VALUE (SIMZ_TOP_VALUE >> 8)
-
-/* Read a byte from the input buffer */
-static inline uint8_t simz_read_byte(simz_rangecoder *rc) {
-    return (rc->input_pos < rc->input_size) ? rc->input[rc->input_pos++] : 0;
-}
-
-/* Normalize the decoder state */
-static inline void simz_dec_normalize(simz_rangecoder *rc) {
-    while (rc->range <= SIMZ_BOTTOM_VALUE) {
-        rc->low = (rc->low << 8) | (((rc->buffer) << SIMZ_EXTRA_BITS) & 0xff);
-        rc->buffer = simz_read_byte(rc);
-        rc->low |= rc->buffer >> (8 - SIMZ_EXTRA_BITS);
-        rc->range <<= 8;
-    }
-}
-
-/* Get cumulative frequency for next symbol (without updating state) */
-simz_freq simz_decode_culfreq(simz_rangecoder *rc, simz_freq tot_f) {
-    simz_dec_normalize(rc);
-    rc->help = rc->range / tot_f;
-    simz_freq tmp = rc->low / rc->help;
-    return (tmp >= tot_f) ? tot_f - 1 : tmp;
-}
-
-/* Shift-based cumulative frequency */
-simz_freq simz_decode_culshift(simz_rangecoder *rc, simz_freq shift) {
-    simz_dec_normalize(rc);
-    rc->help = rc->range >> shift;
-    simz_freq tmp = rc->low / rc->help;
-    return (tmp >> shift) ? ((simz_code_value)1 << shift) - 1 : tmp;
-}
-
-/* Update the decoder state */
-void simz_decode_update(simz_rangecoder *rc, simz_freq sy_f, simz_freq lt_f, simz_freq tot_f) {
-    simz_code_value tmp = rc->help * lt_f;
-    rc->low -= tmp;
-    if (lt_f + sy_f < tot_f)
-        rc->range = rc->help * sy_f;
-    else
-        rc->range -= tmp;
-}
-
-/* Decode a single byte */
-uint8_t simz_decode_byte(simz_rangecoder *rc) {
-    uint8_t tmp = simz_decode_culshift(rc, 8);
-    simz_decode_update(rc, 1, tmp, (simz_freq)1 << 8);
-    return tmp;
-}
-
-/* Finalize decoding: normalize to use up all bytes */
-void simz_done_decoding(simz_rangecoder *rc) {
-    simz_dec_normalize(rc);
-}
-
-/* Initialize the decoder with a given input buffer */
-int simz_start_decoding(simz_rangecoder *rc, const uint8_t *input, size_t input_size) {
-    if (input_size == 0) return -1;  // Prevent empty input
-    rc->input = input;
-    rc->input_size = input_size;
-    rc->input_pos = 1;   // Start reading from the second byte
-    rc->buffer = input[0];
-    if (input_size > 1) {
-        rc->low = input[1] >> (8 - SIMZ_EXTRA_BITS);
-        rc->range = (simz_code_value)1 << SIMZ_EXTRA_BITS;
-    } else {
-        rc->low = 0;
-        rc->range = 0;
-    }
-    return 0;
-}
-
 /****************** SIMZ Decompression API *******************/
-
-/*
- * simz_decompressit:
- *  Decompresses SIMZ-compressed data from a buffer into a newly allocated output buffer.
- *
- * Parameters:
- *    output      - pointer to a uint8_t* that will be set to the newly allocated decompressed data.
- *    output_size - pointer to a uint32_t that will be set to the decompressed data size.
- *    compressedData - pointer to the compressed data buffer (should point just after the header if header is handled separately).
- *    compressedSize - size in bytes of the compressed data.
- *    expectedOutputSize - the expected decompressed data size (from header or metadata).
- *
- * This function initializes the SIMZ range coder, decodes expectedOutputSize bytes,
- * and returns the decompressed data via the output pointer. The caller is responsible for freeing the output buffer.
- */
-void simz_decompressit(uint8_t **output, uint32_t *output_size, const uint8_t *compressedData, uint32_t compressedSize, uint32_t expectedOutputSize) {
-    simz_rangecoder rc;
-    if (simz_start_decoding(&rc, compressedData, compressedSize) != 0) {
-        *output = NULL;
-        *output_size = 0;
-        return;
-    }
-    uint8_t *out_buf = (uint8_t *)malloc(expectedOutputSize);
-    if (!out_buf) {
-        *output = NULL;
-        *output_size = 0;
-        return;
-    }
-    for (uint32_t i = 0; i < expectedOutputSize; i++) {
-        out_buf[i] = simz_decode_byte(&rc);
-    }
-    simz_done_decoding(&rc);
-    *output = out_buf;
-    *output_size = expectedOutputSize;
-}
+/* The function signature you originally used: */
+void simz_decompressit(uint8_t **output,
+                       uint32_t *output_size,
+                       const uint8_t *compressedData,
+                       uint32_t compressedSize,
+                       uint32_t expectedOutputSize);
 
 #ifdef __cplusplus
 }
 #endif
 
 #endif // SIMZ_H
+
+/**************** End of "simz.h" portion ********************/
+
+
+/************************************************************
+ * Now implement the *correct* block-based simz_decompressit,
+ * mirroring your PC code but using memory buffers instead of files.
+ ************************************************************/
+
+/* 
+   We define a small range coder struct for decoding from memory.
+   (This is *not* the same as your old uniform "simz_decode_byte" approach.)
+*/
+typedef struct {
+    uint32_t low;       // low end of interval
+    uint32_t range;     // length of interval
+    uint32_t help;      // intermediate
+    uint8_t  buffer;    // current input byte
+
+    // In-memory input buffer:
+    const uint8_t* input;
+    size_t input_size;
+    size_t input_pos;
+} simz_rangecoder;
+
+/* Constants from your rangecod.c / simz code */
+#define SIMZ_CODE_BITS   32
+#define SIMZ_TOP_VALUE   ((uint32_t)1 << (SIMZ_CODE_BITS-1))
+#define SIMZ_SHIFT_BITS  (SIMZ_CODE_BITS - 9)
+#define SIMZ_EXTRA_BITS  (((SIMZ_CODE_BITS-2) % 8) + 1)
+#define SIMZ_BOTTOM_VALUE (SIMZ_TOP_VALUE >> 8)
+
+/* Small helper to read one byte from the buffer or 0 if we are out */
+static inline uint8_t simz_mem_read(simz_rangecoder *rc) {
+    if (rc->input_pos < rc->input_size) {
+        return rc->input[rc->input_pos++];
+    }
+    return 0;
+}
+
+/* Normalize state to keep range above SIMZ_BOTTOM_VALUE. */
+static inline void simz_dec_normalize(simz_rangecoder *rc) {
+    while (rc->range <= SIMZ_BOTTOM_VALUE) {
+        rc->low = (rc->low << 8) | ((rc->buffer << SIMZ_EXTRA_BITS) & 0xff);
+        rc->buffer = simz_mem_read(rc);
+        rc->low |= rc->buffer >> (8 - SIMZ_EXTRA_BITS);
+        rc->range <<= 8;
+    }
+}
+
+/* Initialize the decoder from memory (i.e. "start decoding"). */
+static int simz_start_decoding(simz_rangecoder *rc,
+                               const uint8_t *data,
+                               size_t data_size)
+{
+    rc->input = data;
+    rc->input_size = data_size;
+    rc->input_pos = 0;
+    rc->low = 0;
+    rc->range = 0;
+    rc->help = 0;
+    rc->buffer = 0;
+
+    if (data_size == 0) {
+        return -1;  // no data
+    }
+
+    rc->buffer = simz_mem_read(rc);  // first byte
+
+    if (rc->input_pos < rc->input_size) {
+        // We can read part of the next byte to init 'low'
+        rc->low = (rc->input[rc->input_pos] >> (8 - SIMZ_EXTRA_BITS));
+        rc->range = (uint32_t)1 << SIMZ_EXTRA_BITS;
+        rc->input_pos++;
+    } else {
+        // if only 1 byte in total, we do our best
+        rc->low = 0;
+        rc->range = 0;
+    }
+
+    return 0; // success
+}
+
+/* Finish decoding: consume any leftover bits. */
+static void simz_done_decoding(simz_rangecoder *rc) {
+    simz_dec_normalize(rc);
+}
+
+/* Get cumulative frequency for the next symbol. 
+   total_freq = total frequency for the block (or 2 for the 1-bit test). */
+static uint32_t simz_decode_culfreq(simz_rangecoder *rc, uint32_t total_freq) {
+    simz_dec_normalize(rc);
+    rc->help = rc->range / total_freq;
+    uint32_t cf = rc->low / rc->help;
+    if (cf >= total_freq) {
+        cf = total_freq - 1; // clamp
+    }
+    return cf;
+}
+
+/* Update state after determining which symbol was selected. */
+static void simz_decode_update(simz_rangecoder *rc,
+                               uint32_t sy_f,
+                               uint32_t lt_f,
+                               uint32_t tot_f)
+{
+    uint32_t tmp = rc->help * lt_f;
+    rc->low  -= tmp;
+    if (lt_f + sy_f < tot_f) {
+        rc->range = rc->help * sy_f;
+    } else {
+        rc->range -= tmp;
+    }
+}
+
+/* Decode a 16-bit "short" with uniform distribution (used for reading frequencies). */
+static uint16_t simz_decode_short(simz_rangecoder *rc) {
+    // same logic as decode_culshift(rc,16) with sy_f=1
+    simz_dec_normalize(rc);
+    rc->help = rc->range >> 16;      // range / (1<<16)
+    uint32_t cf = rc->low / rc->help;
+    if (cf > 0xFFFF) {
+        cf = 0xFFFF; // clamp
+    }
+    rc->low -= rc->help * cf;
+    rc->range = rc->help;           // sy_f=1 => range=rc->help
+    return (uint16_t)cf;
+}
+
+/**********************************************************************
+ * The key function your code calls:
+ *   simz_decompressit(&decompressedData, &decompressedSize, 
+ *                     compressedData + SIMZ_HEADER_SIZE, 
+ *                     compressedSize - SIMZ_HEADER_SIZE, 
+ *                     expectedOutputSize);
+ *
+ * 1) We do NOT read the 10-byte header here, because you do it externally.
+ * 2) We expect the rest of the data to contain the block-based structure:
+ *      - repeated: 1 bit "block present?" 
+ *      - if present: read 256 freq counts, decode that block
+ *      - stop if bit=0
+ **********************************************************************/
+void simz_decompressit(uint8_t **output,
+                       uint32_t *output_size,
+                       const uint8_t *compressedData,
+                       uint32_t compressedSize,
+                       uint32_t expectedOutputSize)
+{
+    // Default to failure in case we return early
+    *output = NULL;
+    *output_size = 0;
+
+    // Start the range decoder from memory
+    simz_rangecoder rc;
+    if (simz_start_decoding(&rc, compressedData, compressedSize) != 0) {
+        // can't start
+        return;
+    }
+
+    // Allocate the output buffer based on expected size
+    uint8_t *outBuf = (uint8_t*)malloc(expectedOutputSize);
+    if (!outBuf) {
+        return; // allocation fail
+    }
+
+    uint32_t outPos = 0;
+
+    while (1) {
+        // read 1-bit "flag" => decode_culfreq(rc, 2)
+        uint32_t cf = simz_decode_culfreq(&rc, 2);
+        if (cf == 0) {
+            // no more blocks
+            simz_decode_update(&rc, 1, 0, 2);
+            break;
+        }
+        // else consume that "bit=1" indicating a block present
+        simz_decode_update(&rc, 1, 1, 2);
+
+        // read 256 frequency counts (each is 16-bit)
+        uint32_t counts[257];
+        memset(counts, 0, sizeof(counts));
+        uint32_t blockSize = 0;
+        for (int i = 0; i < 256; i++) {
+            uint16_t freq = simz_decode_short(&rc);
+            counts[i] = freq;
+        }
+        // convert them into a cumulative distribution
+        for (int i = 0; i < 256; i++) {
+            uint32_t freq = counts[i];
+            counts[i] = blockSize;
+            blockSize += freq;
+        }
+        counts[256] = blockSize;
+
+        // decode 'blockSize' symbols
+        for (uint32_t i = 0; i < blockSize; i++) {
+            if (outPos >= expectedOutputSize) {
+                // safety check, block claims more data than header says
+                break;
+            }
+            uint32_t cf_sym = simz_decode_culfreq(&rc, blockSize);
+            // find which symbol has counts[sym] <= cf_sym < counts[sym+1]
+            int symbol = 0;
+            while (counts[symbol+1] <= cf_sym) {
+                symbol++;
+            }
+            // update the coder
+            uint32_t freq_of_sym  = counts[symbol+1] - counts[symbol];
+            uint32_t start_of_sym = counts[symbol];
+            simz_decode_update(&rc, freq_of_sym, start_of_sym, blockSize);
+
+            // store the symbol
+            outBuf[outPos++] = (uint8_t)symbol;
+        }
+    }
+
+    // done
+    simz_done_decoding(&rc);
+
+    // success
+    *output = outBuf;
+    *output_size = expectedOutputSize;
+}
