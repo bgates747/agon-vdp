@@ -2603,53 +2603,37 @@ void VDUStreamProcessor::bufferDecompressSimz(uint16_t bufferId, uint16_t source
     }
     auto &sourceBuffer = sourceBufferIter->second;
 
-    // Retrieve the compressed input buffer and its size.
+    // Retrieve the compressed input buffer and its size
     uint8_t* compressedData = sourceBuffer[0]->getBuffer();
     uint32_t compressedSize = sourceBuffer[0]->size();
 
     debug_log("bufferDecompressSimz: Checking header for buffer %u...\n", sourceBufferId);
 
-    // Declare a simz_header struct and read the header
+    // Read and validate SIMZ header
     simz_header header;
     simz_read_header(compressedData, compressedSize, &header);
     
     debug_log("SIMZ version %u.%u, expected output size: %u bytes\n", 
               header.major, header.minor, header.decompressed_size);
 
-    // Use the decompressed size from the header as expectedOutputSize
     uint32_t expectedOutputSize = header.decompressed_size;
 
-    // Prepare decompressed buffer pointers
-    uint8_t *decompressedData = NULL;
-    uint32_t decompressedSize = 0;
+    // Create output buffer first, just like bufferDecompress()
+    auto bufferStream = make_shared_psram<BufferStream>(expectedOutputSize);
+    if (!bufferStream || !bufferStream->getBuffer()) {
+        debug_log("bufferDecompressSimz: failed to create buffer %d\n", bufferId);
+        return;
+    }
 
-    // Call the decompression function
-    simz_decompressit(&decompressedData, &decompressedSize, 
+    // Decode directly into `bufferStream->getBuffer()`
+    simz_decompressit(bufferStream->getBuffer(), expectedOutputSize, 
                       compressedData + SIMZ_HEADER_SIZE, 
                       compressedSize - SIMZ_HEADER_SIZE, 
                       expectedOutputSize);
 
-    if (!decompressedData || decompressedSize == 0) {
-        debug_log("Decompression failed: No data output.\n");
-        return;
-    }
-
-    // Allocate a BufferStream of the correct size.
-    auto bufferStream = make_shared_psram<BufferStream>(expectedOutputSize);
-    if (!bufferStream || !bufferStream->getBuffer()) {
-        debug_log("Failed to allocate bufferStream\n");
-        free(decompressedData);
-        return;
-    }
-
-    // Copy decompressed data into the BufferStream.
-    memcpy(bufferStream->getBuffer(), decompressedData, expectedOutputSize);
-
-    // Clear the target buffer and store the decompressed data.
+    // Assign the buffer, avoiding any additional copying
     bufferClear(bufferId);
     buffers[bufferId].push_back(bufferStream);
-
-    free(decompressedData);
 
 	// #ifdef DEBUG
     fprintf(stderr, "SIMZ decompression completed for buffer %u in %u ms.\n", bufferId, millis() - start);

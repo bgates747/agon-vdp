@@ -63,10 +63,8 @@ typedef struct {
 
 #define SIMZ_HEADER_SIZE 10
 
-/* If the header is invalid, we call no_simz(), which in your original
-   code might just exit(1). You can adapt that as needed. */
 void no_simz(void) {
-    fprintf(stderr, "no_simz: Not a SIMZ file\n");
+    fprintf(stderr, "no_simz: Not a valid SIMZ encoding.\n");
     exit(1);
 }
 
@@ -90,14 +88,6 @@ inline void simz_read_header(const uint8_t *input, size_t input_size, simz_heade
                              ((uint32_t)input[8] << 16) |
                              ((uint32_t)input[9] << 24);
 }
-
-/****************** SIMZ Decompression API *******************/
-/* The function signature you originally used: */
-void simz_decompressit(uint8_t **output,
-                       uint32_t *output_size,
-                       const uint8_t *compressedData,
-                       uint32_t compressedSize,
-                       uint32_t expectedOutputSize);
 
 #ifdef __cplusplus
 }
@@ -246,84 +236,71 @@ static uint16_t simz_decode_short(simz_rangecoder *rc) {
  *      - if present: read 256 freq counts, decode that block
  *      - stop if bit=0
  **********************************************************************/
-void simz_decompressit(uint8_t **output,
-                       uint32_t *output_size,
-                       const uint8_t *compressedData,
-                       uint32_t compressedSize,
+void simz_decompressit(uint8_t *output, uint32_t output_size,
+                       const uint8_t *compressedData, uint32_t compressedSize,
                        uint32_t expectedOutputSize)
 {
-    // Default to failure in case we return early
-    *output = NULL;
-    *output_size = 0;
-
-    // Start the range decoder from memory
+    // We assume output_size == expectedOutputSize.
+    // Initialize the in-memory range decoder with the compressed data.
     simz_rangecoder rc;
     if (simz_start_decoding(&rc, compressedData, compressedSize) != 0) {
-        // can't start
+        // If initialization fails, simply return.
         return;
     }
-
-    // Allocate the output buffer based on expected size
-    uint8_t *outBuf = (uint8_t*)malloc(expectedOutputSize);
-    if (!outBuf) {
-        return; // allocation fail
-    }
-
+    
     uint32_t outPos = 0;
-
+    
+    // Process blocks until the block flag indicates termination.
     while (1) {
-        // read 1-bit "flag" => decode_culfreq(rc, 2)
+        // Decode the next 1-bit flag (total frequency = 2)
         uint32_t cf = simz_decode_culfreq(&rc, 2);
         if (cf == 0) {
-            // no more blocks
+            // Flag 0 indicates no more blocks; update state and exit loop.
             simz_decode_update(&rc, 1, 0, 2);
             break;
         }
-        // else consume that "bit=1" indicating a block present
+        // Consume the flag (which must be 1 for block present)
         simz_decode_update(&rc, 1, 1, 2);
-
-        // read 256 frequency counts (each is 16-bit)
+        
+        // Read 256 frequency counts (each count is a 16-bit value)
         uint32_t counts[257];
-        memset(counts, 0, sizeof(counts));
         uint32_t blockSize = 0;
         for (int i = 0; i < 256; i++) {
             uint16_t freq = simz_decode_short(&rc);
             counts[i] = freq;
         }
-        // convert them into a cumulative distribution
+        
+        // Build cumulative frequency table and compute blockSize in one pass.
         for (int i = 0; i < 256; i++) {
             uint32_t freq = counts[i];
-            counts[i] = blockSize;
+            counts[i] = blockSize;  // cumulative frequency for symbol i
             blockSize += freq;
         }
-        counts[256] = blockSize;
-
-        // decode 'blockSize' symbols
+        counts[256] = blockSize;  // total frequency for the block
+        
+        // Decode blockSize symbols.
         for (uint32_t i = 0; i < blockSize; i++) {
             if (outPos >= expectedOutputSize) {
-                // safety check, block claims more data than header says
+                // Safety check: if more data is signaled than expected, break out.
                 break;
             }
             uint32_t cf_sym = simz_decode_culfreq(&rc, blockSize);
-            // find which symbol has counts[sym] <= cf_sym < counts[sym+1]
+            
+            // Find the symbol whose cumulative range covers cf_sym.
             int symbol = 0;
             while (counts[symbol+1] <= cf_sym) {
                 symbol++;
             }
-            // update the coder
+            
             uint32_t freq_of_sym  = counts[symbol+1] - counts[symbol];
             uint32_t start_of_sym = counts[symbol];
             simz_decode_update(&rc, freq_of_sym, start_of_sym, blockSize);
-
-            // store the symbol
-            outBuf[outPos++] = (uint8_t)symbol;
+            
+            // Write the decoded symbol directly into the output buffer.
+            output[outPos++] = (uint8_t)symbol;
         }
     }
-
-    // done
+    
+    // Finalize decoding (flush any remaining bits).
     simz_done_decoding(&rc);
-
-    // success
-    *output = outBuf;
-    *output_size = expectedOutputSize;
 }
