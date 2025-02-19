@@ -2618,7 +2618,7 @@ void VDUStreamProcessor::bufferDecompressSimz(uint16_t bufferId, uint16_t source
 
     uint32_t expectedOutputSize = header.decompressed_size;
 
-    // Create output buffer first, just like bufferDecompress()
+    // Create output buffe using a PSRAM-aware allocation routine via make_shared_psram.
     auto bufferStream = make_shared_psram<BufferStream>(expectedOutputSize);
     if (!bufferStream || !bufferStream->getBuffer()) {
         debug_log("bufferDecompressSimz: failed to create buffer %d\n", bufferId);
@@ -2631,13 +2631,19 @@ void VDUStreamProcessor::bufferDecompressSimz(uint16_t bufferId, uint16_t source
                       compressedSize - SIMZ_HEADER_SIZE, 
                       expectedOutputSize);
 
-    // Assign the buffer, avoiding any additional copying
-    bufferClear(bufferId);
-    buffers[bufferId].push_back(bufferStream);
+    // Assign the buffer, avoiding any additional copying.
+    // If the source and target buffer IDs are the same, clear and replace the buffer.
+    if (bufferId == sourceBufferId) {
+        buffers[bufferId].clear();
+        buffers[bufferId].push_back(bufferStream);
+    } else {
+        bufferClear(bufferId);
+        buffers[bufferId].push_back(bufferStream);
+    }
 
-	// #ifdef DEBUG
+    // #ifdef DEBUG
     fprintf(stderr, "SIMZ decompression completed for buffer %u in %u ms.\n", bufferId, millis() - start);
-	// #endif
+    // #endif
 }
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer

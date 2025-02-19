@@ -1,25 +1,10 @@
-/*
-   Combined "simz.h" + block-based decompression logic
-   that aligns with the PC command-line code. 
-   (No file I/O, purely in-memory, for ESP32 or similar.)
-
-   You previously had a "simz.h" with:
-     - SIMZ_HEADER_SIZE (10)
-     - simz_header struct
-     - simz_read_header()
-     - stubs for simz_decompressit() 
-   This file merges all of that plus a corrected
-   simz_decompressit() using the same block-based approach
-   as your original PC version.
-*/
-
 #include <stdint.h>
 #include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-
-/*********************** simz.h (original content) **************************/
+#include <esp_heap_caps.h>
+#include <esp32-hal-psram.h>
 
 #ifndef SIMZ_H
 #define SIMZ_H
@@ -39,15 +24,6 @@ extern "C" {
 #include <stdlib.h>
 #include <stdio.h>
 
-/* Basic integer types (some might have been used in your original file) */
-// typedef unsigned short uint2;  /* two-byte integer (for large arrays) */
-// typedef unsigned int   uint4;  /* four-byte integer (range needed) */
-// typedef unsigned int   uint;   /* fast unsigned integer, 2 or 4 bytes */
-
-/******************** SIMZ Range Coder *************************/
-/* We'll re-implement the actual decode structure in this file. */
-
-/******************** SIMZ Header *****************************/
 /*
    SIMZ header format (10 bytes total):
      - Bytes 0-3:  Magic "SIMZ"
@@ -95,18 +71,6 @@ inline void simz_read_header(const uint8_t *input, size_t input_size, simz_heade
 
 #endif // SIMZ_H
 
-/**************** End of "simz.h" portion ********************/
-
-
-/************************************************************
- * Now implement the *correct* block-based simz_decompressit,
- * mirroring your PC code but using memory buffers instead of files.
- ************************************************************/
-
-/* 
-   We define a small range coder struct for decoding from memory.
-   (This is *not* the same as your old uniform "simz_decode_byte" approach.)
-*/
 typedef struct {
     uint32_t low;       // low end of interval
     uint32_t range;     // length of interval
@@ -119,7 +83,6 @@ typedef struct {
     size_t input_pos;
 } simz_rangecoder;
 
-/* Constants from your rangecod.c / simz code */
 #define SIMZ_CODE_BITS   32
 #define SIMZ_TOP_VALUE   ((uint32_t)1 << (SIMZ_CODE_BITS-1))
 #define SIMZ_SHIFT_BITS  (SIMZ_CODE_BITS - 9)
@@ -144,7 +107,7 @@ static inline void simz_dec_normalize(simz_rangecoder *rc) {
     }
 }
 
-/* Initialize the decoder from memory (i.e. "start decoding"). */
+/* Initialize the decoder from memory */
 static int simz_start_decoding(simz_rangecoder *rc,
                                const uint8_t *data,
                                size_t data_size)
@@ -223,28 +186,13 @@ static uint16_t simz_decode_short(simz_rangecoder *rc) {
     return (uint16_t)cf;
 }
 
-/**********************************************************************
- * The key function your code calls:
- *   simz_decompressit(&decompressedData, &decompressedSize, 
- *                     compressedData + SIMZ_HEADER_SIZE, 
- *                     compressedSize - SIMZ_HEADER_SIZE, 
- *                     expectedOutputSize);
- *
- * 1) We do NOT read the 10-byte header here, because you do it externally.
- * 2) We expect the rest of the data to contain the block-based structure:
- *      - repeated: 1 bit "block present?" 
- *      - if present: read 256 freq counts, decode that block
- *      - stop if bit=0
- **********************************************************************/
 void simz_decompressit(uint8_t *output, uint32_t output_size,
                        const uint8_t *compressedData, uint32_t compressedSize,
                        uint32_t expectedOutputSize)
 {
-    // We assume output_size == expectedOutputSize.
     // Initialize the in-memory range decoder with the compressed data.
     simz_rangecoder rc;
     if (simz_start_decoding(&rc, compressedData, compressedSize) != 0) {
-        // If initialization fails, simply return.
         return;
     }
     
