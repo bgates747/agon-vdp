@@ -135,6 +135,7 @@ class VDUStreamProcessor {
 		void bufferDecompress(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferCompressSzip(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferDecompressSzip(uint16_t bufferId, uint16_t sourceBufferId);
+		void bufferDecompressSimz(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferExpandBitmap(uint16_t bufferId, uint8_t options, uint16_t sourceBufferId);
 
 		void vdu_sys_updater();

@@ -274,6 +274,7 @@
 #define BUFFERED_DECOMPRESS				0x41	// Decompress blocks from multiple buffers into one buffer
 #define BUFFERED_COMPRESS_SZIP			0x42	// Compress blocks from multiple buffers into one buffer using SZIP
 #define BUFFERED_DECOMPRESS_SZIP		0x43	// Decompress blocks from multiple buffers into one buffer using SZIP
+#define BUFFERED_DECOMPRESS_SIMZ		0x45	// Decompress blocks from multiple buffers into one buffer using SIMZ
 #define BUFFERED_EXPAND_BITMAP			0x48	// Expand a bitmap buffer
 
 #define BUFFERED_DEBUG_INFO				0x80	// Get debug info about a buffer

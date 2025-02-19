@@ -16,6 +16,7 @@
 #include "buffer_stream.h"
 #include "compression.h"
 #include "compression_szip.h"
+#include "compression_simz.h"
 #include "mem_helpers.h"
 #include "multi_buffer_stream.h"
 #include "sprites.h"
@@ -249,6 +250,11 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 			auto sourceBufferId = readWord_t();
 			if (sourceBufferId == -1) return;
 			bufferDecompressSzip(bufferId, sourceBufferId);
+		}	break;
+		case BUFFERED_DECOMPRESS_SIMZ: {
+			auto sourceBufferId = readWord_t();
+			if (sourceBufferId == -1) return;
+			bufferDecompressSimz(bufferId, sourceBufferId);
 		}	break;
 		case BUFFERED_EXPAND_BITMAP: {
 			auto options = readByte_t(); if (options == -1) return;
@@ -2575,6 +2581,70 @@ void VDUStreamProcessor::bufferDecompressSzip(uint16_t bufferId, uint16_t source
     // #ifdef DEBUG
     printf("Decompression took %u ms\n", millis() - start);
     // #endif
+}
+void VDUStreamProcessor::bufferDecompressSimz(uint16_t bufferId, uint16_t sourceBufferId) {
+    auto start = millis();
+
+    // Consolidate source buffer
+    bufferConsolidate(sourceBufferId);
+
+    // Locate source buffer
+    auto sourceBufferIter = buffers.find(sourceBufferId);
+    if (sourceBufferIter == buffers.end()) {
+        debug_log("bufferDecompressSimz: source buffer %d not found\n", sourceBufferId);
+        return;
+    }
+    auto &sourceBuffer = sourceBufferIter->second;
+
+    // Retrieve the compressed input buffer and its size.
+    uint8_t* compressedData = sourceBuffer[0]->getBuffer();
+    uint32_t compressedSize = sourceBuffer[0]->size();
+
+    debug_log("bufferDecompressSimz: Checking header for buffer %u...\n", sourceBufferId);
+
+    // Declare a simz_header struct and read the header
+    simz_header header;
+    simz_read_header(compressedData, compressedSize, &header);
+    
+    debug_log("SIMZ version %u.%u, expected output size: %u bytes\n", 
+              header.major, header.minor, header.decompressed_size);
+
+    // Use the decompressed size from the header as expectedOutputSize
+    uint32_t expectedOutputSize = header.decompressed_size;
+
+    // Prepare decompressed buffer pointers
+    uint8_t *decompressedData = NULL;
+    uint32_t decompressedSize = 0;
+
+    // Call the decompression function
+    simz_decompressit(&decompressedData, &decompressedSize, 
+                      compressedData + SIMZ_HEADER_SIZE, 
+                      compressedSize - SIMZ_HEADER_SIZE, 
+                      expectedOutputSize);
+
+    if (!decompressedData || decompressedSize == 0) {
+        debug_log("Decompression failed: No data output.\n");
+        return;
+    }
+
+    // Allocate a BufferStream of the correct size.
+    auto bufferStream = make_shared_psram<BufferStream>(expectedOutputSize);
+    if (!bufferStream || !bufferStream->getBuffer()) {
+        debug_log("Failed to allocate bufferStream\n");
+        free(decompressedData);
+        return;
+    }
+
+    // Copy decompressed data into the BufferStream.
+    memcpy(bufferStream->getBuffer(), decompressedData, expectedOutputSize);
+
+    // Clear the target buffer and store the decompressed data.
+    bufferClear(bufferId);
+    buffers[bufferId].push_back(bufferStream);
+
+    free(decompressedData);
+
+    debug_log("Decompression completed for buffer %u in %u ms.\n", bufferId, millis() - start);
 }
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer
