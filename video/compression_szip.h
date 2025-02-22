@@ -9,7 +9,6 @@
 
 static char vmayor = 1, vminor = 12;
 
-#define BLOCK_SIZE (1 << SIZE_SHIFT) // TODO: not used anywhere so consider deleting
 #define SZIP_HEADER_SIZE 6
 
 
@@ -21,19 +20,8 @@ unsigned char recordsize = 1;
 extern void debug_log(const char * format, ...);		// Debug log function
 
 static void no_szip() {
-    debug_log("probably not an szip file; could be szip version prior to 1.10\n");
+    debug_log("no_szip: Not a valid SZIP encoding.\n");
     exit(1);
-}
-
-static void hex_dump(const unsigned char *buf, uint4 len) {
-    uint4 i;
-    for (i = 0; i < len; i++) {
-        debug_log("%02X ", buf[i]);
-        if ((i + 1) % 16 == 0)
-        debug_log("\n");
-    }
-    if (len % 16 != 0)
-    debug_log("\n");
 }
 
 static void readglobalheader() {
@@ -76,7 +64,6 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     uint4 indexlast, charcount[256], bytesleft;
 
 #ifndef MODELGLOBAL
-    // Instead of putting 'sz_model m;' on the stack, we now allocate it dynamically.
     sz_model *m = NULL;
 #endif
 
@@ -100,7 +87,6 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     // Initialize the model for DEcompression
     initmodel(m, -1, &recordsize);
 #else
-    // If MODELGLOBAL is defined, you presumably have a global 'mod'.
     initmodel(&mod, -1, &recordsize);
 #endif
 
@@ -253,15 +239,5 @@ static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
         }
         
         *outSize = blocklen;  // Update the output size
-        
-        // #if VERBOSITY == 1
-        // debug_log("decompressit:  Decompressed Data (Hexdump):\n");
-        // for (uint32_t i = 0; i < blocklen; i++) {
-        //     debug_log("%02X ", (*inoutbuffer_ptr)[i]);
-        //     if ((i + 1) % 16 == 0) debug_log("\n"); // Format output in 16-byte rows
-        // }
-        // debug_log("\n");
-        // debug_log(" done\n");
-        // #endif
     }
 }
