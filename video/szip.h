@@ -1,15 +1,12 @@
 #ifndef SZIP_H
 #define SZIP_H
 
+#include "agon.h" // for debug_log
 #include <cstring>
 #include <esp_heap_caps.h>
 #include <stdint.h>
 #include <esp32-hal-psram.h>
 
-extern void debug_log(const char * format, ...);		// Debug log function
-
-// =================================================================================================
-// Szip-style compression
 // =================================================================================================
 // readme.txt
 // -------------------------------------------------------------------------------------------------
@@ -3264,3 +3261,281 @@ void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length,
 }
 
 #endif // SZ_SRT_BW
+// =================================================================================================
+// szip.c
+// -------------------------------------------------------------------------------------------------
+/* szip.c                                                                   *
+*                                                                           *
+*  written by Michael Schindler michael@compressconsult.com                 *
+*  1997,1998                                                                *
+*  http://www.compressconsult.com/                                         */
+
+static char vmayor=1, vminor=12;
+
+/* Not needed for ESP32 implementation, included here for documentation purposes only
+static void usage()
+{   fprintf(stderr,"szip %d.%d (c)1997-2000 Michael Schindler, szip@compressconsult.com\n",
+        vmayor, vminor);
+    fprintf(stderr,"homepage: http://www.compressconsult.com/szip/\n");
+    fprintf(stderr,"usage: szip [options] [inputfile [outputfile]]\n");
+    fprintf(stderr,"option           meaning              default   range\n");
+    fprintf(stderr,"-d               decompress\n");
+    fprintf(stderr,"-b<blocksize>    blocksize in 100kB   -b1      1-41\n"); // default block size to minimum for ESP32-friendly decompression
+    fprintf(stderr,"-o<order>        order of context     -o6       0, 3-255\n");
+    fprintf(stderr,"-r<recordsize>   recordsize           -r1       1-127\n");
+    fprintf(stderr,"-i               incremental          -i\n");
+    fprintf(stderr,"-v<level>        verbositylevel       -v0       0-255\n");
+    fprintf(stderr,"options may be combined into one, like -r3i\n");
+    exit(1);
+}
+*/
+
+// ESP32-specific stuff not in the original
+#define COMPRESSION_TYPE_SZIP 'S'
+uint order = 6;
+#define VERBOSITY 0
+unsigned char recordsize = 1;
+// End of ESP32-specific stuff
+
+
+static void no_szip() {
+    debug_log("no_szip: Not a valid SZIP encoding.\n");
+    exit(1);
+}
+
+static void readglobalheader()
+{   /* Verify the Agon compression header prefix */
+    if (getchar() != 'C') no_szip();
+    if (getchar() != 'm') no_szip();
+    if (getchar() != 'p') no_szip();
+    if (getchar() != COMPRESSION_TYPE_SZIP) no_szip();
+    /* Read the original file size (4 bytes, little-endian order).
+       We could store this value if needed; for now we just read and ignore it. */
+    uint4 orig_size = 0;
+    orig_size |= (uint4)(unsigned char)getchar();
+    orig_size |= (uint4)(unsigned char)getchar() << 8;
+    orig_size |= (uint4)(unsigned char)getchar() << 16;
+    orig_size |= (uint4)(unsigned char)getchar() << 24;
+
+    /* Verify the SZIP magic SZ\012\004 and version numbers */
+    int ch, vmay;
+    ch = getchar();
+    if (ch == EOF) return;
+    if (ch == 0x42) {ungetc(ch, stdin); return;} /* maybe blockheader */
+    if (ch != 0x53) no_szip();
+    if (getchar() != 0x5a) no_szip();
+    if (getchar() != 0x0a) no_szip();
+    if (getchar() != 0x04) no_szip();
+    vmay = getchar();
+    if (vmay == EOF || vmay==0) no_szip();
+    ch = getchar();
+    if (ch == EOF) no_szip();
+    if (vmay>vmayor || (vmay==vmayor && ch>vminor))
+    {   fprintf(stderr, "This file is szip version %d.%d, this program is %d.%d.\n Please update\n",
+        vmay, ch, vmayor, vminor);
+        exit(1);
+    }
+    if (vmay==1 && ch==10)
+    {   fprintf(stderr, "This file is szip version 1.10ALPHAi");
+        fprintf(stderr, "A decoder is available at the website http://www.compressconsult.com");
+        exit(1);
+    }
+}
+
+static uint readblockdir(uint4 *buflen) {
+    int ch;
+    ch = sz_stream_getchar();
+    if (ch == EOF) {
+        *buflen = 0;
+        return 0;
+    }
+    if (ch != 0x42) no_szip();
+    if (sz_stream_getchar() != 0x48) no_szip();
+    *buflen = sz_stream_readuint3();
+    if (sz_stream_getchar() != 0) no_szip();
+    debug_log("readblockdir: block size %d\n", *buflen);
+    return 6;
+}
+
+static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
+    unsigned char *out_buffer;  // Explicit output buffer
+    uint4 indexlast, charcount[256], bytesleft;
+
+#ifndef MODELGLOBAL
+    sz_model *m = NULL;
+#endif
+
+    debug_log("readszipblock: Decoding %d bytes\n", buflen);
+
+    // Read the block header info from your compressed stream:
+    indexlast = sz_stream_readuint3();
+    order = sz_stream_getchar();
+    debug_log("readszipblock: indexlast=%d order=%d\n", indexlast, order);
+
+    // Initialize charcount to zero
+    memset(charcount, 0, sizeof(charcount));
+
+#ifndef MODELGLOBAL
+    // Dynamically allocate the sz_model
+    m = (sz_model *)malloc(sizeof(sz_model));
+    if (!m) {
+        debug_log("readszipblock: memory allocation for sz_model failed\n");
+        exit(1);
+    }
+    // Initialize the model for DEcompression
+    initmodel(m, -1, &recordsize);
+#else
+    initmodel(&mod, -1, &recordsize);
+#endif
+
+    debug_log("readszipblock: model initialized\n");
+
+    // === Begin decoding runs into `buffer` ===
+    unsigned char *tmp = buffer;
+    bytesleft = buflen;
+
+    // Decode the *first* run
+    {
+        uint4 runlength;
+        uint ch;
+
+#ifndef MODELGLOBAL
+        sz_decode(m, &ch, &runlength);
+#else
+        sz_decode(&mod, &ch, &runlength);
+#endif
+
+        if (runlength > bytesleft) {
+            debug_log("input file corrupt\n");
+            exit(1);
+        }
+        bytesleft -= runlength;
+        charcount[ch] += runlength;
+        while (runlength--) {
+            *(tmp++) = ch;
+        }
+    }
+
+#ifndef MODELGLOBAL
+    fixafterfirst(m);
+#else
+    fixafterfirst(&mod);
+#endif
+
+    debug_log("readszipblock: first run decoded, bytesleft=%d\n", bytesleft);
+
+    // Decode the rest of the runs
+    while (bytesleft) {
+        uint4 runlength;
+        uint ch;
+
+#ifndef MODELGLOBAL
+        sz_decode(m, &ch, &runlength);
+#else
+        sz_decode(&mod, &ch, &runlength);
+#endif
+
+        if (runlength > bytesleft) {
+            debug_log("input file corrupt\n");
+            exit(1);
+        }
+        bytesleft -= runlength;
+        charcount[ch] += runlength;
+        while (runlength--) {
+            *(tmp++) = ch;
+        }
+    }
+    debug_log("readszipblock: all runs decoded, bytesleft=%d\n", bytesleft);
+
+    // Done with the model
+#ifndef MODELGLOBAL
+    deletemodel(m);
+#else
+    deletemodel(&mod);
+#endif
+    debug_log("readszipblock: model deleted\n");
+
+    // Allocate a separate output buffer for "unsorting"
+    out_buffer = (unsigned char *)malloc(buflen);
+    if (out_buffer == NULL) {
+        debug_log("memory allocation failure\n");
+        exit(1);
+    }
+
+    // Perform unsorting into `out_buffer`
+    if (recordsize == 1) {
+        if (order == 0)
+            sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
+        else
+            sz_unsrt(buffer, out_buffer, buflen, indexlast, charcount, order);
+    } else {
+        if (order == 0)
+            sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
+        else
+            sz_unsrt(buffer, out_buffer, buflen, indexlast, charcount, order);
+
+        // Perform the optional delta restoration if (recordsize & 0x80)
+        if (recordsize & 0x80) {
+            uint4 i;
+            unsigned char c = *out_buffer;
+            for (i = 1; i < buflen; i++) {
+                c = (c + out_buffer[i]) & 0xFF;
+                out_buffer[i] = c;
+            }
+        }
+        // Perform "unreorder" step
+        unreorder(out_buffer, buffer, buflen, recordsize & 0x7F);
+        debug_log("readszipblock: unsorted\n");
+    }
+
+    // Copy final output back into `buffer`
+    memcpy(buffer, out_buffer, buflen);
+    free(out_buffer);
+
+#ifndef MODELGLOBAL
+    // Finally, free the dynamically allocated sz_model
+    free(m);
+#endif
+
+    debug_log("readszipblock: done\n");
+}
+
+static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
+    uint4 blocksize = 0;
+    readglobalheader();  // Uses global stream
+
+    *outSize = 0;  // Reset output size
+
+    while (1) {
+        uint4 blocklen;
+        uint dirsize;
+        int ch;
+
+        dirsize = readblockdir(&blocklen);
+        if (dirsize == 0) break;
+
+        // Allocate or reallocate the output buffer
+        if (blocklen > blocksize) {
+            if (*inoutbuffer_ptr != NULL) {
+                free(*inoutbuffer_ptr);
+            }
+            *inoutbuffer_ptr = (unsigned char *)malloc(blocklen);
+            blocksize = blocklen;
+            if (*inoutbuffer_ptr == NULL) {
+                debug_log("memory allocation error\n");
+                exit(1);
+            }
+        }
+
+        ch = sz_stream_getchar();
+        if (ch == 1) {
+            debug_log("decompressit: Reading compressed block, size=%d bytes\n", blocklen);
+            readszipblock(dirsize + 1, blocklen, *inoutbuffer_ptr);
+        } else {
+            debug_log("decompressit: [ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
+            no_szip();
+        }
+        
+        *outSize = blocklen;  // Update the output size
+    }
+}
