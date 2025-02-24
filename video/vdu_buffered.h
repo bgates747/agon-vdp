@@ -15,6 +15,7 @@
 #include "buffers.h"
 #include "buffer_stream.h"
 #include "compression.h"
+#include "szip.h"
 #include "mem_helpers.h"
 #include "multi_buffer_stream.h"
 #include "sprites.h"
