@@ -2501,7 +2501,7 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 		debug_log("bufferDeompress: buffer %d not found\n\r", sourceBufferId);
 		return;
 	}
-	auto &sourceBuffer = sourceBufferIter->second;
+	BufferVector &sourceBuffer = sourceBufferIter->second;
 
 	// Validate the compression header
 	if (sourceBuffer.size() >= 1 && sourceBuffer[0]->size() < sizeof(CompressionFileHeader)) {
@@ -2510,13 +2510,23 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	}
 	
 	auto p_hdr = (const CompressionFileHeader*) sourceBuffer[0]->getBuffer();
+
 	if (p_hdr->marker[0] != 'C' ||
 		p_hdr->marker[1] != 'm' ||
-		p_hdr->marker[2] != 'p' ||
-		p_hdr->type != COMPRESSION_TYPE_TURBO) {
+		p_hdr->marker[2] != 'p') {
 		debug_log("bufferDecompress: header is invalid\n\r");
 		return;
 	}
+
+	// Validate the compression type
+	switch (p_hdr->type) {
+		case COMPRESSION_TYPE_TURBO:
+			break;
+		default:
+			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
+			return;
+	}
+
 	auto orig_size = p_hdr->orig_size;
 
 	debug_log("Decompressing into buffer %u\n\r", bufferId);
@@ -2531,42 +2541,24 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 
 	// prepare for doing compression
 	auto buffer = bufferStream->getBuffer();
-	DecompressionData dd;
-	agon_init_decompression(&dd, &buffer, &local_write_decompressed_byte, orig_size);
 
-	// loop thru blocks stored against the source buffer ID
-	uint32_t skip_hdr = sizeof(CompressionFileHeader);
-	dd.input_count = skip_hdr;
-	for (const auto &block : sourceBuffer) {
-		// decompress the block into our temporary buffer
-		auto bufferLength = block->size() - skip_hdr;
-		auto p_data = block->getBuffer();
-		debug_log(" from buffer %u [%08X] %u bytes\n\r", sourceBufferId, p_data, bufferLength);
-		debug_log(" %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX\n\r",
-					p_data[0], p_data[1], p_data[2], p_data[3],
-					p_data[4], p_data[5], p_data[6], p_data[7],
-					p_data[8], p_data[9], p_data[10], p_data[11]);
-		p_data += skip_hdr;
-		skip_hdr = 0;
-		dd.input_count += bufferLength;
-		while (bufferLength--) {
-			agon_decompress_byte(&dd, *p_data++);
-		}
+	// do the specific type of decompression
+	switch(p_hdr->type) {
+		case COMPRESSION_TYPE_TURBO:
+			tvc_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
+			break;
+		default:
+			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
+			return;
 	}
 
 	debug_log(" %02hX %02hX %02hX %02hX\n\r",
 				buffer[0], buffer[1], buffer[2], buffer[3]);
+	
+	// clear the target buffer and write the decompressed data to it
 	bufferClear(bufferId);
 	buffers[bufferId].push_back(bufferStream);
 
-	uint32_t pct = (dd.output_count * 100) / dd.input_count;
-	debug_log("Decompressed %u input bytes to %u output bytes (%u%%) at %08X\n\r",
-				dd.input_count, dd.output_count, pct, buffer);
-
-	if (dd.output_count != orig_size) {
-		debug_log("Decompressed buffer size %u does not equal original size %u\r\n",
-					dd.output_count, orig_size);
-	}
 	#ifdef DEBUG
 	debug_log("Decompress took %u ms\n\r", millis() - start);
 	#endif

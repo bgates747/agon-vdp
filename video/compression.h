@@ -1,6 +1,7 @@
 #ifndef COMPRESSION_H
 #define COMPRESSION_H
 
+#include "buffers.h"
 #include <cstring>
 #include <esp_heap_caps.h>
 #include <stdint.h>
@@ -303,6 +304,39 @@ void agon_decompress_byte(DecompressionData* dd, uint8_t comp_byte) {
             }
         }
     }
+}
+
+void tvc_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_t *buffer, uint32_t orig_size) {
+	DecompressionData dd;
+	agon_init_decompression(&dd, &buffer, &local_write_decompressed_byte, orig_size);
+
+	// loop thru blocks stored against the source buffer ID
+	uint32_t skip_hdr = sizeof(CompressionFileHeader);
+	dd.input_count = skip_hdr;
+	for (const auto &block : sourceBuffer) {
+		// decompress the block into our temporary buffer
+		auto bufferLength = block->size() - skip_hdr;
+		auto p_data = block->getBuffer();
+		debug_log(" from buffer %u [%08X] %u bytes\n\r", sourceBufferId, p_data, bufferLength);
+		debug_log(" %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX %02hX\n\r",
+					p_data[0], p_data[1], p_data[2], p_data[3],
+					p_data[4], p_data[5], p_data[6], p_data[7],
+					p_data[8], p_data[9], p_data[10], p_data[11]);
+		p_data += skip_hdr;
+		skip_hdr = 0;
+		dd.input_count += bufferLength;
+		while (bufferLength--) {
+			agon_decompress_byte(&dd, *p_data++);
+		}
+	}
+	uint32_t pct = (dd.output_count * 100) / dd.input_count;
+	debug_log("Decompressed %u input bytes to %u output bytes (%u%%) at %08X\n\r",
+				dd.input_count, dd.output_count, pct, buffer);
+
+	if (dd.output_count != orig_size) {
+		debug_log("Decompressed buffer size %u does not equal original size %u\r\n",
+					dd.output_count, orig_size);
+	}
 }
 
 #endif // COMPRESSION_H
