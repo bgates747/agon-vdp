@@ -2494,10 +2494,9 @@ void VDUStreamProcessor::bufferCompress(uint16_t bufferId, uint16_t sourceBuffer
 // Replaces the target buffer with the new one.
 //
 void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBufferId) {
-	#ifdef DEBUG
+	// #ifdef DEBUG
 	auto start = millis();
-	#endif
-    bufferConsolidate(sourceBufferId); // TODO: fix rle2_decompress to handle multiple blocks and remove this
+	// #endif
 	auto sourceBufferIter = buffers.find(sourceBufferId);
 	if (sourceBufferIter == buffers.end()) {
 		debug_log("bufferDeompress: buffer %d not found\n\r", sourceBufferId);
@@ -2552,6 +2551,7 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 			tvc_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
 			break;
 		case COMPRESSION_TYPE_RLE2:
+		    bufferConsolidate(sourceBufferId); // run + color combo can span block boundaries, so this is just easier
 			rle2_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
 			break;
 		default:
@@ -2566,9 +2566,9 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	bufferClear(bufferId);
 	buffers[bufferId].push_back(bufferStream);
 
-	#ifdef DEBUG
-	debug_log("Decompress took %u ms\n\r", millis() - start);
-	#endif
+	// #ifdef DEBUG
+	printf("Decompress took %u ms\n\r", millis() - start);
+	// #endif
 }
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer

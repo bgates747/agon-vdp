@@ -34,22 +34,20 @@
 #define COMPRESSION_RLE2_HEADER_SIZE 14
 
 void rle2_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_t *buffer, uint32_t orig_size) {
-    auto block = sourceBuffer.front(); // this only works if sourceBuffer has only 1 block
-    uint8_t *p_data = block->getBuffer(); // get the data we can actually read from
+    auto block = sourceBuffer.front(); // bufferConsolidate must have been called ...
+    auto p_data = block->getBuffer(); // ... otherwise this won't work
     p_data += COMPRESSION_RLE2_HEADER_SIZE; // skip the header
     uint32_t out_index = 0; // initialize index into the output buffer
     while (out_index < orig_size) {
         uint8_t cmd = *p_data++; // get the next command byte and bump the pointer
-        if (cmd & 0x80) {
-            // Singleton: restore transparency (copy bit 6 into bit 7)
-            uint8_t alpha = (cmd & 0x40) ? 0xC0 : 0x00;
+        if (cmd & 0x80) { // Singleton: cmd specifies the color of one pixel
+            uint8_t alpha = (cmd & 0x40) ? 0xC0 : 0x00; // restore transparency (copy bit 6 into bit 7)
             buffer[out_index++] = alpha | (cmd & 0x3F); // copy the color bits and bump the index
-        } else {
-            // Run: command specifies a literal to be repeated
+        } else {// Run: cmd is run length + 3, next byte is color
             size_t run = (cmd & 0x7F) + 3; // minimum run length is 3
-            uint8_t literal = *p_data++; // get the literal byte and bump the pointer
+            uint8_t color = *p_data++; // get the color byte and bump the pointer
             for (size_t j = 0; j < run; j++) {
-                buffer[out_index++] = literal; // repeat the literal and bump the index
+                buffer[out_index++] = color; // repeat the color and bump the index
             }
         }
     }
