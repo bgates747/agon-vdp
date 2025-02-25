@@ -15,6 +15,7 @@
 #include "buffers.h"
 #include "buffer_stream.h"
 #include "compression.h"
+#include "compression_rle2.h"
 #include "szip.h"
 #include "mem_helpers.h"
 #include "multi_buffer_stream.h"
@@ -2496,6 +2497,7 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	#ifdef DEBUG
 	auto start = millis();
 	#endif
+    bufferConsolidate(sourceBufferId); // TODO: fix rle2_decompress to handle multiple blocks and remove this
 	auto sourceBufferIter = buffers.find(sourceBufferId);
 	if (sourceBufferIter == buffers.end()) {
 		debug_log("bufferDeompress: buffer %d not found\n\r", sourceBufferId);
@@ -2522,6 +2524,8 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	switch (p_hdr->type) {
 		case COMPRESSION_TYPE_TURBO:
 			break;
+		case COMPRESSION_TYPE_RLE2:
+			break;
 		default:
 			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
 			return;
@@ -2546,6 +2550,9 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	switch(p_hdr->type) {
 		case COMPRESSION_TYPE_TURBO:
 			tvc_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
+			break;
+		case COMPRESSION_TYPE_RLE2:
+			rle2_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
 			break;
 		default:
 			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
