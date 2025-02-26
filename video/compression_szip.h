@@ -34,9 +34,9 @@
 
 // option              meaning                 default
 // -d                  decompress
-// -b<blocksize>       blocksize in 100kB      -b17
-// -o<order>           order of context        -o6
-// -r<recordsize>      recordsize              -r1
+// -b<blocksize>       blocksize in 100kB      -b17  1-41
+// -o<order>           order of context        -o6   0, 3-255
+// -r<recordsize>      recordsize              -r1   1-127
 // -i                  incremental coding (differences to previous value)
 // -v<level>           turn on messages        -v0
 // options may be grouped like -b14o10r3
