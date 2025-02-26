@@ -28,7 +28,6 @@
 #define RLE2_H
 
 #include "buffers.h"
-#include "compression.h"
 
 #define COMPRESSION_TYPE_RLE2 'r'
 #define COMPRESSION_RLE2_HEADER_SIZE 14

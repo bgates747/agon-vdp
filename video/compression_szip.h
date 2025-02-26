@@ -3305,41 +3305,37 @@ static void no_szip() {
 
 static void readglobalheader()
 {   /* Verify the Agon compression header prefix */
-    if (getchar() != 'C') no_szip();
-    if (getchar() != 'm') no_szip();
-    if (getchar() != 'p') no_szip();
-    if (getchar() != COMPRESSION_TYPE_SZIP) no_szip();
+    if (sz_stream_getchar() != 'C') no_szip();
+    if (sz_stream_getchar() != 'm') no_szip();
+    if (sz_stream_getchar() != 'p') no_szip();
+    if (sz_stream_getchar() != COMPRESSION_TYPE_SZIP) no_szip();
+    debug_log("readglobalheader: Agon header ok\n");
+
     /* Read the original file size (4 bytes, little-endian order).
        We could store this value if needed; for now we just read and ignore it. */
     uint4 orig_size = 0;
-    orig_size |= (uint4)(unsigned char)getchar();
-    orig_size |= (uint4)(unsigned char)getchar() << 8;
-    orig_size |= (uint4)(unsigned char)getchar() << 16;
-    orig_size |= (uint4)(unsigned char)getchar() << 24;
+    orig_size |= (uint4)(unsigned char)sz_stream_getchar();
+    orig_size |= (uint4)(unsigned char)sz_stream_getchar() << 8;
+    orig_size |= (uint4)(unsigned char)sz_stream_getchar() << 16;
+    orig_size |= (uint4)(unsigned char)sz_stream_getchar() << 24;
+    debug_log("readglobalheader: Original size: %d\n", orig_size);
 
-    /* Verify the SZIP magic SZ\012\004 and version numbers */
-    int ch, vmay;
-    ch = getchar();
+    /* Verify the SZIP magic SZ\012\004 magic chars */
+    int ch, vmay, vmin;
+    ch = sz_stream_getchar();
     if (ch == EOF) return;
     if (ch == 0x42) {ungetc(ch, stdin); return;} /* maybe blockheader */
     if (ch != 0x53) no_szip();
-    if (getchar() != 0x5a) no_szip();
-    if (getchar() != 0x0a) no_szip();
-    if (getchar() != 0x04) no_szip();
-    vmay = getchar();
-    if (vmay == EOF || vmay==0) no_szip();
-    ch = getchar();
-    if (ch == EOF) no_szip();
-    if (vmay>vmayor || (vmay==vmayor && ch>vminor))
-    {   fprintf(stderr, "This file is szip version %d.%d, this program is %d.%d.\n Please update\n",
-        vmay, ch, vmayor, vminor);
-        exit(1);
-    }
-    if (vmay==1 && ch==10)
-    {   fprintf(stderr, "This file is szip version 1.10ALPHAi");
-        fprintf(stderr, "A decoder is available at the website http://www.compressconsult.com");
-        exit(1);
-    }
+    if (sz_stream_getchar() != 0x5a) no_szip();
+    if (sz_stream_getchar() != 0x0a) no_szip();
+    if (sz_stream_getchar() != 0x04) no_szip();
+    debug_log("readglobalheader: SZIP header ok\n");
+
+    /* Verify the SZIP version number */
+    vmay = sz_stream_getchar();
+    vmin = sz_stream_getchar();
+    if (vmay != vmayor || vmin != vminor) no_szip();
+    debug_log("readglobalheader: SZIP version %d.%d\n", vmay, vmin);
 }
 
 static uint readblockdir(uint4 *buflen) {
@@ -3500,7 +3496,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     debug_log("readszipblock: done\n");
 }
 
-static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
+static void decompressit(unsigned char *inoutbuffer, uint32_t *outSize) {
     uint4 blocksize = 0;
     readglobalheader();  // Uses global stream
 
@@ -3514,28 +3510,60 @@ static void decompressit(unsigned char **inoutbuffer_ptr, uint32_t *outSize) {
         dirsize = readblockdir(&blocklen);
         if (dirsize == 0) break;
 
-        // Allocate or reallocate the output buffer
+        // Ensure we do not allocate new memory, use the provided buffer
         if (blocklen > blocksize) {
-            if (*inoutbuffer_ptr != NULL) {
-                free(*inoutbuffer_ptr);
-            }
-            *inoutbuffer_ptr = (unsigned char *)malloc(blocklen);
-            blocksize = blocklen;
-            if (*inoutbuffer_ptr == NULL) {
-                debug_log("memory allocation error\n");
-                exit(1);
-            }
+            blocksize = blocklen;  // Track max block size
         }
 
         ch = sz_stream_getchar();
         if (ch == 1) {
             debug_log("decompressit: Reading compressed block, size=%d bytes\n", blocklen);
-            readszipblock(dirsize + 1, blocklen, *inoutbuffer_ptr);
+            readszipblock(dirsize + 1, blocklen, inoutbuffer);  // Decompress into provided buffer
         } else {
             debug_log("decompressit: [ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
             no_szip();
         }
         
         *outSize = blocklen;  // Update the output size
+    }
+}
+
+#include "buffers.h"
+
+void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_t *buffer, uint32_t orig_size) { 
+    if (sourceBuffer.empty() || !buffer) {
+        debug_log("szip_decompress: ERROR - Empty source buffer or null output buffer!\n");
+        return;
+    }
+
+    // Retrieve the compressed input buffer and its size.
+    uint8_t* compressedData = sourceBuffer.front()->getBuffer();
+    uint32_t compressedSize = sourceBuffer.front()->size();
+
+    // Set up the buffer stream for decompression
+    SzipBufferStream inStream = { compressedData, compressedSize, 0 };
+    szip_global_stream = &inStream;
+
+    debug_log("szip_decompress: Starting decompression for buffer %u (compressed size: %u bytes, expected output: %u bytes)...\n",
+              sourceBufferId, compressedSize, orig_size);
+
+    // Ensure the stream position is reset to start reading correctly
+    szip_global_stream->pos = 0;
+
+    // Call the decompression function, passing buffer directly
+    uint32_t decompressedSize = 0;
+    decompressit(buffer, &decompressedSize);
+
+    if (decompressedSize == 0) {
+        debug_log("szip_decompress: ERROR - Decompression failed: No data output.\n");
+        return;
+    }
+
+    // Check if decompressed size matches expected output size
+    if (decompressedSize != orig_size) {
+        debug_log("szip_decompress: WARNING - Output size mismatch! Decompressed %u bytes, expected %u bytes.\n",
+                  decompressedSize, orig_size);
+    } else {
+        debug_log("szip_decompress: Success! Decompressed %u bytes.\n", decompressedSize);
     }
 }

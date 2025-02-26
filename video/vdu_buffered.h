@@ -16,7 +16,7 @@
 #include "buffer_stream.h"
 #include "compression.h"
 #include "compression_rle2.h"
-#include "szip.h"
+#include "compression_szip.h"
 #include "mem_helpers.h"
 #include "multi_buffer_stream.h"
 #include "sprites.h"
@@ -2525,6 +2525,8 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 			break;
 		case COMPRESSION_TYPE_RLE2:
 			break;
+		case COMPRESSION_TYPE_SZIP:
+			break;
 		default:
 			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
 			return;
@@ -2553,6 +2555,10 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 		case COMPRESSION_TYPE_RLE2:
 		    bufferConsolidate(sourceBufferId); // run + color combo can span block boundaries, so this is just easier
 			rle2_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
+			break;
+		case COMPRESSION_TYPE_SZIP:
+			bufferConsolidate(sourceBufferId); // again just easier since szip encoding could span block boundaries
+			szip_decompress(sourceBufferId, sourceBuffer, buffer, orig_size);
 			break;
 		default:
 			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
