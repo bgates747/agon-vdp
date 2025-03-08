@@ -158,50 +158,6 @@ typedef unsigned int uint;     /* fast unsigned integer, 2 or 4 bytes  */
 #ifndef BITMODEL_H
 #define BITMODEL_H
 
-/*
-  bitmodel.h     headerfile for bit indexed trees probability model
-
-  (c) Michael Schindler
-  1997, 1998
-  http://www.compressconsult.com or http://eiunix.tuwien.ac.at/~michael
-  michael@compressconsult.com        michael@eiunix.tuwien.ac.at
-
-  based on: Peter Fenwick: A New Data Structure for Cumulative Probability Tables
-  Technical Report 88, Dep. of Computer Science, University of Auckland, NZ
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.  It may be that this
-  program violates local patents in your country, however it is
-  belived (NO WARRANTY!) to be patent-free here in Austria and I am
-  not aware of a violation elsewhere.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston,
-  MA 02111-1307, USA.
-
-  Bitmodel implements bit indexed trees for frequency storage described
-  by Peter Fenwick: A New Data Structure for Cumulative Probability Tables
-  Technical Report 88, Dep. of Computer Science, University of Auckland, NZ.
-  It features a fast method for cumulative frequency storage and updating.
-  The difference to the fenwick paper is the way the table is recalculated
-  after rescaling; the method here is faster.
-
-  There is a compiletime switch; if EXCLUDEONUPDATE is defined symbols
-  are excluded on update; to be able to use them again you have to call
-  the include function for that symbol.
-
-  The module provides functions for creation, reset, deletion, query for
-  probabilities, queries for symbols, reenabling symbols and model updating.
-*/
-
 // #include "port.h"
 
 #define EXCLUDEONUPDATE
@@ -292,43 +248,6 @@ void bitreactivate( bitmodel *m, int sym );
 #ifndef QSMODEL_H
 #define QSMODEL_H
 
-/*
-  qsmodel.h     headerfile for quasistatic probability model
-
-  (c) Michael Schindler
-  1997, 1998
-  http://www.compressconsult.com/ or http://eiunix.tuwien.ac.at/~michael
-  michael@compressconsult.com        michael@eiunix.tuwien.ac.at
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.  It may be that this
-  program violates local patents in your country, however it is
-  belived (NO WARRANTY!) to be patent-free here in Austria.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston,
-  MA 02111-1307, USA.
-
-  Qsmodel is a quasistatic probability model that periodically
-  (at chooseable intervals) updates probabilities of symbols;
-  it also allows to initialize probabilities. Updating is done more
-  frequent in the beginning, so it adapts very fast even without
-  initialisation.
-
-  it provides function for creation, deletion, query for probabilities
-  and symbols and model updating.
-
-  for usage see example.c
-*/
-
 // #include "port.h"
 
 #ifdef __cplusplus
@@ -401,65 +320,6 @@ void qsupdate( qsmodel *m, int sym );
 #ifndef rangecod_h
 #define rangecod_h
 
-/*
-  rangecod.h     headerfile for range encoding
-
-  (c) Michael Schindler
-  1997, 1998, 1999
-  http://www.compressconsult.com/ or http://eiunix.tuwien.ac.at/~michael
-  michael@compressconsult.com        michael@eiunix.tuwien.ac.at
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.  It may be that this
-  program violates local patents in your country, however it is
-  belived (NO WARRANTY!) to be patent-free here in Austria. Glen
-  Langdon also confirmed my poinion that IBM UK did not protect that
-  method.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston,
-  MA 02111-1307, USA.
-
-  Range encoding is based on an article by G.N.N. Martin, submitted
-  March 1979 and presented on the Video & Data Recording Conference,
-  Southampton, July 24-27, 1979. If anyone can name the original
-  copyright holder of that article or locate G.N.N. Martin please
-  contact me; this might allow me to make that article available on
-  the net for general public.
-
-  Range coding is closely related to arithmetic coding, except that
-  it does renormalisation in larger units than bits and is thus
-  faster. An earlier version of this code was distributed as byte
-  oriented arithmetic coding, but then I had no knowledge of Martin's
-  paper from seventy-nine.
-
-  The input and output is done by the INBYTE and OUTBYTE macros
-  defined in the .c file; change them as needed; the first parameter
-  passed to them is a pointer to the rangecoder structure; extend that
-  structure as needed (and don't forget to initialize the values in
-  start_encoding resp. start_decoding). This distribution writes to
-  stdout and reads from stdin.
-
-  There are no global or static var's, so if the IO is thread save the
-  whole rangecoder is - unless GLOBALRANGECODER is defined.
-
-  For error recovery the last 3 bytes written contain the total number
-  of bytes written since starting the encoder. This can be used to
-  locate the beginning of a block if you have only the end.
-
-  For some application using a global coder variable may provide a better
-  performance. This will allow you to use only one coder at a time and
-  will destroy thread savety. To enabble this feature uncomment the
-  #define GLOBALRANGECODER line below.
-*/
 #define GLOBALRANGECODER
 
 
@@ -813,49 +673,6 @@ static inline uint4 sz_stream_readuint3() {
 // =================================================================================================
 // bitmodel.c
 // -------------------------------------------------------------------------------------------------
-/*
-  bitmodel.c     bit indexed trees probability model
-
-  (c) Michael Schindler
-  1997, 1998
-  http://www.compressconsult.com or http://eiunix.tuwien.ac.at/~michael
-  michael@compressconsult.com       michael@eiunix.tuwien.ac.at
-
-  based on: Peter Fenwick: A New Data Structure for Cumulative Probability Tables
-  Technical Report 88, Dep. of Computer Science, University of Auckland, NZ
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.  It may be that this
-  program violates local patents in your country, however it is
-  belived (NO WARRANTY!) to be patent-free here in Austria and I am
-  not aware of a violation elsewhere.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston,
-  MA 02111-1307, USA.
-
-  Bitmodel implements bit indexed trees for frequency storage described
-  by Peter Fenwick: A New Data Structure for Cumulative Probability Tables
-  Technical Report 88, Dep. of Computer Science, University of Auckland, NZ.
-  It features a fast method for cumulative frequency storage and updating.
-  The difference to the fenwick paper is the way the table is recalculated
-  after rescaling; the method here is faster.
-
-  There is a compiletime switch; if EXCLUDEONUPDATE is defined symbols
-  are excluded on update; to be able to use them again you have to call
-  the include function for that symbol.
-
-  The module provides functions for creation, reset, deletion, query for
-  probabilities, queries for symbols, reenabling symbols and model updating.
-*/
 
 // #include "bitmodel.h"
 // #include <stdio.h>     /* NULL */
@@ -1049,42 +866,6 @@ void bitreactivate( bitmodel *m, int sym )
 // =================================================================================================
 // qsmodel.c
 // -------------------------------------------------------------------------------------------------
-/*
-  qsmodel.c     headerfile for quasistatic probability model
-
-  (c) Michael Schindler
-  1997, 1998
-  http://www.compressconsult.com/ or http://eiunix.tuwien.ac.at/~michael
-  michael@compressconsult.com        michael@eiunix.tuwien.ac.at
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.  It may be that this
-  program violates local patents in your country, however it is
-  belived (NO WARRANTY!) to be patent-free here in Austria.
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston,
-  MA 02111-1307, USA.
-
-  Qsmodel is a quasistatic probability model that periodically
-  (at chooseable intervals) updates probabilities of symbols;
-  it also allows to initialize probabilities. Updating is done more
-  frequent in the beginning, so it adapts very fast even without
-  initialisation.
-
-  it provides function for creation, deletion, query for probabilities
-  and symbols and model updating.
-
-  for usage see example.c
-*/
 
 // #include "qsmodel.h"
 // #include <stdio.h>
@@ -1540,71 +1321,7 @@ static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatc
 // =================================================================================================
 // rangecod.c
 // -------------------------------------------------------------------------------------------------
-/*
-  rangecod.c     range encoding
 
-  (c) Michael Schindler
-  1997, 1998, 1999
-  http://www.compressconsult.com/ or http://eiunix.tuwien.ac.at/~michael
-  michael@compressconsult.com        michael@eiunix.tuwien.ac.at
-
-  This program is free software; you can redistribute it and/or modify
-  it under the terms of the GNU General Public License as published by
-  the Free Software Foundation; either version 2 of the License, or
-  (at your option) any later version.
-
-  This program is distributed in the hope that it will be useful,
-  but WITHOUT ANY WARRANTY; without even the implied warranty of
-  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-  GNU General Public License for more details.  It may be that this
-  program violates local patents in your country, however it is
-  belived (NO WARRANTY!) to be patent-free here in Austria. Glen
-  Langdon also confirmed my poinion that IBM UK did not protect that
-  method.
-
-
-  You should have received a copy of the GNU General Public License
-  along with this program; if not, write to the Free Software
-  Foundation, Inc., 59 Temple Place - Suite 330, Boston,
-  MA 02111-1307, USA.
-
-  Range encoding is based on an article by G.N.N. Martin, submitted
-  March 1979 and presented on the Video & Data Recording Conference,
-  Southampton, July 24-27, 1979. If anyone can name the original
-  copyright holder of that article or locate G.N.N. Martin please
-  contact me; this might allow me to make that article available on
-  the net for general public.
-
-  Range coding is closely related to arithmetic coding, except that
-  it does renormalisation in larger units than bits and is thus
-  faster. An earlier version of this code was distributed as byte
-  oriented arithmetic coding, but then I had no knowledge of Martin's
-  paper from seventy-nine.
-
-  The input and output is done by the inbyte and outbyte macros
-  defined in the .c file; change them as needed; the first parameter
-  passed to them is a pointer to the rangecoder structure; extend that
-  structure as needed (and don't forget to initialize the values in
-  start_encoding resp. start_decoding). This distribution writes to
-  stdout and reads from stdin.
-
-  There are no global or static var's, so if the IO is thread save the
-  whole rangecoder is.
-
-  For error recovery the last 3 bytes written contain the total number
-  of bytes written since starting the encoder. This can be used to
-  locate the beginning of a block if you have only the end.
-
-  There is a supplementary file called renorm95.c available at the
-  website (www.compressconsult.com/rangecoder/) that changes the range
-  coder to an arithmetic coder for speed comparisons.
-
-  define RENORM95 if you want the old renormalisation. Requires renorm95.c
-  Note that the old version does not write out the bytes since init.
-  you should not define GLOBALRANGECODER then. This Flag is provided
-  only for spped comparisons between both renormalizations, see my
-  data compression conference article 1998 for details.
-*/
 /* #define RENORM95 */
 
 /*
@@ -1910,55 +1627,6 @@ void unreorder(unsigned char *in, unsigned char *out, uint4 length, uint records
 // =================================================================================================
 // sz_mod4.c
 // -------------------------------------------------------------------------------------------------
-/* sz_mod4.c   (c) Michael Schindler, 1998
-*
-* This file is a probability model for blocksorted files.
-* It uses the rangecoder (rangecod.c) as entropy coder and some
-* other modules (qsmodel, bitmodel) to maintain statistics information.
-* You have to call initmodel() to initialize the model and after
-* encoding the first run you need to call fixafterfirst.
-* closeszmodel finishes output.
-* you may use the rangecoder model->rc for other purposes in between,
-* provided that you do the same at decoding.
-*
-* This model always encodes <submodel><symbol><repeatcount> triples,
-* where submodel is one of 3 possible models to encode a symbol.
-*
-* submodel 0 is a cache of the last 31 symbols seen (with repetition
-* allowed), with the most recent symbol excluded (except after
-* initialisation). The probabilities for symbols in cache are
-* derived from their nuber of occurance and the runlengths.
-*
-* submodel 1 is a move-to-front (MTF) containing the MTFSIZE most
-* recent symbols no longer on submodel 0. Probabilities are based
-* on MTF rank here.
-*
-* submodel 2 contains symbols neither in submodel 0 or submodel 1.
-*
-* Symbols are moved between models lazily; an update is done only
-* when needed.
-*
-* The probabilities for the submodel are derived from the most recent
-* history; each submodel has a frequency of:
-* 1 + #occurences in last 31 symbols + 5*#occurances in last 6 symbols,
-* giving a total count of 64.
-*
-* The runlength code is an array of 5 quasistatic models, each
-* containing 7 symbols. those symbols mean:
-*  symbol   # extra bits     runlength
-*    0         0             1
-*    1         0             2
-*    2         0             3
-*    3         0             4
-*    4         2             5+extra (5..8)
-*    5         3             9+extra (9..16)
-*    6         5             extra>16 ? extra : extra+5 bit follow,
-*                               these bits preceded by 1 give the length
-*
-* the 5 runlength models are used for:
-* 0:new symbols;  1:rl=1;  2:rl=2,3;  3: rl=4-8;  4: rl=9+
-* model 1 is also used if the symbol was not seen in the last 6 symbols.
-*/
 
 // #include <assert.h>
 // #include <stdio.h>
