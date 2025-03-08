@@ -8,147 +8,16 @@
 #include <esp32-hal-psram.h>
 
 // =================================================================================================
-// readme.txt
-// -------------------------------------------------------------------------------------------------
-// szip, sunzip: (c) 1997-1999 Michael Schindler, szip@compressconsult.com
-// http://www.compressconsult.com/szip/
-
-// (R),SM:  szip and the data compression logo are "geschuetztes Markenzeichen"
-//    of Michael Schindler
-// US and other patents pending. 
-
-// The program szip performs data compression/decompression, the current
-// version is 1.12a.
-
-// There were several previous incompatible versions of szip;
-// version 1.00 to 1.04 use one format, version 1.05X another one.
-// version 1.10 was available as alpha test only but had a bug in encoding.
-// If you have szip files from that versions you need to keep the old
-// decompression program around; if you lost it you can still download
-// them from the website.
-// 1.11 and 1.12 differ only in internals (IO macros instead of function
-// calls, more memory allocations) from this version.
-
-// Usage:
-// szip [options] [inputfile [outputfile]]
-
-// option              meaning                 default
-// -d                  decompress
-// -b<blocksize>       blocksize in 100kB      -b17  1-41
-// -o<order>           order of context        -o6   0, 3-255
-// -r<recordsize>      recordsize              -r1   1-127
-// -i                  incremental coding (differences to previous value)
-// -v<level>           turn on messages        -v0
-// options may be grouped like -b14o10r3
-
-// if outputfile is omitted output is written to standardoutput.
-// if inputfile is omitted too input is read from standardinput.
-
-// I recommend using .sz for szipped files and .tar.sz or .tsz
-// for szipped tarfiles. Future versions will produce these extensions.
-
-
-// option effects:
-
-// decompress: tells the program to decompress; default operation
-//     mode is compression. If present all other options except
-//     v are ignored.
-// blocksize: larger blocks usually give better compression, but
-//     if your system gets into paging it will be slow. No effect
-//     on speed if enough memory is available. 1-41 possible.
-// order: higher order gives better compression (and increased time).
-//     3-255 possible. There is special code for order 4; this will give
-//     a faster (even faster than order 3) compression.
-//     order 0 makes a BWT transform (unlimited order)
-//     Decompression of -o0 is fastest, so use it for distribution.
-//     fast compression but larger: -o4
-//     fast decompression and probably smaller: -o0
-//     Some files compress better with a small order like 3 or 4.
-// recordsize: tells what size (in bytes) the elementary datatype is.
-//     getting this one right will improve compression.
-//     24-bit graphics: use -r3
-//     2-channel 8-bit audio: use -r2
-//     4-byte words: use -r4
-//     1-byte chars: use -r1 (default)
-//     the recordsize need not be in sync with the real record; if you
-//     have a 4-byte header on an -r3 file still choose -r3.
-//     1-127 possible
-// incremental: use differences to the last value (after recordsize
-//     reordering) instead of the actual value. Good for sounds.
-// verbosity level: output progress messages.
-
-
-// OPERATING SYSTEMS SUPPORTED:
-// The code is plain C; please check out the webpage for available
-// compilations.
-// It can be compiled for other platforms upon request, please ask.
-// The produced files are platform independent, and all versions 1.1x
-// produce this format.
-
-
-// COPYING:
-// This Program can be freely distributed as unchanged executeable, as
-// long as this file accompanies them unchanged. The program itself may
-// not be sold, however you may collect fees for copying, distribution or
-// bundled items. It MUST be clear to your customer that he can get the
-// same free of charge from other sources; mentioning the website
-// http://www.compressconsult.com/szip/ and "Freeware" will fulfill this
-// requirement.
-
-
-// CAVEATS:
-// DOS/Windows does NOT support binary pipes, so SPECIFY BOTH FILES.
-
-// Depending on the compilation and the stdio C library there may be
-// limitations of compressable filesizes; on 32-bit computers this limit
-// is often 2 or 4GB. If you see this problem and you can recompile C-code
-// please get in touch with me.
-
-
-// The intention is mainly demonstration; I do not consider them production
-// versions.
-
-// This free program comes with ABSOLUTELY NO WARRANTY OF ANY KIND.
-
-
-// Ask me about compression for your data; see http://www.compressconsult.com
-// for more information.
-
-// Szip is a free program of 
-// > d a t a < / / / /
-// compression consulting
-// =================================================================================================
 // port.h
 // -------------------------------------------------------------------------------------------------
 #if !defined port_h
 #define port_h
 
-#if defined GCC
-#define Inline inline
-#else
 #define Inline __inline
-#endif // GCC
 
-/* change to 1 if types.h exists */
-#if 1
 #include <sys/types.h>
 #define uint2 u_int16_t
 #define uint4 u_int32_t
-/* uint is alredy defined in types.h */
-
-#else
-// #include <limits.h>
-#if INT_MAX > 0x7FFF
-typedef unsigned short uint2;  /* two-byte integer (large arrays)      */
-typedef unsigned int   uint4;  /* four-byte integers (range needed)    */
-#else
-typedef unsigned int   uint2;
-typedef unsigned long  uint4;
-#endif /* INT_MAX */
-
-typedef unsigned int uint;     /* fast unsigned integer, 2 or 4 bytes  */
-
-#endif /* types.h */
 
 
 #endif // port_h
@@ -359,6 +228,9 @@ typedef struct {
 /* the following is used only when encoding */
     uint4 bytecount;     /* counter for outputed bytes  */
 /* insert fields you need for input/output below this line! */
+    const unsigned char *sourceBuffer;  /* pointer to the input data */
+    size_t sourceSize;    /* total size of input data */
+    size_t sourcePos;     /* current read position */
 } rangecoder;
 
 
@@ -634,42 +506,6 @@ void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length,
 #ifdef __cplusplus
 }
 #endif // __cplusplus
-// =================================================================================================
-// sz_stream.h
-// -------------------------------------------------------------------------------------------------
-#ifndef SZ_STREAM_H
-#define SZ_STREAM_H
-
-// #include "port.h"
-#define EOF (-1)
-
-/* Struct for buffer-based processing */
-typedef struct {
-    unsigned char *data;
-    uint4 size;
-    uint4 pos;
-} SzipBufferStream;
-
-/* Declare global stream variable */
-// extern SzipBufferStream *szip_global_stream;  // Global stream pointer
-SzipBufferStream *szip_global_stream = NULL;
-
-/* Read a byte from the global stream buffer */
-static inline int sz_stream_getchar() {
-    return (szip_global_stream->pos < szip_global_stream->size) 
-        ? szip_global_stream->data[szip_global_stream->pos++] 
-        : EOF;
-}
-
-/* Read a 3-byte integer from the global stream buffer */
-static inline uint4 sz_stream_readuint3() {
-    uint4 x = sz_stream_getchar();
-    x = (x << 8) | sz_stream_getchar();
-    x = (x << 8) | sz_stream_getchar();
-    return x;
-}
-
-#endif // SZ_STREAM_H
 // =================================================================================================
 // bitmodel.c
 // -------------------------------------------------------------------------------------------------
@@ -1337,7 +1173,7 @@ static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatc
 */
 #define EXTRAFAST
 
-// #include <stdio.h>		/* fprintf(), getchar(), putchar(), NULL */
+// #include <stdio.h>		/* fprintf(), get_byte(), putchar(), NULL */
 // #include "port.h"
 // #include "rangecod.h"
 // #include "sz_stream.h"
@@ -1346,14 +1182,6 @@ static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatc
 
 #define CODE_BITS 32
 #define Top_value ((code_value)1 << (CODE_BITS-1))
-
-
-/* all IO is done by these macros - change them if you want to */
-/* no checking is done - do it here if you want it             */
-/* cod is a pointer to the used rangecoder                     */
-#define outbyte(cod,x) putchar(x)
-// #define inbyte(cod)    getchar()
-#define inbyte(cod)    sz_stream_getchar()
 
 
 #ifdef RENORM95
@@ -1393,8 +1221,31 @@ static rangecoder rngc;
 #define RNGC (*rc)
 #define M_outbyte(a) outbyte(rc,a)
 #define M_inbyte inbyte(rc)
-#endif // GLOBALRANGECODER
+#endif // GLOBALRANGECODE
 
+/* all IO is done by these macros - change them if you want to */
+/* no checking is done - do it here if you want it             */
+/* cod is a pointer to the used rangecoder                     */
+#define outbyte(cod,x) putchar(x)
+// #define inbyte(cod)    getchar()
+#define inbyte(cod) get_byte()
+
+#define EOF (-1)
+
+/* Inline function to get the next byte from the sourceBuffer */
+static inline int get_byte() {
+    return (rngc.sourcePos < rngc.sourceSize)
+           ? rngc.sourceBuffer[rngc.sourcePos++]
+           : EOF;
+}
+
+/* Inline function to read a 3-byte unsigned integer from the sourceBuffer */
+static inline uint4 readuint3() {
+    uint4 x = get_byte();
+    x = (x << 8) | get_byte();
+    x = (x << 8) | get_byte();
+    return x;
+}
 
 /* rc is the range coder to be used                            */
 /* c is written as first byte in the datastream                */
@@ -1509,7 +1360,6 @@ uint4 done_encoding( rangecoder *rc )
     M_outbyte(RNGC.bytecount & 0xff);
     return RNGC.bytecount;
 }
-
 
 /* Start the decoder                                         */
 /* rc is the range coder to be used                          */
@@ -2933,51 +2783,47 @@ static void no_szip() {
 }
 
 static void readglobalheader()
-{   /* Verify the Agon compression header prefix */
-    if (sz_stream_getchar() != 'C') no_szip();
-    if (sz_stream_getchar() != 'm') no_szip();
-    if (sz_stream_getchar() != 'p') no_szip();
-    if (sz_stream_getchar() != COMPRESSION_TYPE_SZIP) no_szip();
+{
+    /* Verify the Agon compression header prefix */
+    if (get_byte() != 'C') no_szip();
+    if (get_byte() != 'm') no_szip();
+    if (get_byte() != 'p') no_szip();
+    if (get_byte() != COMPRESSION_TYPE_SZIP) no_szip();
     debug_log("readglobalheader: Agon header ok\n");
 
-    /* Read the original file size (4 bytes, little-endian order).
-       We could store this value if needed; for now we just read and ignore it. */
+    /* Read the original file size (4 bytes, little-endian) */
     uint4 orig_size = 0;
-    orig_size |= (uint4)(unsigned char)sz_stream_getchar();
-    orig_size |= (uint4)(unsigned char)sz_stream_getchar() << 8;
-    orig_size |= (uint4)(unsigned char)sz_stream_getchar() << 16;
-    orig_size |= (uint4)(unsigned char)sz_stream_getchar() << 24;
-    debug_log("readglobalheader: Original size: %d\n", orig_size);
+    orig_size |= (uint4)(unsigned char)get_byte();
+    orig_size |= (uint4)(unsigned char)get_byte() << 8;
+    orig_size |= (uint4)(unsigned char)get_byte() << 16;
+    orig_size |= (uint4)(unsigned char)get_byte() << 24;
+    debug_log("readglobalheader: Original size: %u\n", orig_size);
 
     /* Verify the SZIP magic SZ\012\004 magic chars */
-    int ch, vmay, vmin;
-    ch = sz_stream_getchar();
-    if (ch == EOF) return;
-    if (ch == 0x42) {ungetc(ch, stdin); return;} /* maybe blockheader */
-    if (ch != 0x53) no_szip();
-    if (sz_stream_getchar() != 0x5a) no_szip();
-    if (sz_stream_getchar() != 0x0a) no_szip();
-    if (sz_stream_getchar() != 0x04) no_szip();
+    if (get_byte() != 0x53) no_szip();  // 'S'
+    if (get_byte() != 0x5a) no_szip();  // 'Z'
+    if (get_byte() != 0x0a) no_szip();  // '\n'
+    if (get_byte() != 0x04) no_szip();  // version marker
     debug_log("readglobalheader: SZIP header ok\n");
 
     /* Verify the SZIP version number */
-    vmay = sz_stream_getchar();
-    vmin = sz_stream_getchar();
+    int vmay = get_byte();
+    int vmin = get_byte();
     if (vmay != vmayor || vmin != vminor) no_szip();
     debug_log("readglobalheader: SZIP version %d.%d\n", vmay, vmin);
 }
 
 static uint readblockdir(uint4 *buflen) {
     int ch;
-    ch = sz_stream_getchar();
+    ch = get_byte();
     if (ch == EOF) {
         *buflen = 0;
         return 0;
     }
     if (ch != 0x42) no_szip();
-    if (sz_stream_getchar() != 0x48) no_szip();
-    *buflen = sz_stream_readuint3();
-    if (sz_stream_getchar() != 0) no_szip();
+    if (get_byte() != 0x48) no_szip();
+    *buflen = readuint3();
+    if (get_byte() != 0) no_szip();
     debug_log("readblockdir: block size %d\n", *buflen);
     return 6;
 }
@@ -2993,8 +2839,8 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     debug_log("readszipblock: Decoding %d bytes\n", buflen);
 
     // Read the block header info from your compressed stream:
-    indexlast = sz_stream_readuint3();
-    order = sz_stream_getchar();
+    indexlast = readuint3();
+    order = get_byte();
     debug_log("readszipblock: indexlast=%d order=%d\n", indexlast, order);
 
     // Initialize charcount to zero
@@ -3144,7 +2990,7 @@ static void decompressit(unsigned char *inoutbuffer, uint32_t *outSize) {
             blocksize = blocklen;  // Track max block size
         }
 
-        ch = sz_stream_getchar();
+        ch = get_byte();
         if (ch == 1) {
             debug_log("decompressit: Reading compressed block, size=%d bytes\n", blocklen);
             readszipblock(dirsize + 1, blocklen, inoutbuffer);  // Decompress into provided buffer
@@ -3166,20 +3012,29 @@ void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_
     }
 
     // Retrieve the compressed input buffer and its size.
-    uint8_t* compressedData = sourceBuffer.front()->getBuffer();
+    const uint8_t *compressedData = sourceBuffer.front()->getBuffer();
     uint32_t compressedSize = sourceBuffer.front()->size();
-
-    // Set up the buffer stream for decompression
-    SzipBufferStream inStream = { compressedData, compressedSize, 0 };
-    szip_global_stream = &inStream;
 
     debug_log("szip_decompress: Starting decompression for buffer %u (compressed size: %u bytes, expected output: %u bytes)...\n",
               sourceBufferId, compressedSize, orig_size);
 
-    // Ensure the stream position is reset to start reading correctly
-    szip_global_stream->pos = 0;
+    // Dump first few bytes of compressed data to verify input
+    debug_log("Compressed data (first 64 bytes):");
+    for (int i = 0; i < 64 && i < compressedSize; i++) {
+        debug_log(" %02X", compressedData[i]);
+    }
+    debug_log("\n");
 
-    // Call the decompression function, passing buffer directly
+#ifdef GLOBALRANGECODER
+    /* Initialize the global rangecoder instance 'rngc' */
+    memset(&rngc, 0, sizeof(rangecoder));
+    rngc.sourceBuffer = compressedData;
+    rngc.sourceSize   = compressedSize;
+    rngc.sourcePos    = 0;
+#else
+    // (Omitted)
+#endif
+
     uint32_t decompressedSize = 0;
     decompressit(buffer, &decompressedSize);
 
@@ -3188,7 +3043,6 @@ void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_
         return;
     }
 
-    // Check if decompressed size matches expected output size
     if (decompressedSize != orig_size) {
         debug_log("szip_decompress: WARNING - Output size mismatch! Decompressed %u bytes, expected %u bytes.\n",
                   decompressedSize, orig_size);
