@@ -688,7 +688,6 @@ typedef struct {
 #define fixafterfirst(m) M_fixafterfirst()
 #define deletemodel(m) M_deletemodel()
 #define sz_finishrun(m) M_sz_finishrun()
-#define sz_encode(m,a,b) M_sz_encode(a,b)
 #define sz_decode(m,a,b) M_sz_decode(a,b)
 #endif // MODELGLOBAL
 
@@ -705,7 +704,6 @@ void fixafterfirst(sz_model *m);
 void deletemodel(sz_model *m);
 
 /* encode/decode a run of equal symbols */
-void sz_encode(sz_model *m, uint symbol, uint4 runlength);
 void sz_decode(sz_model *m, uint *symbol, uint4 *runlength);
 
 
@@ -2197,43 +2195,6 @@ static unsigned char writerun(qsmodel *rlmod, uint4 n)
 	qsupdate( rlmod, 6);
 	return 4;
 }
-
-#ifdef DO_COMPRESSION
-void sz_encode(sz_model *m, uint symbol, uint4 runlength)
-{   cacheptr tmp;
-
-    /* now encode what is the next symbol, first what model to use */
-    /* then within the model */
-    if ((tmp=MOD.lastseen[symbol]) >= MOD.cache) /* symbol in cache */
-    {   uint lt_f;
-        cacheptr old;
-        encode_shift(&(MOD.ac), MOD.whatmod[0], 0, 6);
-        MOD.whatmod[0]+=6;
-        old = tmp;
-        lt_f = 0;
-        tmp = tmp->next;
-        while (tmp != MOD.newest)
-        {   lt_f += tmp->sy_f;
-            tmp = tmp->next;
-        }
-        encode_freq(&(MOD.ac), old->sy_f, lt_f, MOD.cachetotf - tmp->sy_f);
-        tmp = tmp->next;
-        tmp->what = 0;
-        tmp->weight = writerun(MOD.rlemod + old->weight, runlength);
-        tmp->sy_f = tmp->weight + old->sy_f;
-        old->sy_f = 0;
-        MOD.newest = tmp;
-    }
-    else
-    {   tmp = MOD.newest->next;
-        tmp->what = encodeother(m,symbol);
-        tmp->weight = writerun(MOD.rlemod, runlength);
-        tmp->sy_f = tmp->weight;
-        MOD.newest = tmp;
-    }
-    finishupdate(M,symbol);
-}
-#endif // DO_COMPRESSION
 
 static int activatenext(sz_model *m, uint *next)
 {   while (MOD.mtfsize>MOD.mtfsizeact)

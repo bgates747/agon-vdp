@@ -2522,10 +2522,13 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	// Validate the compression type
 	switch (p_hdr->type) {
 		case COMPRESSION_TYPE_TURBO:
+			printf("Decompressing TVC  ");
 			break;
 		case COMPRESSION_TYPE_RLE2:
+			printf("Decompressing RLE2 ");
 			break;
 		case COMPRESSION_TYPE_SZIP:
+			printf("Decompressing SZIP ");
 			break;
 		default:
 			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
@@ -2534,7 +2537,7 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 
 	auto orig_size = p_hdr->orig_size;
 
-	debug_log("Decompressing into buffer %u\n\r", bufferId);
+	debug_log("into buffer %u\n\r", bufferId);
 
 	// create output buffer
 	auto bufferStream = make_shared_psram<BufferStream>(orig_size);
@@ -2573,7 +2576,7 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	buffers[bufferId].push_back(bufferStream);
 
 	// #ifdef DEBUG
-	printf("Decompress took %u ms\n\r", millis() - start);
+	printf("took %u ms\n\r", millis() - start);
 	// #endif
 }
 
