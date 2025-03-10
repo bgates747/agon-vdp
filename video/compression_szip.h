@@ -1919,77 +1919,79 @@ void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexla
 #if defined SZ_SRT_O4
 // a fast alternate sort, only for order 4. inout only length bytes is OK here.
 void sz_srt_o4(unsigned char *inout, uint4 length, uint4 *indexlast)
-{	static uint4 *counters=NULL;
-	static uint2 *context=NULL;
-	static unsigned char *symbols=NULL;
-	register uint4 i;
+{
+    // Allocate local buffers.
+    uint4 *counters = (uint4*)calloc(0x10000, sizeof(uint4));
+    if (counters == NULL)
+        sz_error(SZ_NOMEM_SORT);
 
-	// count contexts
-	if (counters==NULL) {
-		counters = (uint4*)calloc(0x10000,sizeof(uint4));
-		if (counters == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	} else {
-		memset(counters,0,0x10000*sizeof(uint4));
-	}
-	i = (uint)(inout[length-1])<<8;
-  {	register unsigned char *tmp;
-	for (tmp=inout; tmp<inout+length; tmp++)
-	{	i = i>>8 | (uint)(*tmp)<<8;
-		counters[i]++;
-	}
-  }
+    uint2 *context = (uint2*)malloc(length * sizeof(uint2));
+    if (context == NULL) {
+        free(counters);
+        sz_error(SZ_NOMEM_SORT);
+    }
 
-	// add context counts
-  {	register uint4 sum = length;
-	for (i=0x10000; i--; )
-	{	sum -= counters[i];
-		counters[i] = sum;
-	}
-  }
+    unsigned char *symbols = (unsigned char*)malloc(length * sizeof(unsigned char));
+    if (symbols == NULL) {
+        free(counters);
+        free(context);
+        sz_error(SZ_NOMEM_SORT);
+    }
 
-	// first sort pass
-    if (context==NULL) {
-		context = (uint2*)malloc(length*sizeof(uint2));
-		if (context == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	}
-	if (symbols==NULL) {
-		symbols = (unsigned char*)(malloc(length));
-		if (symbols == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	}
+    register uint4 i;
 
-	// the following loop in assembler it would probably be a lot faster
-  {	register unsigned char *tmp;
-	register uint4 ctx = (uint4)inout[length-4]<<8 | inout[length-5];
-	if (ctx == 0xffff)
-		*indexlast = length-1;
-	else
-		*indexlast = counters[ctx+1]-1;
-	ctx = (((uint4)inout[length-1] << 8 | inout[length-2]) << 8 |
-		    inout[length-3]) << 8 | inout[length-4];
-	for (tmp=inout; tmp<inout+length; tmp++)
-	{	register uint4 x = counters[ctx&0xffff]++;
-		context[x] = ctx >> 16;
-		ctx = ctx>>8 | (uint4)(symbols[x] = *tmp)<<24;
-	}
-  }
+    // Count contexts.
+    memset(counters, 0, 0x10000 * sizeof(uint4));
+    i = ((uint4)inout[length - 1]) << 8;
+    {
+        register unsigned char *tmp;
+        for (tmp = inout; tmp < inout + length; tmp++) {
+            i = (i >> 8) | (((uint4)(*tmp)) << 8);
+            counters[i]++;
+        }
+    }
 
-	/* second sort pass */
-  {	uint4 lastpos = *indexlast;
-	for (i=length; i>lastpos; )		// lastpos is the last processed in this loop
-	{	i-=1;
-		inout[--counters[context[i]]] = symbols[i];
-	}
-  }
-	*indexlast = counters[context[i]];
-	while (i--)
-		inout[--counters[context[i]]] = symbols[i];
+    // Add context counts.
+    {
+        register uint4 sum = length;
+        for (i = 0x10000; i--; ) {
+            sum -= counters[i];
+            counters[i] = sum;
+        }
+    }
 
-//	free(counters);
-//	free(context);
-//	free(symbols);
+    // First sort pass.
+    {
+        register unsigned char *tmp;
+        register uint4 ctx = (((uint4)inout[length - 4]) << 8) | inout[length - 5];
+        if (ctx == 0xffff)
+            *indexlast = length - 1;
+        else
+            *indexlast = counters[ctx + 1] - 1;
+        ctx = ((((uint4)inout[length - 1] << 8) | inout[length - 2]) << 8 | inout[length - 3]) << 8 | inout[length - 4];
+        for (tmp = inout; tmp < inout + length; tmp++) {
+            register uint4 x = counters[ctx & 0xffff]++;
+            context[x] = ctx >> 16;
+            ctx = (ctx >> 8) | (((uint4)(symbols[x] = *tmp)) << 24);
+        }
+    }
+
+    /* Second sort pass */
+    {
+        uint4 lastpos = *indexlast;
+        for (i = length; i > lastpos; ) { // lastpos is the last processed in this loop
+            i -= 1;
+            inout[--counters[context[i]]] = symbols[i];
+        }
+    }
+    *indexlast = counters[context[i]];
+    while (i--)
+        inout[--counters[context[i]]] = symbols[i];
+
+    // Free the allocated buffers.
+    free(counters);
+    free(context);
+    free(symbols);
 }
 #endif // SZ_SRT_O4
 
@@ -2260,13 +2262,10 @@ static void usage()
 }
 */
 
-// ESP32-specific stuff not in the original
-#define COMPRESSION_TYPE_SZIP 'S'
-uint order = 6;
+#define COMPRESSION_TYPE_SZIP 'S' // ESP32-specific, not in the original
+// uint order = 6;
 #define VERBOSITY 0
-unsigned char recordsize = 1;
-// End of ESP32-specific stuff
-
+// unsigned char recordsize = 1;
 
 static void no_szip() {
     debug_log("no_szip: Not a valid SZIP encoding.\n");
@@ -2342,6 +2341,7 @@ static void readszipblock(szip_stream *stream, uint dirsize, uint4 buflen, unsig
     }
 
     // Initialize the model for decompression.
+    unsigned char recordsize = 1; // used to be global
     initmodel(m, -1, &recordsize, stream);
     debug_log("readszipblock: model initialized\n");
 
