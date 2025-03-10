@@ -102,6 +102,12 @@ void qsupdate( qsmodel *m, int sym );
 }
 #endif // __cplusplus
 
+typedef struct {
+    const unsigned char *sourceBuffer;  /* pointer to the input data */
+    size_t sourceSize;    /* total size of input data */
+    size_t sourcePos;     /* current read position */
+} szip_stream;
+
 #endif // SZIP_H
 // =================================================================================================
 // rangecod.h
@@ -133,19 +139,18 @@ typedef struct {
 /* the following is used only when encoding */
     uint4 bytecount;     /* counter for outputed bytes  */
 /* insert fields you need for input/output below this line! */
-    const unsigned char *sourceBuffer;  /* pointer to the input data */
-    size_t sourceSize;    /* total size of input data */
-    size_t sourcePos;     /* current read position */
+// actually don't do that; it's a bad idea since rangecoder gets reinitialized for every block
+// see the new `szip_stream` struct for the Right Way to do this
 } rangecoder;
 
-int start_decoding( rangecoder *rc );
-freq decode_culfreq( rangecoder *rc, freq tot_f );
-freq decode_culshift( rangecoder *ac, freq shift );
+int start_decoding( rangecoder *rc, szip_stream *stream );
+freq decode_culfreq( rangecoder *rc, freq tot_f, szip_stream *stream );
+freq decode_culshift( rangecoder *rc, freq shift, szip_stream *stream );
 void decode_update( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
 #define decode_update_shift(rc,f1,f2,f3) decode_update((rc),(f1),(f2),(freq)1<<(f3));
-unsigned char decode_byte(rangecoder *rc);
-unsigned short decode_short(rangecoder *rc);
-void done_decoding( rangecoder *rc );
+unsigned char decode_byte( rangecoder *rc, szip_stream *stream );
+unsigned short decode_short( rangecoder *rc, szip_stream *stream );
+void done_decoding( rangecoder *rc, szip_stream *stream );
 
 #endif // rangecod_h
 
@@ -243,10 +248,10 @@ typedef struct {
     uint compress;    /* 1 on compression, 0 on decompression */
 } sz_model;
 
-void initmodel(sz_model *m, int headersize, unsigned char *first);
+void initmodel(sz_model *m, int headersize, unsigned char *first, szip_stream *stream);
 void fixafterfirst(sz_model *m);
-void deletemodel(sz_model *m);
-void sz_decode(sz_model *m, uint *symbol, uint4 *runlength);
+void deletemodel(sz_model *m, szip_stream *stream);
+void sz_decode(sz_model *m, uint *symbol, uint4 *runlength, szip_stream *stream);
 
 #endif // SZ_MODEL4_H
 
@@ -281,18 +286,13 @@ void sz_srt_o4(unsigned char *inout, uint4 length, uint4 *indexlast);
 
 // alternate unsorter for order 4 (different method (hash), same result)
 #if defined SZ_UNSRT_O4
-void sz_unsrt_o4(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast,
-				 uint4 *counts);
+void sz_unsrt_o4(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast, uint4 *counts);
 #endif // SZ_UNSRT_O4
 
 
 #if defined SZ_SRT_BW
-// unlimited context sort (BWT but with context before symbol)
-void sz_srt_BW(unsigned char *inout, uint4 length, uint4 *indexfirst);
-
 // unsorter for unlimited context sort
-void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length,
-			   uint4 indexfirst, uint4 *counts);
+void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length, uint4 indexfirst, uint4 *counts);
 #endif // SZ_SRT_BW
 #endif // SZ_SRT_H
 
@@ -982,38 +982,38 @@ char coderversion[]="rangecode 1.1c NOWARN (c) 1997-1999 Michael Schindler";
 #define EOF (-1)
 
 /* Function to get the next byte from the source buffer */
-static inline int get_byte(rangecoder *rc) {
-    return (rc->sourcePos < rc->sourceSize)
-           ? rc->sourceBuffer[rc->sourcePos++]
+static inline int get_byte(szip_stream *stream) {
+    return (stream->sourcePos < stream->sourceSize)
+           ? stream->sourceBuffer[stream->sourcePos++]
            : EOF;
 }
 
 /* Function to read a 3-byte unsigned integer from the source buffer */
-static inline uint32_t read_uint3(rangecoder *rc) {
-    uint32_t x = get_byte(rc);
-    x = (x << 8) | get_byte(rc);
-    x = (x << 8) | get_byte(rc);
+static inline uint32_t read_uint3(szip_stream *stream) {
+    uint32_t x = get_byte(stream);
+    x = (x << 8) | get_byte(stream);
+    x = (x << 8) | get_byte(stream);
     return x;
 }
 
 /* Start the decoder                                         */
 /* rc is the range coder to be used                          */
 /* returns the char from start_encoding or EOF               */
-int start_decoding(rangecoder *rc) {
-    int c = get_byte(rc);
+int start_decoding(rangecoder *rc, szip_stream *stream) {
+    int c = get_byte(stream);
     if (c == EOF)
         return EOF;
-    rc->buffer = get_byte(rc);
+    rc->buffer = get_byte(stream);
     rc->low = rc->buffer >> (8 - EXTRA_BITS);
-    rc->range = (code_value)1 << EXTRA_BITS;
+    rc->range = ((code_value)1) << EXTRA_BITS;
     return c;
 }
 
 /* Normalize decoder state */
-static inline void dec_normalize(rangecoder *rc) {
+static inline void dec_normalize(rangecoder *rc, szip_stream *stream) {
     while (rc->range <= Bottom_value) {
         rc->low = (rc->low << 8) | ((rc->buffer << EXTRA_BITS) & 0xff);
-        rc->buffer = get_byte(rc);
+        rc->buffer = get_byte(stream);
         rc->low |= rc->buffer >> (8 - EXTRA_BITS);
         rc->range <<= 8;
     }
@@ -1024,15 +1024,15 @@ static inline void dec_normalize(rangecoder *rc) {
 /* tot_f is the total frequency                                    */
 /* or: totf is (code_value)1<<shift                                */
 /* returns the cumulative frequency                                */
-freq decode_culfreq(rangecoder *rc, freq tot_f) {
-    dec_normalize(rc);
+freq decode_culfreq(rangecoder *rc, freq tot_f, szip_stream *stream) {
+    dec_normalize(rc, stream);
     rc->help = rc->range / tot_f;
     return rc->low / rc->help;
 }
 
 /* Calculate cumulative frequency with a shift optimization */
-freq decode_culshift(rangecoder *rc, freq shift) {
-    dec_normalize(rc);
+freq decode_culshift(rangecoder *rc, freq shift, szip_stream *stream) {
+    dec_normalize(rc, stream);
     rc->help = rc->range >> shift;
     return rc->low / rc->help;
 }
@@ -1050,24 +1050,25 @@ void inline decode_update(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f) {
 
 /* Decode a byte/short without modelling                     */
 /* rc is the range coder to be used                          */
-unsigned char decode_byte(rangecoder *rc)
-{   unsigned char tmp = decode_culshift(rc,8);
-    decode_update( rc,1,tmp,(freq)1<<8);
+unsigned char decode_byte(rangecoder *rc, szip_stream *stream) {
+    unsigned char tmp = decode_culshift(rc, 8, stream);
+    decode_update(rc, 1, tmp, (freq)1 << 8);
     return tmp;
 }
 
-unsigned short decode_short(rangecoder *rc)
-{   unsigned short tmp = decode_culshift(rc,16);
-    decode_update( rc,1,tmp,(freq)1<<16);
+unsigned short decode_short(rangecoder *rc, szip_stream *stream) {
+    unsigned short tmp = decode_culshift(rc, 16, stream);
+    decode_update(rc, 1, tmp, (freq)1 << 16);
     return tmp;
 }
 
 
 /* Finish decoding                                           */
 /* rc is the range coder to be used                          */
-void done_decoding( rangecoder *rc )
-{   dec_normalize(rc);      /* normalize to use up all bytes */
+void done_decoding(rangecoder *rc, szip_stream *stream) {
+    dec_normalize(rc, stream);  /* normalize to use up all bytes */
 }
+
 // =================================================================================================
 // reorder.c
 // -------------------------------------------------------------------------------------------------
@@ -1151,48 +1152,43 @@ static void finishupdate(sz_model *m, uint symbol)
     m->lastnew = tmp->next;
 }
 
-static unsigned char readrun(qsmodel *rlmod, sz_model *m, uint4 *n)
-{   
+static unsigned char readrun(qsmodel *rlmod, sz_model *m, uint4 *n, szip_stream *stream) {   
     int sy_f, lt_f, rl;
-    rl = qsgetsym( rlmod, decode_culshift( &(m->ac), RLSHIFT));
-    qsgetfreq( rlmod, rl, &sy_f, &lt_f );
+    rl = qsgetsym(rlmod, decode_culshift(&(m->ac), RLSHIFT, stream));
+    qsgetfreq(rlmod, rl, &sy_f, &lt_f);
     decode_update_shift(&(m->ac), sy_f, lt_f, RLSHIFT);
-    qsupdate( rlmod, rl);
+    qsupdate(rlmod, rl);
     
-    if (rl<=3)   /* no extra bits */
-    {   
+    if (rl <= 3) {   /* no extra bits */
         rl++;
         *n = rl;
-        return (1 + (rl>>1));
+        return (1 + (rl >> 1));
     }
 
-    if (rl==4)  /* two extra bits */
-    {   
-        rl = decode_culshift( &(m->ac), 2);
+    if (rl == 4) {  /* two extra bits */
+        rl = decode_culshift(&(m->ac), 2, stream);
         decode_update_shift(&(m->ac), 1, rl, 2);
         *n = rl + 5;
         return 3;
     }
 
-    if (rl==5)  /* three extra bits */
-    {   
-        rl = decode_culshift( &(m->ac), 3);
+    if (rl == 5) {  /* three extra bits */
+        rl = decode_culshift(&(m->ac), 3, stream);
         decode_update_shift(&(m->ac), 1, rl, 3);
         *n = rl + 9;
         return 4;
     }
 
     /* five extra bits */
-    rl = decode_culshift( &(m->ac), 5);
+    rl = decode_culshift(&(m->ac), 5, stream);
     decode_update_shift(&(m->ac), 1, rl, 5);
 
     if (rl > 16)
         *n = rl;
-    else
-    {   
+    else {   
         uint4 bits;
         rl += 5;
-        bits = decode_culshift( &(m->ac), rl);
+        bits = decode_culshift(&(m->ac), rl, stream);
         decode_update_shift(&(m->ac), 1, bits, rl);
         *n = bits + ((uint4)1 << rl);
     }
@@ -1203,14 +1199,12 @@ static unsigned char readrun(qsmodel *rlmod, sz_model *m, uint4 *n)
 static int activatenext(sz_model *m, uint *next) {
     while (m->mtfsize > m->mtfsizeact) {
         mtfentry *tmp = m->mtfhist + *next;
-
         if (m->lastseen[tmp->sym] == FULLFLAG) {
             bitdeactivate(&(m->full), tmp->sym);
             m->lastseen[tmp->sym] = MTFFLAG;
             m->mtfsizeact++;
             return 1;
         }
-
         *next = tmp->next;
         tmp->next = 0xffff;
         m->mtfsize--;
@@ -1218,11 +1212,11 @@ static int activatenext(sz_model *m, uint *next) {
     return 0;
 }
 
-void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
+void sz_decode(sz_model *m, uint *symbol, uint4 *runlength, szip_stream *stream) {
     uint sym;
 
     /* First decode which model was used in encoding */
-    sym = decode_culshift(&(m->ac), 6);
+    sym = decode_culshift(&(m->ac), 6, stream);
 
     if (sym < m->whatmod[0]) {  /* Cache */
         uint lt_f, tot_f;
@@ -1232,7 +1226,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
         
         tmp = m->newest;
         tot_f = m->cachetotf - tmp->sy_f;
-        sym = decode_culfreq(&(m->ac), tot_f);
+        sym = decode_culfreq(&(m->ac), tot_f, stream);
         tmp = tmp->prev;
         lt_f = tmp->sy_f;
 
@@ -1246,7 +1240,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
         cacheptr free = m->newest->next;
         m->newest = free;
         free->what = 0;
-        free->weight = readrun(&(m->rlemod[tmp->weight]), m, runlength);
+        free->weight = readrun(&(m->rlemod[tmp->weight]), m, runlength, stream);
         free->sy_f = free->weight + tmp->sy_f;
 
         tmp->sy_f = 0;
@@ -1259,7 +1253,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
         decode_update_shift(&(m->ac), m->whatmod[1], m->whatmod[0], 6);
         m->whatmod[1] += 6;
 
-        sym = qsgetsym(&(m->mtfmod), decode_culshift(&(m->ac), MTFSHIFT));
+        sym = qsgetsym(&(m->mtfmod), decode_culshift(&(m->ac), MTFSHIFT, stream));
         qsgetfreq(&(m->mtfmod), sym, &sy_f, &lt_f);
         decode_update_shift(&(m->ac), sy_f, lt_f, MTFSHIFT);
         qsupdate(&(m->mtfmod), sym);
@@ -1306,7 +1300,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
         cacheptr free = m->newest->next;
         m->newest = free;
         free->what = 1;
-        free->weight = readrun(m->rlemod, m, runlength);
+        free->weight = readrun(m->rlemod, m, runlength, stream);
         free->sy_f = free->weight;
 
         *symbol = sym;
@@ -1350,7 +1344,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
                 pred = m->mtfhist + pred->next;
         }
 
-        sym = bitgetsym(&(m->full), decode_culfreq(&(m->ac), bittotf(&(m->full))));
+        sym = bitgetsym(&(m->full), decode_culfreq(&(m->ac), bittotf(&(m->full)), stream));
         bitgetfreq(&(m->full), sym, &sy_f, &lt_f);
         decode_update(&(m->ac), sy_f, lt_f, bittotf(&(m->full)));
         bitupdate_ex(&(m->full), sym);
@@ -1358,7 +1352,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
         cacheptr free = m->newest->next;
         m->newest = free;
         free->what = 2;
-        free->weight = readrun(m->rlemod, m, runlength);
+        free->weight = readrun(m->rlemod, m, runlength, stream);
         free->sy_f = free->weight;
 
         *symbol = sym;
@@ -1372,11 +1366,11 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
 /* initialization of the model */
 /* headersize -1 means decompression */
 /* first is the first byte written by the arithcoder */
-void initmodel(sz_model *m, int headersize, unsigned char *first) {   
+void initmodel(sz_model *m, int headersize, unsigned char *first, szip_stream *stream) {   
     int i;
 
-    /* init the arithcoder */
-    *first = start_decoding(&(m->ac));
+    /* init the arithcoder using the external stream */
+    *first = start_decoding(&(m->ac), stream);
 
     /* init the full model */
     initbitmodel(&(m->full), ALPHABETSIZE, 40 * ALPHABETSIZE, 10 * ALPHABETSIZE, NULL);
@@ -1452,10 +1446,10 @@ void fixafterfirst(sz_model *m) {
 
 
 /* deletion of the model */
-void deletemodel(sz_model *m) {   
+void deletemodel(sz_model *m, szip_stream *stream) {   
     int i;
 
-    done_decoding(&(m->ac));
+    done_decoding(&(m->ac), stream);
 
     // fprintf(stderr,"%d %d %d ", m->ac.bytecount, MAXCACHESIZE, MTFSIZE);
     // for(i = 0; i < MTFSIZE; i++) fprintf(stderr,"%d ", modelused[i]);
@@ -1748,100 +1742,100 @@ void sz_srt(unsigned char *inout, uint4 length, uint4 *indexlast, unsigned int o
 
 #define INDIRECT 0x800000
 
-#define setbit(flags,bit) (flags[bit>>3] |= 1<<(bit & 7))
-#define getbit(flags,bit) ((flags[bit>>3]>>(bit&7)) & 1)
-
-static void makeorder2(unsigned char *flags, unsigned char *in, uint4 *counts,
-					   uint4 length)
-{	uint4 i, j, ct[256];
-	memcpy(ct, counts, 256*sizeof(uint4));
-	// set bits in flag1 at start of each order 2 context
-	// for order 2 this is more efficient than the method used for higher orders
-	for(i=0; i<256; i++)
-	setbit(flags,ct[i]);
-	j = 0;
-	for (i=0; i<255; i++)
-	{	uint4 k;
-		for(k=counts[i+1]; j<k; j++)
-			ct[in[j]]++;
-		for(k=0; k<256; k++)
-			setbit(flags,ct[k]);
-	}
+static inline void setbit(unsigned char *flags, uint32_t bit) {
+    flags[bit >> 3] |= (1 << (bit & 7));
+}
+static inline int getbit(const unsigned char *flags, uint32_t bit) {
+    return (flags[bit >> 3] >> (bit & 7)) & 1;
 }
 
-static void increaseorder(unsigned char *inflags, unsigned char *outflags,
-                          unsigned char *in, uint4 *counts, uint4 length)
-{
-    // Allocate memory for lastseen and ct instead of using stack
-    uint4 *lastseen = (uint4 *)malloc(256 * sizeof(uint4));
-    uint4 *ct = (uint4 *)malloc(256 * sizeof(uint4));
-
-    // Copy counts into ct
-    memcpy(ct, counts, 256 * sizeof(uint4));
-    uint4 contextstart = 0;
-    memset(lastseen, 0xFF, 256 * sizeof(uint4));
-
-    for (uint4 i = 0; i < length; i++)
-    {
-        if (getbit(inflags, i)) {
-            contextstart = i;
+static void makeorder2(unsigned char *flags, unsigned char *in, uint4 *counts, uint4 length) {
+    uint32_t i, j, ct[256];
+    memcpy(ct, counts, 256 * sizeof(uint32_t));
+    for (i = 0; i < 256; i++) {
+        setbit(flags, ct[i]);
+    }
+    j = 0;
+    for (i = 0; i < 255; i++) {
+        uint32_t k;
+        for (k = counts[i + 1]; j < k; j++) {
+            ct[in[j]]++;
         }
+        for (k = 0; k < 256; k++) {
+            setbit(flags, ct[k]);
+        }
+    }
+}
 
-        int ch = in[i];
+static void increaseorder(unsigned char *inflags, unsigned char *outflags, unsigned char *in, uint4 *counts, uint4 length) {
+    uint32_t *lastseen = (uint32_t *)malloc(256 * sizeof(uint32_t));
+    uint32_t *ct       = (uint32_t *)malloc(256 * sizeof(uint32_t));
+    if (!lastseen || !ct) {
+        free(lastseen);
+        free(ct);
+        sz_error(SZ_NOMEM_SORT);
+    }
 
-        if (lastseen[ch] != contextstart)
-        {
+    // Copy counts so we can increment while scanning
+    memcpy(ct, counts, 256 * sizeof(uint32_t));
+
+    // We'll track "contextstart" each time we see an inflags bit set
+    uint32_t contextstart = 0;
+    memset(lastseen, 0xFF, 256 * sizeof(uint32_t));  // 0xFFFFFFFF => not yet seen
+
+    for (uint32_t i = 0; i < length; i++) {
+        if (getbit(inflags, i)) {
+            contextstart = i;  // new context boundary
+        }
+        uint32_t ch = in[i];
+
+        // If ch not “seen” in this context, set the bit for ct[ch]
+        if (lastseen[ch] != contextstart) {
             lastseen[ch] = contextstart;
             setbit(outflags, ct[ch]);
         }
-
         ct[ch]++;
     }
 
-    free(lastseen);
     free(ct);
+    free(lastseen);
 }
 
 // Constructs the permutation table used for unsorting
-static void maketable(unsigned char *inflags, uint4 *table, unsigned char *in,
-                      uint4 *counts, uint4 length)
-{
-    // Dynamically allocate arrays rather than on the stack:
-    uint4 *ct = (uint4 *)malloc(256 * sizeof(uint4));
-    uint4 *firstseen = (uint4 *)malloc(256 * sizeof(uint4));
+static void maketable(unsigned char *inflags, uint4 *table, unsigned char *in, uint4 *counts, uint4 length) {
+    uint32_t *ct = (uint32_t *)malloc(256 * sizeof(uint32_t));
+    uint32_t *firstseen = (uint32_t *)malloc(256 * sizeof(uint32_t));
+    if (!ct || !firstseen) {
+        free(ct);
+        free(firstseen);
+        sz_error(SZ_NOMEM_SORT);
+    }
 
-    // Copy counts into ct
-    memcpy(ct, counts, 256 * sizeof(uint4));
+    // Copy the counts
+    memcpy(ct, counts, 256 * sizeof(uint32_t));
+    memset(firstseen, 0, 256 * sizeof(uint32_t));
 
-    // Initialize
-    uint4 contextstart = 0;
-    memset(firstseen, 0, 256 * sizeof(uint4));
-
-    // Main loop
-    for (uint4 i = 0; i < length; i++)
-    {
+    uint32_t contextstart = 0;
+    for (uint32_t i = 0; i < length; i++) {
         if (getbit(inflags, i)) {
-            contextstart = i;
+            contextstart = i;  // new context boundary
         }
+        uint32_t ch = in[i];
 
-        int ch = in[i];
-
-        // If not yet "seen" in current context
-        if (firstseen[ch] <= contextstart)
-        {
+        // If not seen in this context, store table[i] = ct[ch]. 
+        // Else table[i] = link to the older occurrence with “INDIRECT” bit set.
+        if (firstseen[ch] <= contextstart) {
+            // “first time we see ch” in this context
             table[i] = ct[ch];
-            firstseen[ch] = i + 1; // mark as "seen" at position i
+            firstseen[ch] = i + 1;  // store “1 + i” so we know i was the last
+        } else {
+            table[i] = (firstseen[ch] - 1) | 0x80000000; // set high bit as “INDIRECT”
         }
-        else
-        {
-            table[i] = (firstseen[ch] - 1) | INDIRECT;
-        }
-
         ct[ch]++;
     }
 
-    free(ct);
     free(firstseen);
+    free(ct);
 }
 
 /*
@@ -1853,95 +1847,87 @@ static void maketable(unsigned char *inflags, uint4 *table, unsigned char *in,
  * order: order of context used in sorting (must be >=3)
  * the code assumes length>=order
  */
-void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast,
-              uint4 *counts, unsigned int order)
-{
-    uint4 i, j;
-    static uint4 *table;
-    static unsigned char *flags1 = NULL;
-    static unsigned char *flags2 = NULL;
-    unsigned char nocounts;
+void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast, uint4 *counts, unsigned int order) {
 
-    if (out == NULL) {
-        sz_error(SZ_NOMEM_SORT);  // Original check
-    }
-
-    // Get counts if not supplied
-    nocounts = (counts == NULL);
+    // If counts == NULL, we must build them ourselves
+    unsigned char nocounts = (counts == NULL);
     if (nocounts) {
-        counts = (uint4 *)calloc(256, sizeof(uint4));
-        if (!counts) sz_error(SZ_NOMEM_SORT);  // Original check
-
-        for (i = 0; i < length; i++) {
+        counts = (uint32_t *)calloc(256, sizeof(uint32_t));
+        if (!counts) {
+            sz_error(SZ_NOMEM_SORT);
+        }
+        for (uint32_t i = 0; i < length; i++) {
             counts[in[i]]++;
         }
     }
 
-    // Sum counts
-    j = length;
-    for (i = 256; i--;) {
-        j -= counts[i];
-        counts[i] = j;
+    // Convert counts[] so that counts[i] = number of symbols < i
+    {
+        uint32_t sum = length;
+        for (int i = 255; i >= 0; i--) {
+            sum -= counts[i];
+            counts[i] = sum;  // prefix sums
+        }
     }
 
-    // Allocate or reset flags1
-    if (flags1 == NULL) {
-        flags1 = (unsigned char *)calloc((length + 8) >> 3, 1);
-        if (!flags1) sz_error(SZ_NOMEM_SORT);  // Original check
-    } else {
-        memset(flags1, 0, (length + 8) >> 3);
+    // Allocate local flags and table arrays
+    unsigned char *flags1 = (unsigned char *)calloc((length + 8) >> 3, 1);
+    unsigned char *flags2 = (unsigned char *)calloc((length + 8) >> 3, 1);
+    uint32_t      *table  = (uint32_t *)malloc((length + 1) * sizeof(uint32_t));
+    if (!flags1 || !flags2 || !table) {
+        free(flags1); free(flags2); free(table);
+        if (nocounts) free(counts);
+        sz_error(SZ_NOMEM_SORT);
     }
 
-    // Compute initial ordering flags
+    // Build order-2 flags
     makeorder2(flags1, in, counts, length);
 
-    // Increase order
-    if (flags2 == NULL) {
-        flags2 = (unsigned char *)calloc((length + 8) >> 3, 1);
-        if (!flags2) sz_error(SZ_NOMEM_SORT);  // Original check
-    } else {
+    // If we need higher orders, repeatedly refine from flags1 -> flags2 or vice versa
+    for (unsigned int level = 2; level < order - 1; level++) {
+        // produce flags2 from flags1
         memset(flags2, 0, (length + 8) >> 3);
-    }
-
-    for (i = 2; i < order - 1; i++) {
-        unsigned char *tmpflags;
         increaseorder(flags1, flags2, in, counts, length);
 
-        tmpflags = flags1;
+        // swap them
+        unsigned char *tmp = flags1;
         flags1 = flags2;
-        flags2 = tmpflags;
+        flags2 = tmp;
     }
 
-    // Construct permutation table
-    if (table == NULL) {
-        table = (uint4 *)malloc((length + 1) * sizeof(uint4));
-        if (!table) sz_error(SZ_NOMEM_SORT);  // Original check
-    }
-
+    // Build the forward “table” from the final flags array
     maketable(flags1, table, in, counts, length);
-    table[length] = INDIRECT;
+    table[length] = 0x80000000;  // sentinel with “INDIRECT” bit set
+
+    // Now do the actual unsorting by walking the permutation table
+    {
+        uint32_t j = indexlast;
+        for (uint32_t i = 0; i < length; i++) {
+            // next = table[j]
+            uint32_t next = table[j];
+            if (next & 0x80000000) {
+                // if INDRECT is set, link to old occurrence
+                uint32_t realPos = (next & ~0x80000000);
+                j = table[realPos]++;
+            } else {
+                // direct pointer
+                table[j]++;
+                j = next;
+            }
+            out[i] = in[j];
+        }
+        if (j != indexlast) {
+            sz_error(SZ_NOTCYCLIC);
+        }
+    }
+
+    // Clean up
+    free(table);
+    free(flags2);
+    free(flags1);
 
     if (nocounts) {
         free(counts);
-    }
-
-    // Do the actual unsorting
-    j = indexlast;
-    for (i = 0; i < length; i++) {
-        uint4 tmp = table[j];
-
-        if (tmp & INDIRECT) {
-            j = table[tmp & ~INDIRECT]++;
-        } else {
-            table[j]++;
-            j = tmp;
-        }
-
-        out[i] = in[j];
-    }
-
-    if (j != indexlast) {
-        sz_error(SZ_NOTCYCLIC);  // Original check
     }
 }
 
@@ -2193,58 +2179,68 @@ void sz_srt_BW(unsigned char *inout, uint4 length, uint4 *indexfirst)
 }
 
 
-void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length,
-                 uint4 indexfirst, uint4 *counts) {
-    uint4 i, *transvec;
-    unsigned char nocounts;
-
-    if (out == NULL) {
-        debug_log("ERROR: sz_unsrt_BW() called with NULL output buffer!\n");
+void sz_unsrt_BW(unsigned char *in, unsigned char *out, uint4 length, uint4 indexfirst, uint4 *counts) {
+    if (!out) {
+        // or debug_log("ERROR: sz_unsrt_BW() called with NULL output buffer!\n");
         sz_error(SZ_NOMEM_SORT);
     }
 
-    // Get counts if not supplied
-    nocounts = (counts == NULL);
-    if (nocounts) {
-        counts = (uint4 *)calloc(256, sizeof(uint4));
-        if (!counts) sz_error(SZ_NOMEM_SORT);
-        for (i = 0; i < length; i++)
+    // If counts not supplied, allocate & fill them ourselves
+    unsigned char needFreeCounts = (counts == NULL);
+    if (needFreeCounts) {
+        counts = (unsigned int *)calloc(256, sizeof(unsigned int));
+        if (!counts) {
+            sz_error(SZ_NOMEM_SORT);
+        }
+        for (unsigned int i = 0; i < length; i++) {
             counts[in[i]]++;
-    }
-
-    // Sum counts
-    {
-        uint4 sum = length;
-        for (i = 0x100; i--; ) {
-            sum -= counts[i];
-            counts[i] = sum;
         }
     }
 
-    // Prepare transposition vector
-    transvec = (uint4 *)malloc(length * sizeof(uint4));
-    if (!transvec)
+    // Convert to prefix sums: counts[i] = total # of symbols < i
+    {
+        unsigned int sum = length;
+        for (int i = 255; i >= 0; i--) {
+            sum        -= counts[i];
+            counts[i]   = sum;
+        }
+    }
+
+    // Prepare the transposition vector, size = length
+    unsigned int *transvec = (unsigned int *)malloc(length * sizeof(unsigned int));
+    if (!transvec) {
+        if (needFreeCounts) free(counts);
         sz_error(SZ_NOMEM_SORT);
+    }
 
+    // Build the transposition vector
+    //  - The block sort indices say "out of row i goes next row transvec[i]"
+    //  - We'll fill that in using counts[]
     transvec[indexfirst] = counts[in[indexfirst]]++;
-    for (i = 0; i < indexfirst; i++)
+    for (unsigned int i = 0; i < indexfirst; i++) {
         transvec[i] = counts[in[i]]++;
-    for (i = indexfirst + 1; i < length; i++)
+    }
+    for (unsigned int i = indexfirst + 1; i < length; i++) {
         transvec[i] = counts[in[i]]++;
+    }
 
-    if (nocounts)
+    // If we allocated counts, free it now
+    if (needFreeCounts) {
         free(counts);
+    }
 
-    // Undo the blocksort
+    // Finally, walk the transvec to reconstruct the original data
     {
-        uint4 ic = indexfirst;
-        for (i = 0; i < length; i++) {
-            out[i] = in[ic];  // Always write to buffer
-            ic = transvec[ic];
+        unsigned int ic = indexfirst;
+        for (unsigned int i = 0; i < length; i++) {
+            out[i] = in[ic];
+            ic     = transvec[ic];
         }
-
-        if (ic != indexfirst)
+        if (ic != indexfirst) {
+            // Means we didn't cycle back to start => data not fully reversed
+            free(transvec);
             sz_error(SZ_NOTCYCLIC);
+        }
     }
 
     free(transvec);
@@ -2295,61 +2291,60 @@ static void no_szip() {
 
 
 /* Read the global header from the input stream */
-static void readglobalheader(rangecoder *rc) {
+static void readglobalheader(szip_stream *stream) {
     /* Verify the Agon compression header prefix */
-    if (get_byte(rc) != 'C') no_szip();
-    if (get_byte(rc) != 'm') no_szip();
-    if (get_byte(rc) != 'p') no_szip();
-    if (get_byte(rc) != COMPRESSION_TYPE_SZIP) no_szip();
+    if (get_byte(stream) != 'C') no_szip();
+    if (get_byte(stream) != 'm') no_szip();
+    if (get_byte(stream) != 'p') no_szip();
+    if (get_byte(stream) != COMPRESSION_TYPE_SZIP) no_szip();
     debug_log("readglobalheader: Agon header ok\n");
 
     /* Read the original file size (4 bytes, little-endian) */
     uint4 orig_size = 0;
-    orig_size |= (uint4)(unsigned char)get_byte(rc);
-    orig_size |= (uint4)(unsigned char)get_byte(rc) << 8;
-    orig_size |= (uint4)(unsigned char)get_byte(rc) << 16;
-    orig_size |= (uint4)(unsigned char)get_byte(rc) << 24;
+    orig_size |= (uint4)(unsigned char)get_byte(stream);
+    orig_size |= (uint4)(unsigned char)get_byte(stream) << 8;
+    orig_size |= (uint4)(unsigned char)get_byte(stream) << 16;
+    orig_size |= (uint4)(unsigned char)get_byte(stream) << 24;
     debug_log("readglobalheader: Original size: %u\n", orig_size);
 
     /* Verify the SZIP magic SZ\012\004 magic chars */
-    if (get_byte(rc) != 0x53) no_szip();  // 'S'
-    if (get_byte(rc) != 0x5a) no_szip();  // 'Z'
-    if (get_byte(rc) != 0x0a) no_szip();  // '\n'
-    if (get_byte(rc) != 0x04) no_szip();  // version marker
+    if (get_byte(stream) != 0x53) no_szip();  // 'S'
+    if (get_byte(stream) != 0x5a) no_szip();  // 'Z'
+    if (get_byte(stream) != 0x0a) no_szip();  // '\n'
+    if (get_byte(stream) != 0x04) no_szip();  // version marker
     debug_log("readglobalheader: SZIP header ok\n");
 
     /* Verify the SZIP version number */
-    int vmay = get_byte(rc);
-    int vmin = get_byte(rc);
+    int vmay = get_byte(stream);
+    int vmin = get_byte(stream);
     if (vmay != vmayor || vmin != vminor) no_szip();
     debug_log("readglobalheader: SZIP version %d.%d\n", vmay, vmin);
 }
 
-/* Read the block directory from the input stream */
-static uint readblockdir(rangecoder *rc, uint4 *buflen) {
-    int ch = get_byte(rc);
+static uint readblockdir(szip_stream *stream, uint4 *buflen) {
+    int ch = get_byte(stream);
     if (ch == EOF) {
         *buflen = 0;
         return 0;
     }
     if (ch != 0x42) no_szip();
-    if (get_byte(rc) != 0x48) no_szip();
-    *buflen = read_uint3(rc);
-    if (get_byte(rc) != 0) no_szip();
+    if (get_byte(stream) != 0x48) no_szip();
+    *buflen = read_uint3(stream);
+    if (get_byte(stream) != 0) no_szip();
     debug_log("readblockdir: block size %d\n", *buflen);
     return 6;
 }
 
-static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned char *buffer) {
+static void readszipblock(szip_stream *stream, uint dirsize, uint4 buflen, unsigned char *buffer) {
     unsigned char *out_buffer;
     uint4 indexlast, charcount[256], bytesleft;
     sz_model *m = NULL;
 
     debug_log("readszipblock: Decoding %d bytes\n", buflen);
 
-    // Read the block header info from the compressed stream:
-    indexlast = read_uint3(rc);
-    uint order = get_byte(rc);
+    // Read the block header info from the compressed stream using the standalone stream:
+    indexlast = read_uint3(stream);  // updated: read from stream
+    uint order = get_byte(stream);     // updated: read from stream
     debug_log("readszipblock: indexlast=%d order=%d\n", indexlast, order);
 
     // Initialize charcount to zero
@@ -2362,11 +2357,8 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
         exit(1);
     }
 
-    // Copy the current state from rc into the model’s rangecoder.
-    m->ac = *rc;
-    
-    // Initialize the model for decompression; this calls start_decoding() on m->ac.
-    initmodel(m, -1, &recordsize);
+    // Initialize the model for decompression.
+    initmodel(m, -1, &recordsize, stream);
     debug_log("readszipblock: model initialized\n");
 
     // === Begin decoding runs into `buffer` ===
@@ -2378,8 +2370,7 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
         uint4 runlength;
         uint ch;
 
-        sz_decode(m, &ch, &runlength);
-
+        sz_decode(m, &ch, &runlength, stream);
         if (runlength > bytesleft) {
             debug_log("input file corrupt\n");
             exit(1);
@@ -2399,8 +2390,7 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
         uint4 runlength;
         uint ch;
 
-        sz_decode(m, &ch, &runlength);
-
+        sz_decode(m, &ch, &runlength, stream);
         if (runlength > bytesleft) {
             debug_log("input file corrupt\n");
             exit(1);
@@ -2414,7 +2404,7 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
     debug_log("readszipblock: all runs decoded, bytesleft=%d\n", bytesleft);
 
     // Done with the model
-    deletemodel(m);
+    deletemodel(m, stream);
     debug_log("readszipblock: model deleted\n");
 
     // Allocate a separate output buffer for "unsorting"
@@ -2424,7 +2414,7 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
         exit(1);
     }
 
-    // Perform unsorting into out_buffer
+    // Perform unsorting into out_buffer.
     if (recordsize == 1) {
         if (order == 0)
             sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
@@ -2445,7 +2435,7 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
                 out_buffer[i] = c;
             }
         }
-        // Perform "unreorder" step
+        // Perform the "unreorder" step
         unreorder(out_buffer, buffer, buflen, recordsize & 0x7F);
         debug_log("readszipblock: unsorted\n");
     }
@@ -2453,37 +2443,35 @@ static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned c
     // Copy final output back into buffer
     memcpy(buffer, out_buffer, buflen);
     free(out_buffer);
-
-    //  Update the original rangecoder state
-    rc->sourcePos = m->ac.sourcePos;
-
     free(m);
 
     debug_log("readszipblock: done\n");
 }
 
-
-static void decompressit(rangecoder *rc, unsigned char *inoutbuffer, uint32_t *outSize) {
-    uint4 blocksize = 0;
-    readglobalheader(rc); 
-
+static void decompressit(szip_stream *stream, unsigned char *inoutbuffer, uint32_t *outSize) {
+    uint32_t blocksize = 0;
+    
+    // Read the global header using the stream.
+    readglobalheader(stream); 
     *outSize = 0;  // Reset output size
 
     while (1) {
-        uint4 blocklen;
-        uint dirsize;
+        uint32_t blocklen;
+        uint32_t dirsize;
         int ch;
 
-        dirsize = readblockdir(rc, &blocklen);
+        // Read the block directory from the stream.
+        dirsize = readblockdir(stream, &blocklen);
         if (dirsize == 0) break;
 
         if (blocklen > blocksize)
             blocksize = blocklen;  // Track maximum block size
 
-        ch = get_byte(rc);
+        // Read the block marker from the stream.
+        ch = get_byte(stream);
         if (ch == 1) {
             debug_log("decompressit: Reading compressed block, size=%d bytes\n", blocklen);
-            readszipblock(rc, dirsize + 1, blocklen, inoutbuffer);
+            readszipblock(stream, dirsize + 1, blocklen, inoutbuffer);
         } else {
             debug_log("decompressit: [ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
             no_szip();
@@ -2495,7 +2483,8 @@ static void decompressit(rangecoder *rc, unsigned char *inoutbuffer, uint32_t *o
 
 #include "buffers.h"
 
-void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_t *buffer, uint32_t orig_size) { 
+void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, 
+                     uint8_t *buffer, uint32_t orig_size) { 
     if (sourceBuffer.empty() || !buffer) {
         debug_log("szip_decompress: ERROR - Empty source buffer or null output buffer!\n");
         return;
@@ -2508,23 +2497,20 @@ void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_
     debug_log("szip_decompress: Starting decompression for buffer %u (compressed size: %u bytes, expected output: %u bytes)...\n",
               sourceBufferId, compressedSize, orig_size);
 
-    // Dump first few bytes of compressed data to verify input
+    // Dump first few bytes of compressed data to verify input.
     debug_log("Compressed data (first 64 bytes):");
     for (int i = 0; i < 64 && i < compressedSize; i++) {
         debug_log(" %02X", compressedData[i]);
     }
     debug_log("\n");
 
-    // Initialize a **local** `rangecoder` instance
-    rangecoder rc;
-    memset(&rc, 0, sizeof(rangecoder));
-    rc.sourceBuffer = compressedData;
-    rc.sourceSize   = compressedSize;
-    rc.sourcePos    = 0;
-
-    // Pass the initialized `rc` instance to `decompressit`
+    // Create and initialize a local szip_stream instance.
+    szip_stream stream;
+    stream.sourceBuffer = compressedData;
+    stream.sourceSize   = compressedSize;
+    stream.sourcePos    = 0;  // Always start at the beginning for new data.
     uint32_t decompressedSize = 0;
-    decompressit(&rc, buffer, &decompressedSize);
+    decompressit(&stream, buffer, &decompressedSize);
 
     if (decompressedSize == 0) {
         debug_log("szip_decompress: ERROR - Decompression failed: No data output.\n");
