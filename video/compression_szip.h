@@ -1223,7 +1223,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength, szip_stream *stream)
         cacheptr tmp;
         decode_update_shift(&(m->ac), m->whatmod[0], 0, 6);
         m->whatmod[0] += 6;
-        
+
         tmp = m->newest;
         tot_f = m->cachetotf - tmp->sy_f;
         sym = decode_culfreq(&(m->ac), tot_f, stream);
@@ -1236,7 +1236,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength, szip_stream *stream)
         }
 
         decode_update(&(m->ac), tmp->sy_f, lt_f - tmp->sy_f, tot_f);
-        
+
         cacheptr free = m->newest->next;
         m->newest = free;
         free->what = 0;
@@ -1265,7 +1265,7 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength, szip_stream *stream)
         pred = m->mtfhist + m->mtffirst;
         if (sym == 0) {  /* First entry */
             if (m->mtfsizeact == 0)
-                activatenext(m, &(m->mtffirst));
+            activatenext(m, &(m->mtffirst));
             pred = m->mtfhist + m->mtffirst;
             sym = pred->sym;
             m->mtffirst = pred->next;
@@ -1509,40 +1509,24 @@ typedef struct {
 	uint4 nrblocks;
 } ptrstruct;
 
+static void allocptrs(uint4 length, ptrstruct *p) {
+    uint4 i;
+    p->nrblocks = (length + BLOCKSIZE - 1) / BLOCKSIZE;
 
-static ptrstruct globalptr;
-static int globalinit = 0;
+    p->index = (ptrblock**) malloc(sizeof(ptrblock*) * p->nrblocks);
+    if (!p->index) sz_error(SZ_NOMEM_SORT);
 
-static void allocptrs(uint4 length, ptrstruct *p)
-{	uint4 i;
-	p->nrblocks = (length+BLOCKSIZE-1)/BLOCKSIZE;
-	if (globalinit && (p->nrblocks>globalptr.nrblocks)) {
-		free(globalptr.index);
-		free(globalptr.oldindex);
-		free(globalptr.block);
-	    globalinit = 0;
-	}
-	if (!globalinit) {
-		globalptr.nrblocks = p->nrblocks;
-		globalptr.index = (ptrblock**) malloc(sizeof(ptrblock*)*globalptr.nrblocks);
-		if (globalptr.index == NULL)
-			sz_error(SZ_NOMEM_SORT);
-		globalptr.oldindex = (ptrblock**) malloc(sizeof(ptrblock*)*globalptr.nrblocks);
-		if (globalptr.oldindex == NULL)
-			sz_error(SZ_NOMEM_SORT);
-		globalptr.block = (ptrblock*) malloc(sizeof(ptrblock)*globalptr.nrblocks);
-		if (globalptr.block == NULL)
-			sz_error(SZ_NOMEM_SORT);
-	    globalinit = 1;
-	}
-	p->index = globalptr.index;
-	p->oldindex = globalptr.oldindex;
-	p->block = globalptr.block;
-	p->freelist = NULL;
-	for(i=0; i<18; i++)
-		p->spare[i] = NULL;
-	for (i=0; i<p->nrblocks; i++)
-		p->index[i] = p->block + i;
+    p->oldindex = (ptrblock**) malloc(sizeof(ptrblock*) * p->nrblocks);
+    if (!p->oldindex) sz_error(SZ_NOMEM_SORT);
+
+    p->block = (ptrblock*) malloc(sizeof(ptrblock) * p->nrblocks);
+    if (!p->block) sz_error(SZ_NOMEM_SORT);
+
+    p->freelist = NULL;
+    for (i = 0; i < 18; i++)
+        p->spare[i] = NULL;
+    for (i = 0; i < p->nrblocks; i++)
+        p->index[i] = p->block + i;
 }
 
 static void extraspare(ptrstruct *p, int blocks)
@@ -1567,9 +1551,9 @@ static void allocspareptrs(uint4 length, ptrstruct *p)
 
 static void freeptrs(ptrstruct *p)
 {	int i;
-//	free(p->index);
-//	free(p->oldindex);
-//	free(p->block);
+	free(p->index);
+	free(p->oldindex);
+	free(p->block);
 	for (i=0; p->spare[i] != NULL; i++)
 		free(p->spare[i]);
 }
@@ -2483,8 +2467,7 @@ static void decompressit(szip_stream *stream, unsigned char *inoutbuffer, uint32
 
 #include "buffers.h"
 
-void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, 
-                     uint8_t *buffer, uint32_t orig_size) { 
+void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_t *buffer, uint32_t orig_size) { 
     if (sourceBuffer.empty() || !buffer) {
         debug_log("szip_decompress: ERROR - Empty source buffer or null output buffer!\n");
         return;
