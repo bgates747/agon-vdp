@@ -45,64 +45,17 @@ typedef struct {
         *cf;           /* array of cumulative frequencies */
 } bitmodel;
 
-/* initialisation of bitmodel                          */
-/* m   bitmodel to be initialized                      */
-/* n   number of symbols in that model                 */
-/* max_totf  maximum allowed total frequency count     */
-/* rescale  desired rescaling interval, must be <max_totf/2 */
-/* init  array of int's to be used for initialisation (NULL ok) */
-void initbitmodel( bitmodel *m, int n, int max_totf, int rescale,
-   int *init );
-
-/* reinitialisation of bitmodel                        */
-/* m   bitmodel to be initialized                      */
-/* init  array of int's to be used for initialisation (NULL ok) */
+void initbitmodel( bitmodel *m, int n, int max_totf, int rescale, int *init );
 void resetbitmodel( bitmodel *m, int *init);
-
-
-/* deletion of bitmodel m                              */
 void deletebitmodel( bitmodel *m );
-
-
-/* retrieval of estimated frequencies for a symbol     */
-/* m   bitmodel to be questioned                       */
-/* sym  symbol for which data is desired; must be <n   */
-/* sy_f frequency of that symbol                       */
-/* lt_f frequency of all smaller symbols together      */
-/* the total frequency can be obtained with bit_totf   */
 void bitgetfreq( bitmodel *m, int sym, int *sy_f, int *lt_f);
-
-/* find out total frequency for a bitmodel             */
-/* m   bitmodel to be questioned                       */
 #define bittotf(m) ((m)->totalfreq)
-
-/* find out symbol for a given cumulative frequency    */
-/* m   bitmodel to be questioned                       */
-/* lt_f  cumulative frequency                          */
 int bitgetsym( bitmodel *m, int lt_f );
-
-
-/* update model                                        */
-/* m   bitmodel to be updated                          */
-/* sym  symbol that occurred (must be <n from init)    */
 void bitupdate( bitmodel *m, int sym );
 
-
 #ifdef EXCLUDEONUPDATE
-/* update model and exclude symbol                     */
-/* m   bitmodel to be updated                          */
-/* sym  symbol that occurred (must be <n from init)    */
 void bitupdate_ex( bitmodel *m, int sym );
-
-
-/* deactivate symbol                                   */
-/* m   bitmodel to be updated                          */
-/* sym  symbol to be deactivated                       */
 void bitdeactivate( bitmodel *m, int sym );
-
-/* reactivate symbol                                   */
-/* m   bitmodel to be updated                          */
-/* sym  symbol to be reactivated                       */
 void bitreactivate( bitmodel *m, int sym );
 #endif // EXCLUDEONUPDATE
 
@@ -136,44 +89,11 @@ typedef struct {
         *search;       /* structure for searching on decompression */
 } qsmodel;
 
-/* initialisation of qsmodel                           */
-/* m   qsmodel to be initialized                       */
-/* n   number of symbols in that model                 */
-/* lg_totf  base2 log of total frequency count         */
-/* rescale  desired rescaling interval, should be < 1<<(lg_totf+1) */
-/* init  array of int's to be used for initialisation (NULL ok) */
-/* compress  set to 1 on compression, 0 on decompression */
-void initqsmodel( qsmodel *m, int n, int lg_totf, int rescale,
-   int *init, int compress );
-
-/* reinitialisation of qsmodel                         */
-/* m   qsmodel to be initialized                       */
-/* init  array of int's to be used for initialisation (NULL ok) */
+void initqsmodel( qsmodel *m, int n, int lg_totf, int rescale, int *init, int compress );
 void resetqsmodel( qsmodel *m, int *init);
-
-
-/* deletion of qsmodel m                               */
 void deleteqsmodel( qsmodel *m );
-
-
-/* retrieval of estimated frequencies for a symbol     */
-/* m   qsmodel to be questioned                        */
-/* sym  symbol for which data is desired; must be <n   */
-/* sy_f frequency of that symbol                       */
-/* lt_f frequency of all smaller symbols together      */
-/* the total frequency is 1<<lg_totf                   */
 void qsgetfreq( qsmodel *m, int sym, int *sy_f, int *lt_f );
-
-
-/* find out symbol for a given cumulative frequency    */
-/* m   qsmodel to be questioned                        */
-/* lt_f  cumulative frequency                          */
 int qsgetsym( qsmodel *m, int lt_f );
-
-
-/* update model                                        */
-/* m   qsmodel to be updated                           */
-/* sym  symbol that occurred (must be <n from init)    */
 void qsupdate( qsmodel *m, int sym );
 
 #endif // QSMODEL_H
@@ -188,21 +108,6 @@ void qsupdate( qsmodel *m, int sym );
 // -------------------------------------------------------------------------------------------------
 #ifndef rangecod_h
 #define rangecod_h
-
-#define GLOBALRANGECODER
-
-
-// #include "port.h"
-#if 0    /* done in port.h */
-#include <limits.h>
-#if INT_MAX > 0xffff
-typedef unsigned int uint4;
-typedef unsigned short uint2;
-#else
-typedef unsigned long uint4;
-typedef unsigned int uint2;
-#endif /* INT_MAX */
-#endif /* 0 */
 
 extern char coderversion[];
 
@@ -233,82 +138,13 @@ typedef struct {
     size_t sourcePos;     /* current read position */
 } rangecoder;
 
-
-/* supply the following as methods of the arithcoder object  */
-/* omit the first parameter then (C++)                       */
-#ifdef GLOBALRANGECODER
-#define start_encoding(rc,a,b) M_start_encoding(a,b)
-#define encode_freq(rc,a,b,c) M_encode_freq(a,b,c)
-#define encode_shift(rc,a,b,c) M_encode_shift(a,b,c)
-#define done_encoding(rc) M_done_encoding()
-#define start_decoding(rc) M_start_decoding()
-#define decode_culfreq(rc,a) M_decode_culfreq(a)
-#define decode_culshift(rc,a) M_decode_culshift(a)
-#define decode_update(rc,a,b,c) M_decode_update(a,b,c)
-#define decode_byte(rc) M_decode_byte()
-#define decode_short(rc) M_decode_short()
-#define done_decoding(rc) M_done_decoding()
-#endif /* GLOBALRANGECODER */
-
-
-/* Start the encoder                                         */
-/* rc is the range coder to be used                          */
-/* c is written as first byte in the datastream (header,...) */
-void start_encoding( rangecoder *rc, char c, int initlength);
-
-
-/* Encode a symbol using frequencies                         */
-/* rc is the range coder to be used                          */
-/* sy_f is the interval length (frequency of the symbol)     */
-/* lt_f is the lower end (frequency sum of < symbols)        */
-/* tot_f is the total interval length (total frequency sum)  */
-/* or (a lot faster): tot_f = 1<<shift                       */
-void encode_freq( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f );
-void encode_shift( rangecoder *rc, freq sy_f, freq lt_f, freq shift );
-
-/* Encode a byte/short without modelling                     */
-/* rc is the range coder to be used                          */
-/* b,s is the data to be encoded                             */
-#define encode_byte(ac,b)  encode_shift(ac,(freq)1,(freq)(b),(freq)8)
-#define encode_short(ac,s) encode_shift(ac,(freq)1,(freq)(s),(freq)16)
-
-
-/* Finish encoding                                           */
-/* rc is the range coder to be shut down                     */
-/* returns number of bytes written                           */
-uint4 done_encoding( rangecoder *rc );
-
-
-
-/* Start the decoder                                         */
-/* rc is the range coder to be used                          */
-/* returns the char from start_encoding or EOF               */
 int start_decoding( rangecoder *rc );
-
-/* Calculate culmulative frequency for next symbol. Does NO update!*/
-/* rc is the range coder to be used                          */
-/* tot_f is the total frequency                              */
-/* or: totf is 1<<shift                                      */
-/* returns the <= culmulative frequency                      */
 freq decode_culfreq( rangecoder *rc, freq tot_f );
 freq decode_culshift( rangecoder *ac, freq shift );
-
-/* Update decoding state                                     */
-/* rc is the range coder to be used                          */
-/* sy_f is the interval length (frequency of the symbol)     */
-/* lt_f is the lower end (frequency sum of < symbols)        */
-/* tot_f is the total interval length (total frequency sum)  */
 void decode_update( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f);
 #define decode_update_shift(rc,f1,f2,f3) decode_update((rc),(f1),(f2),(freq)1<<(f3));
-
-/* Decode a byte/short without modelling                     */
-/* rc is the range coder to be used                          */
 unsigned char decode_byte(rangecoder *rc);
 unsigned short decode_short(rangecoder *rc);
-
-
-/* Finish decoding                                           */
-/* rc is the range coder to be used                          */
 void done_decoding( rangecoder *rc );
 
 #endif // rangecod_h
@@ -326,7 +162,6 @@ extern "C" {
 #endif // __cplusplus
 
 void reorder(unsigned char *in, unsigned char *out, uint4 length, uint recordsize);
-
 void unreorder(unsigned char *in, unsigned char *out, uint4 length, uint recordsize);
 
 #ifdef __cplusplus
@@ -339,13 +174,6 @@ void unreorder(unsigned char *in, unsigned char *out, uint4 length, uint records
 #ifndef ERR_H
 #define ERR_H
 
-extern int data_error(int errnum);
-
-//#ifdef DEBUG                // give last 8 bits too 
-//#define sz_error(x) data_error(x)
-//#else
-//#define sz_error(x) data_error((x)&~0xff)
-//#endif // DEBUG
 #define sz_error(x) do{fprintf(stderr,"Error #%x\n",x); abort();}while(0)
 
 // those are ok:
@@ -415,29 +243,10 @@ typedef struct {
     uint compress;    /* 1 on compression, 0 on decompression */
 } sz_model;
 
-#ifdef MODELGLOBAL
-#define initmodel(m,a,b) M_initmodel(a,b)
-#define fixafterfirst(m) M_fixafterfirst()
-#define deletemodel(m) M_deletemodel()
-#define sz_finishrun(m) M_sz_finishrun()
-#define sz_decode(m,a,b) M_sz_decode(a,b)
-#endif // MODELGLOBAL
-
-
-/* initialisation if the model */
-/* headersize -1 means decompression */
-/* first is the first byte written by the arithcoder */
 void initmodel(sz_model *m, int headersize, unsigned char *first);
-
-/* call fixafterfirst after encoding/decoding the first run */
 void fixafterfirst(sz_model *m);
-
-/* deletion of the model */
 void deletemodel(sz_model *m);
-
-/* encode/decode a run of equal symbols */
 void sz_decode(sz_model *m, uint *symbol, uint4 *runlength);
-
 
 #endif // SZ_MODEL4_H
 
@@ -455,24 +264,8 @@ void sz_decode(sz_model *m, uint *symbol, uint4 *runlength);
 extern "C" {
 #endif // __cplusplus
 
-// inout: bytes to be sorted; sorted bytes on return. must be length+order bytes long
-// length: number of bytes in inout
-// *indexlast: returns position of last context (needed for unsort)
-// order: order of context used in sorting (must be >=3)
-// the code assumes length>=order
-// and inout is length+order bytes long (only the first length need to be filled)
 void sz_srt(unsigned char *inout, uint4 length, uint4 *indexlast, unsigned int order);
-
-
-// in: bytes to be unsorted
-// out: unsorted bytes; if NULL output is written to stdout
-// length: number of bytes in in (and out)
-// indexlast: position of last context (as returned bt sorttrans)
-// counts: number of occurances of each byte in in (if NULL it will be calculated)
-// order: order of context used in sorting (must be >=3)
-// the code assumes length>=order
-void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast,
-			   uint4 *counts, unsigned int order);
+void sz_unsrt(unsigned char *in, unsigned char *out, uint4 length, uint4 indexlast, uint4 *counts, unsigned int order);
 
 
 // comment the following #defines if you dont want them
@@ -1158,8 +951,6 @@ static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatc
 // rangecod.c
 // -------------------------------------------------------------------------------------------------
 
-/* #define RENORM95 */
-
 /*
   define NOWARN if you do not expect more than 2^32 outstanding bytes 
   since I recommend restarting the coder in intervals of less than    
@@ -1182,259 +973,80 @@ static void shortsort ( uint4 *lo, uint4 *hi, unsigned char *data, uint4 minmatc
 
 #define CODE_BITS 32
 #define Top_value ((code_value)1 << (CODE_BITS-1))
-
-
-#ifdef RENORM95
-// #include "renorm95.c"
-
-#else
 #define SHIFT_BITS (CODE_BITS - 9)
 #define EXTRA_BITS ((CODE_BITS-2) % 8 + 1)
 #define Bottom_value (Top_value >> 8)
 
-#ifdef NOWARN
-#ifdef GLOBALRANGECODER
-char coderversion[]="rangecode 1.1c NOWARN GLOBAL (c) 1997-1999 Michael Schindler";
-#else
 char coderversion[]="rangecode 1.1c NOWARN (c) 1997-1999 Michael Schindler";
-#endif // GLOBALRANGECODER
-#else    /*NOWARN*/
-#ifdef GLOBALRANGECODER
-char coderversion[]="rangecode 1.1c GLOBAL (c) 1997-1999 Michael Schindler";
-#else
-char coderversion[]="rangecode 1.1c (c) 1997-1999 Michael Schindler";
-#endif
-#endif   /*NOWARN*/
-#endif   /*RENORM95*/
-
-
-#ifdef GLOBALRANGECODER
-/* if this is defined we'll make a global variable rngc and    */
-/* make RNGC use that var; we'll also omit unneeded parameters */
-static rangecoder rngc;
-#define RNGC (rngc)
-#define M_outbyte(a) outbyte(&rngc,a)
-#define M_inbyte inbyte(&rngc)
-#define enc_normalize(rc) M_enc_normalize()
-#define dec_normalize(rc) M_dec_normalize()
-#else
-#define RNGC (*rc)
-#define M_outbyte(a) outbyte(rc,a)
-#define M_inbyte inbyte(rc)
-#endif // GLOBALRANGECODE
-
-/* all IO is done by these macros - change them if you want to */
-/* no checking is done - do it here if you want it             */
-/* cod is a pointer to the used rangecoder                     */
-#define outbyte(cod,x) putchar(x)
-// #define inbyte(cod)    getchar()
-#define inbyte(cod) get_byte()
 
 #define EOF (-1)
 
-/* Inline function to get the next byte from the sourceBuffer */
-static inline int get_byte() {
-    return (rngc.sourcePos < rngc.sourceSize)
-           ? rngc.sourceBuffer[rngc.sourcePos++]
+/* Function to get the next byte from the source buffer */
+static inline int get_byte(rangecoder *rc) {
+    return (rc->sourcePos < rc->sourceSize)
+           ? rc->sourceBuffer[rc->sourcePos++]
            : EOF;
 }
 
-/* Inline function to read a 3-byte unsigned integer from the sourceBuffer */
-static inline uint4 readuint3() {
-    uint4 x = get_byte();
-    x = (x << 8) | get_byte();
-    x = (x << 8) | get_byte();
+/* Function to read a 3-byte unsigned integer from the source buffer */
+static inline uint32_t read_uint3(rangecoder *rc) {
+    uint32_t x = get_byte(rc);
+    x = (x << 8) | get_byte(rc);
+    x = (x << 8) | get_byte(rc);
     return x;
-}
-
-/* rc is the range coder to be used                            */
-/* c is written as first byte in the datastream                */
-/* one could do without c, but then you have an additional if  */
-/* per outputbyte.                                             */
-void start_encoding( rangecoder *rc, char c, int initlength )
-{   RNGC.low = 0;                /* Full code range */
-    RNGC.range = Top_value;
-    RNGC.buffer = c;
-    RNGC.help = 0;               /* No bytes to follow */
-    RNGC.bytecount = initlength;
-}
-
-
-#ifndef RENORM95
-/* I do the normalization before I need a defined state instead of */
-/* after messing it up. This simplifies starting and ending.       */
-static Inline void enc_normalize( rangecoder *rc )
-{   while(RNGC.range <= Bottom_value)     /* do we need renormalisation?  */
-    {   if (RNGC.low < (code_value)0xff<<SHIFT_BITS)  /* no carry possible --> output */
-        {   M_outbyte(RNGC.buffer);
-            for(; RNGC.help; RNGC.help--)
-                M_outbyte(0xff);
-            RNGC.buffer = (unsigned char)(RNGC.low >> SHIFT_BITS);
-        } else if (RNGC.low & Top_value) /* carry now, no future carry */
-        {   M_outbyte(RNGC.buffer+1);
-            for(; RNGC.help; RNGC.help--)
-                M_outbyte(0);
-            RNGC.buffer = (unsigned char)(RNGC.low >> SHIFT_BITS);
-        } else                           /* passes on a potential carry */
-#ifdef NOWARN
-            RNGC.help++;
-#else
-            if (RNGC.bytestofollow++ == 0xffffffffL)
-            {   fprintf(stderr,"Too many bytes outstanding - File too large\n");
-                exit(1);
-            }
-#endif // NOWARN
-        RNGC.range <<= 8;
-        RNGC.low = (RNGC.low<<8) & (Top_value-1);
-        RNGC.bytecount++;
-    }
-}
-#endif // RENORM95
-
-
-/* Encode a symbol using frequencies                         */
-/* rc is the range coder to be used                          */
-/* sy_f is the interval length (frequency of the symbol)     */
-/* lt_f is the lower end (frequency sum of < symbols)        */
-/* tot_f is the total interval length (total frequency sum)  */
-/* or (faster): tot_f = (code_value)1<<shift                             */
-void encode_freq( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f )
-{	code_value r, tmp;
-	enc_normalize( rc );
-	r = RNGC.range / tot_f;
-	tmp = r * lt_f;
-	RNGC.low += tmp;
-#ifdef EXTRAFAST
-    RNGC.range = r * sy_f;
-#else
-    if (lt_f+sy_f < tot_f)
-		RNGC.range = r * sy_f;
-    else
-		RNGC.range -= tmp;
-#endif // EXTRAFAST
-}
-
-void encode_shift( rangecoder *rc, freq sy_f, freq lt_f, freq shift )
-{	code_value r, tmp;
-	enc_normalize( rc );
-	r = RNGC.range >> shift;
-	tmp = r * lt_f;
-	RNGC.low += tmp;
-#ifdef EXTRAFAST
-	RNGC.range = r * sy_f;
-#else
-	if ((lt_f+sy_f) >> shift)
-		RNGC.range -= tmp;
-	else  
-		RNGC.range = r * sy_f;
-#endif // EXTRAFAST
-}
-
-
-#ifndef RENORM95
-/* Finish encoding                                           */
-/* rc is the range coder to be used                          */
-/* actually not that many bytes need to be output, but who   */
-/* cares. I output them because decode will read them :)     */
-/* the return value is the number of bytes written           */
-uint4 done_encoding( rangecoder *rc )
-{   uint tmp;
-    enc_normalize(rc);     /* now we have a normalized state */
-    RNGC.bytecount += 5;
-    if ((RNGC.low & (Bottom_value-1)) < (RNGC.bytecount>>1))
-       tmp = RNGC.low >> SHIFT_BITS;
-    else
-       tmp = (RNGC.low >> SHIFT_BITS) + 1;
-    if (tmp > 0xff) /* we have a carry */
-    {   M_outbyte(RNGC.buffer+1);
-        for(; RNGC.help; RNGC.help--)
-            M_outbyte(0);
-    } else  /* no carry */
-    {   M_outbyte(RNGC.buffer);
-        for(; RNGC.help; RNGC.help--)
-            M_outbyte(0xff);
-    }
-    M_outbyte(tmp & 0xff);
-    M_outbyte((RNGC.bytecount>>16) & 0xff);
-    M_outbyte((RNGC.bytecount>>8) & 0xff);
-    M_outbyte(RNGC.bytecount & 0xff);
-    return RNGC.bytecount;
 }
 
 /* Start the decoder                                         */
 /* rc is the range coder to be used                          */
 /* returns the char from start_encoding or EOF               */
-int start_decoding( rangecoder *rc )
-{   int c = M_inbyte;
-    if (c==EOF)
+int start_decoding(rangecoder *rc) {
+    int c = get_byte(rc);
+    if (c == EOF)
         return EOF;
-    RNGC.buffer = M_inbyte;
-    RNGC.low = RNGC.buffer >> (8-EXTRA_BITS);
-    RNGC.range = (code_value)1 << EXTRA_BITS;
+    rc->buffer = get_byte(rc);
+    rc->low = rc->buffer >> (8 - EXTRA_BITS);
+    rc->range = (code_value)1 << EXTRA_BITS;
     return c;
 }
 
-
-static Inline void dec_normalize( rangecoder *rc )
-{   while (RNGC.range <= Bottom_value)
-    {   RNGC.low = (RNGC.low<<8) | ((RNGC.buffer<<EXTRA_BITS)&0xff);
-        RNGC.buffer = M_inbyte;
-        RNGC.low |= RNGC.buffer >> (8-EXTRA_BITS);
-        RNGC.range <<= 8;
+/* Normalize decoder state */
+static inline void dec_normalize(rangecoder *rc) {
+    while (rc->range <= Bottom_value) {
+        rc->low = (rc->low << 8) | ((rc->buffer << EXTRA_BITS) & 0xff);
+        rc->buffer = get_byte(rc);
+        rc->low |= rc->buffer >> (8 - EXTRA_BITS);
+        rc->range <<= 8;
     }
 }
-#endif // RENORM95
 
-
-/* Calculate culmulative frequency for next symbol. Does NO update!*/
-/* rc is the range coder to be used                          */
-/* tot_f is the total frequency                              */
-/* or: totf is (code_value)1<<shift                                      */
-/* returns the culmulative frequency                         */
-freq decode_culfreq( rangecoder *rc, freq tot_f )
-{   freq tmp;
+/* Calculate cumulative frequency for next symbol. Does NO update! */
+/* rc is the range coder to be used                                */
+/* tot_f is the total frequency                                    */
+/* or: totf is (code_value)1<<shift                                */
+/* returns the cumulative frequency                                */
+freq decode_culfreq(rangecoder *rc, freq tot_f) {
     dec_normalize(rc);
-    RNGC.help = RNGC.range/tot_f;
-    tmp = RNGC.low/RNGC.help;
-#ifdef EXTRAFAST
-    return tmp;
-#else
-    return (tmp>=tot_f ? tot_f-1 : tmp);
-#endif // EXTRAFAST
+    rc->help = rc->range / tot_f;
+    return rc->low / rc->help;
 }
 
-freq decode_culshift( rangecoder *rc, freq shift )
-{   freq tmp;
+/* Calculate cumulative frequency with a shift optimization */
+freq decode_culshift(rangecoder *rc, freq shift) {
     dec_normalize(rc);
-    RNGC.help = RNGC.range>>shift;
-    tmp = RNGC.low/RNGC.help;
-#ifdef EXTRAFAST
-    return tmp;
-#else
-    return (tmp>>shift ? ((code_value)1<<shift)-1 : tmp);
-#endif // EXTRAFAST
+    rc->help = rc->range >> shift;
+    return rc->low / rc->help;
 }
-
 
 /* Update decoding state                                     */
 /* rc is the range coder to be used                          */
 /* sy_f is the interval length (frequency of the symbol)     */
 /* lt_f is the lower end (frequency sum of < symbols)        */
 /* tot_f is the total interval length (total frequency sum)  */
-void Inline decode_update( rangecoder *rc, freq sy_f, freq lt_f, freq tot_f)
-{   code_value tmp;
-    tmp = RNGC.help * lt_f;
-    RNGC.low -= tmp;
-#ifdef EXTRAFAST
-    RNGC.range = RNGC.help * sy_f;
-#else
-    if (lt_f + sy_f < tot_f)
-        RNGC.range = RNGC.help * sy_f;
-    else
-        RNGC.range -= tmp;
-#endif // EXTRAFAST
+void inline decode_update(rangecoder *rc, freq sy_f, freq lt_f, freq tot_f) {
+    code_value tmp = rc->help * lt_f;
+    rc->low -= tmp;
+    rc->range = rc->help * sy_f;
 }
-
 
 /* Decode a byte/short without modelling                     */
 /* rc is the range coder to be used                          */
@@ -1486,480 +1098,379 @@ void unreorder(unsigned char *in, unsigned char *out, uint4 length, uint records
 #define RLSHIFT 10
 #define MTFSHIFT 10
 
-#define FULLFLAG (MOD.cache-1)
-#define MTFFLAG (MOD.cache-2)
-
-#ifdef MODELGLOBAL
-sz_model mod;
-#define dumpcache(m) M_dumpcache()
-#define decodewhat(m) M_decodewhat()
-#define finishupdate(m,a) M_finishupdate(a)
-#define addtomtf(m,a) M_addtomtf(a)
-#define encodeother(m,a) M_encodeother(a)
-#define readrunlength(m) M_readrun()
-#define activatenext(m,a) M_activatenext(a)
-#define MOD mod
-#else
-#define MOD (*m)
-#endif // MODELGLOBAL
+#define FULLFLAG (m->cache - 1)
+#define MTFFLAG (m->cache - 2)
 
 /* add a new symbol to MTF list */
 static void addtomtf(sz_model *m, uint sym)
-{   uint i = (MOD.mtffirst+1) & (MTFHISTSIZE-1);
-    if (MOD.mtfhist[i].next == 0xffff)      /* an empty place */
-    {   MOD.mtfsize++;
-        MOD.mtfsizeact++;
+{   
+    uint i = (m->mtffirst + 1) & (MTFHISTSIZE - 1);
+    
+    if (m->mtfhist[i].next == 0xffff) {     /* an empty place */
+        m->mtfsize++;
+        m->mtfsizeact++;
+    } 
+    else if (m->mtfsizeact == m->mtfsize) { /* occupied by active symbol */
+        m->lastseen[m->mtfhist[i].sym] = m->cache - 1; /* FULLFLAG */
+        bitreactivate(&(m->full), m->mtfhist[i].sym);
+    } 
+    else {                                  /* occupied by inactive symbol */
+        m->mtfsizeact++;
     }
-    else if (MOD.mtfsizeact==MOD.mtfsize)   /* occupied by active symbol */
-    {   MOD.lastseen[MOD.mtfhist[i].sym] = FULLFLAG;
-        bitreactivate(&(MOD.full),MOD.mtfhist[i].sym);
-    }
-    else                                    /* occupied by inactive symbol*/
-        MOD.mtfsizeact++;
-    MOD.mtfhist[i].next = MOD.mtffirst;
-    MOD.mtfhist[i].sym = sym;
-    MOD.mtffirst = i;
-    MOD.lastseen[sym] = MTFFLAG;
+
+    m->mtfhist[i].next = m->mtffirst;
+    m->mtfhist[i].sym = sym;
+    m->mtffirst = i;
+    m->lastseen[sym] = m->cache - 2; /* MTFFLAG */
 }
 
-
-/* finish updating the model
-* this assumes that the following has been done properly:
-* probability updating of RLE models/MTF models/full model
-* m.newest points to the free entry
-* m.newest->sy_f , weight and what are properly filled
-* the symbol has been disabled in the old place (removed from MTF,
-* set inactive in full or sy_f cleared for cache
-* this will do the following: adjust lastseen.
-* adjust m.cachetotf
-* adjust m.whatmod
-* advance m.lastnew
-* modify lastseen
-* free the next available element in cache */
+/* finish updating the model */
 static void finishupdate(sz_model *m, uint symbol)
-{   cacheptr tmp;
-    tmp = MOD.newest; /* make tmp point to new element */
-    MOD.lastseen[symbol] = tmp;
+{   
+    cacheptr tmp;
+    tmp = m->newest; /* make tmp point to new element */
+    m->lastseen[symbol] = tmp;
     tmp->symbol = symbol;
-    MOD.cachetotf += tmp->weight;
-    tmp = tmp->next; /* make tmp point to the to be cleared element */
-    MOD.whatmod[tmp->what] --;
-    if (!tmp->sy_f)
-    	(MOD.lastseen[tmp->symbol])->sy_f --;
-	else /* last instance, move to MTF */
-        addtomtf(m,tmp->symbol);
-    tmp = MOD.lastnew; /* make tmp point to adjustment place */
-    MOD.whatmod[tmp->what] -= 5;
-    MOD.cachetotf -= tmp->weight;
-    MOD.lastseen[tmp->symbol]->sy_f -= tmp->weight-1;
+    m->cachetotf += tmp->weight;
+    
+    tmp = tmp->next; /* make tmp point to the element to be cleared */
+    m->whatmod[tmp->what]--;
+    
+    if (!tmp->sy_f) {
+        (m->lastseen[tmp->symbol])->sy_f--;
+    } 
+    else { /* last instance, move to MTF */
+        addtomtf(m, tmp->symbol);
+    }
+
+    tmp = m->lastnew; /* make tmp point to adjustment place */
+    m->whatmod[tmp->what] -= 5;
+    m->cachetotf -= tmp->weight;
+    m->lastseen[tmp->symbol]->sy_f -= tmp->weight - 1;
     tmp->weight = 1;
-    MOD.lastnew = tmp->next;
-}
-        
-
-/* encode non-cache symbols */
-static unsigned char encodeother(sz_model *m, uint sym)
-{   uint i, n, last;
-    i = MOD.mtffirst;
-    last = i;
-    if (MOD.mtfsizeact >= MTFSIZE) /* we have enough active symbols */
-    {   for (n=0; n<MTFSIZE; n++)
-        {   if (MOD.mtfhist[i].sym == sym)
-                goto found;
-            last = i;
-            i = MOD.mtfhist[i].next;
-        }
-        /* we didn't find it, so move all remaining active symbols to inactive */
-        for (; n<MOD.mtfsizeact; n++)
-        {   MOD.lastseen[MOD.mtfhist[i].sym] = FULLFLAG;
-            bitreactivate(&(MOD.full),MOD.mtfhist[i].sym);
-            i = MOD.mtfhist[i].next;
-        }
-        MOD.mtfsizeact = MTFSIZE;
-    }
-    else
-    {   for (n=0; n<MOD.mtfsizeact; n++)
-        {   if (MOD.mtfhist[i].sym == sym)
-                goto found;
-            last = i;
-            i = MOD.mtfhist[i].next;
-        }
-        /* we didn't find it, so try to make more active */
-        MOD.mtfsizeact = MOD.mtfsize>MTFSIZE ? MTFSIZE : MOD.mtfsize;
-        while (n<MOD.mtfsizeact)
-        {   if (MOD.lastseen[MOD.mtfhist[i].sym]==FULLFLAG)
-            {   MOD.lastseen[MOD.mtfhist[i].sym] = MTFFLAG;
-                bitdeactivate(&(MOD.full),MOD.mtfhist[i].sym);
-                if (MOD.mtfhist[i].sym == sym)
-                {   MOD.mtfsizeact = n+1;
-                    goto found;
-                }
-                last = i;
-                i = MOD.mtfhist[i].next;
-                n++;
-            }
-            else /* symbol in cache or active MTF; remove from list */
-            {   int next = MOD.mtfhist[i].next;
-                if(n>0) MOD.mtfhist[last].next = next;
-                else MOD.mtffirst = next;
-                MOD.mtfhist[i].next = 0xffff;
-                i = next;
-                MOD.mtfsize--;
-                if (MOD.mtfsizeact > MOD.mtfsize)
-                    MOD.mtfsizeact = MOD.mtfsize;
-            }
-        }
-    }
-    /* we didn't find it, so use full model */
-    encode_shift(&(MOD.ac), MOD.whatmod[2], MOD.whatmod[0]+MOD.whatmod[1], 6);
-    MOD.whatmod[2]+=6;
-  { int sy_f, lt_f;
-    bitgetfreq(&(MOD.full),sym,&sy_f, &lt_f);
-    encode_freq(&(MOD.ac),sy_f,lt_f,bittotf(&(MOD.full)));
-    bitupdate_ex(&(MOD.full),sym);
-    return 2;
-  }
-found: /* we found it in MTF, so encode it and remove it */
-    encode_shift(&(MOD.ac), MOD.whatmod[1], MOD.whatmod[0], 6);
-    MOD.whatmod[1]+=6;
-  { int sy_f, lt_f;
-    qsgetfreq(&(MOD.mtfmod), n, &sy_f, &lt_f);
-    encode_shift(&(MOD.ac), sy_f, lt_f, MTFSHIFT);
-    qsupdate(&(MOD.mtfmod), n);
-  }
-    if (n==0)
-        MOD.mtffirst = MOD.mtfhist[i].next;
-    else
-        MOD.mtfhist[last].next= MOD.mtfhist[i].next;
-    MOD.mtfhist[i].next = 0xffff;
-    MOD.mtfsize--;
-    MOD.mtfsizeact--;
-    return 1;
+    m->lastnew = tmp->next;
 }
 
-static unsigned char readrun(qsmodel *rlmod, uint4 *n)
-{   int sy_f, lt_f, rl;
-    rl = qsgetsym( rlmod, decode_culshift( &(MOD.ac), RLSHIFT));
+static unsigned char readrun(qsmodel *rlmod, sz_model *m, uint4 *n)
+{   
+    int sy_f, lt_f, rl;
+    rl = qsgetsym( rlmod, decode_culshift( &(m->ac), RLSHIFT));
     qsgetfreq( rlmod, rl, &sy_f, &lt_f );
-    decode_update_shift(&(MOD.ac), sy_f, lt_f, RLSHIFT);
+    decode_update_shift(&(m->ac), sy_f, lt_f, RLSHIFT);
     qsupdate( rlmod, rl);
+    
     if (rl<=3)   /* no extra bits */
-    {   rl++;
+    {   
+        rl++;
         *n = rl;
         return (1 + (rl>>1));
     }
+
     if (rl==4)  /* two extra bits */
-    {   rl = decode_culshift( &(MOD.ac), 2);
-        decode_update_shift(&(MOD.ac), 1, rl, 2);
+    {   
+        rl = decode_culshift( &(m->ac), 2);
+        decode_update_shift(&(m->ac), 1, rl, 2);
         *n = rl + 5;
         return 3;
     }
+
     if (rl==5)  /* three extra bits */
-    {   rl = decode_culshift( &(MOD.ac), 3);
-        decode_update_shift(&(MOD.ac), 1, rl, 3);
+    {   
+        rl = decode_culshift( &(m->ac), 3);
+        decode_update_shift(&(m->ac), 1, rl, 3);
         *n = rl + 9;
         return 4;
     }
+
     /* five extra bits */
-    rl = decode_culshift( &(MOD.ac), 5);
-    decode_update_shift(&(MOD.ac), 1, rl, 5);
-    if (rl>16)
+    rl = decode_culshift( &(m->ac), 5);
+    decode_update_shift(&(m->ac), 1, rl, 5);
+
+    if (rl > 16)
         *n = rl;
     else
-    {   uint4 bits;
+    {   
+        uint4 bits;
         rl += 5;
-        bits = decode_culshift( &(MOD.ac), rl);
-        decode_update_shift(&(MOD.ac), 1, bits, rl);
+        bits = decode_culshift( &(m->ac), rl);
+        decode_update_shift(&(m->ac), 1, bits, rl);
         *n = bits + ((uint4)1 << rl);
     }
+
     return 4;
 }
 
+static int activatenext(sz_model *m, uint *next) {
+    while (m->mtfsize > m->mtfsizeact) {
+        mtfentry *tmp = m->mtfhist + *next;
 
-/* writes out the runlength */
-static unsigned char writerun(qsmodel *rlmod, uint4 n)
-{   int sy_f, lt_f;
-	if (n<=4)       /* no extra bits */
-    {   qsgetfreq( rlmod, n-1, &sy_f, &lt_f );
-        encode_shift( &(MOD.ac), (freq)sy_f, (freq)lt_f, RLSHIFT);
-        qsupdate( rlmod, n-1);
-        return (1 + (n>>1));
-    }
-    if (n<=8)       /* two extra bits */
-    {   qsgetfreq( rlmod, 4, &sy_f, &lt_f );
-        encode_shift( &(MOD.ac), (freq)sy_f, (freq)lt_f, RLSHIFT);
-        encode_shift( &(MOD.ac), (freq)1, (freq)(n-5), 2);
-        qsupdate( rlmod, 4);
-	    return 3;
-    }
-    if (n<=16)      /* three extra bits */
-    {   qsgetfreq( rlmod, 5, &sy_f, &lt_f );
-        encode_shift( &(MOD.ac), (freq)sy_f, (freq)lt_f, RLSHIFT);
-        encode_shift( &(MOD.ac), (freq)1, (freq)(n-9), 3);
-        qsupdate( rlmod, 5);
-	    return 4;
-    }
-	qsgetfreq( rlmod, 6, &sy_f, &lt_f );
-	encode_shift( &(MOD.ac), (freq)sy_f, (freq)lt_f, RLSHIFT);
-	if (n < 32) /* five extra bits; n must be >16 here */
-		encode_shift( &(MOD.ac), (freq)1, (freq)n, 5);
-	else        /* #extra bits-5, 5 to 21 extra bits without leading 1 */
-	{   uint i;
-		for (i=5; n>>i > 1; i++)
-            /* void */;
-        encode_shift( &(MOD.ac), (freq)1, (freq)(i-5), 5);
-	    encode_shift( &(MOD.ac), (freq)1, (freq)(n-((uint4)1<<i)), i);
-	}
-	qsupdate( rlmod, 6);
-	return 4;
-}
-
-static int activatenext(sz_model *m, uint *next)
-{   while (MOD.mtfsize>MOD.mtfsizeact)
-    {   mtfentry *tmp;
-        tmp = MOD.mtfhist + *next;
-        if (MOD.lastseen[tmp->sym]==FULLFLAG)
-        {   bitdeactivate(&(MOD.full),tmp->sym);
-            MOD.lastseen[tmp->sym] = MTFFLAG;
-            MOD.mtfsizeact++;
+        if (m->lastseen[tmp->sym] == FULLFLAG) {
+            bitdeactivate(&(m->full), tmp->sym);
+            m->lastseen[tmp->sym] = MTFFLAG;
+            m->mtfsizeact++;
             return 1;
         }
+
         *next = tmp->next;
         tmp->next = 0xffff;
-        MOD.mtfsize--;
+        m->mtfsize--;
     }
     return 0;
 }
 
+void sz_decode(sz_model *m, uint *symbol, uint4 *runlength) {
+    uint sym;
 
-void sz_decode(sz_model *m, uint *symbol, uint4 *runlength)
-{   uint sym;
+    /* First decode which model was used in encoding */
+    sym = decode_culshift(&(m->ac), 6);
 
-    /* first decode what model was used in encoding */
-    sym = decode_culshift( &(MOD.ac), 6);
-    if (sym < MOD.whatmod[0])  /* cache */
-    {   uint lt_f, tot_f;
+    if (sym < m->whatmod[0]) {  /* Cache */
+        uint lt_f, tot_f;
         cacheptr tmp;
-        decode_update_shift(&(MOD.ac), MOD.whatmod[0], 0, 6);
-        MOD.whatmod[0] += 6;
-        tmp = MOD.newest;
-        tot_f = MOD.cachetotf - tmp->sy_f;
-        sym = decode_culfreq( &(MOD.ac), tot_f);
+        decode_update_shift(&(m->ac), m->whatmod[0], 0, 6);
+        m->whatmod[0] += 6;
+        
+        tmp = m->newest;
+        tot_f = m->cachetotf - tmp->sy_f;
+        sym = decode_culfreq(&(m->ac), tot_f);
         tmp = tmp->prev;
         lt_f = tmp->sy_f;
-        while (lt_f <= sym)
-        {   tmp = tmp->prev;
+
+        while (lt_f <= sym) {
+            tmp = tmp->prev;
             lt_f += tmp->sy_f;
         }
-        decode_update(&(MOD.ac), tmp->sy_f, lt_f-tmp->sy_f, tot_f);
-      { cacheptr free = MOD.newest->next;
-        MOD.newest = free;
+
+        decode_update(&(m->ac), tmp->sy_f, lt_f - tmp->sy_f, tot_f);
+        
+        cacheptr free = m->newest->next;
+        m->newest = free;
         free->what = 0;
-        free->weight = readrun(MOD.rlemod + tmp->weight, runlength);
+        free->weight = readrun(&(m->rlemod[tmp->weight]), m, runlength);
         free->sy_f = free->weight + tmp->sy_f;
-      }
+
         tmp->sy_f = 0;
         *symbol = tmp->symbol;
     }
-    else if (sym < MOD.whatmod[0]+MOD.whatmod[1])  /* MTF */
-    {   mtfentry *pred;
+    else if (sym < m->whatmod[0] + m->whatmod[1]) {  /* MTF */
+        mtfentry *pred;
         int sy_f, lt_f;
-        decode_update_shift(&(MOD.ac), MOD.whatmod[1], MOD.whatmod[0], 6);
-        MOD.whatmod[1] += 6;
-        sym = qsgetsym( &(MOD.mtfmod), decode_culshift( &(MOD.ac), MTFSHIFT));
-        qsgetfreq( &(MOD.mtfmod), sym, &sy_f, &lt_f );
-        decode_update_shift(&(MOD.ac), sy_f, lt_f, MTFSHIFT);
-        qsupdate( &(MOD.mtfmod), sym);
-        if (MOD.mtfsizeact == 0)
-            activatenext(&MOD,&(MOD.mtffirst));
 
-        pred = MOD.mtfhist + MOD.mtffirst;
-        if (sym==0)    /* the first entry */
-        {   if(MOD.mtfsizeact==0)
-                activatenext(&MOD,&(MOD.mtffirst));
-            pred = MOD.mtfhist + MOD.mtffirst;
+        decode_update_shift(&(m->ac), m->whatmod[1], m->whatmod[0], 6);
+        m->whatmod[1] += 6;
+
+        sym = qsgetsym(&(m->mtfmod), decode_culshift(&(m->ac), MTFSHIFT));
+        qsgetfreq(&(m->mtfmod), sym, &sy_f, &lt_f);
+        decode_update_shift(&(m->ac), sy_f, lt_f, MTFSHIFT);
+        qsupdate(&(m->mtfmod), sym);
+
+        if (m->mtfsizeact == 0) {
+            activatenext(m, &(m->mtffirst));
+        }
+
+        pred = m->mtfhist + m->mtffirst;
+        if (sym == 0) {  /* First entry */
+            if (m->mtfsizeact == 0)
+                activatenext(m, &(m->mtffirst));
+            pred = m->mtfhist + m->mtffirst;
             sym = pred->sym;
-            MOD.mtffirst = pred->next;
+            m->mtffirst = pred->next;
             pred->next = 0xffff;
         }
-        else
-        {   uint n;
+        else {
+            uint n;
             mtfentry *target;
-            if (sym < MOD.mtfsizeact) /* active list is large enough */
-                for (n=sym-1; n; n--) /* skip unneeded part of MTF */
-                    pred = MOD.mtfhist + pred->next;
-            else
-            {   for (n=MOD.mtfsizeact-1; n; n--) /* skip active part of MTF */
-                    pred = MOD.mtfhist + pred->next;
-                while (MOD.mtfsizeact<sym)
-                {   activatenext(&MOD,&(pred->next));
-                    pred = MOD.mtfhist + pred->next;
-                }
-                activatenext(&MOD,&(pred->next));
+            if (sym < m->mtfsizeact) { /* Active list is large enough */
+                for (n = sym - 1; n; n--)
+                    pred = m->mtfhist + pred->next;
             }
-            target = MOD.mtfhist + pred->next;
+            else {
+                for (n = m->mtfsizeact - 1; n; n--)
+                    pred = m->mtfhist + pred->next;
+                while (m->mtfsizeact < sym) {
+                    activatenext(m, &(pred->next));
+                    pred = m->mtfhist + pred->next;
+                }
+                activatenext(m, &(pred->next));
+            }
+
+            target = m->mtfhist + pred->next;
             sym = target->sym;
             pred->next = target->next;
             target->next = 0xffff;
         }
-        MOD.mtfsizeact--;
-        MOD.mtfsize--;
-      { cacheptr free = MOD.newest->next;
-        MOD.newest = free;
+
+        m->mtfsizeact--;
+        m->mtfsize--;
+
+        cacheptr free = m->newest->next;
+        m->newest = free;
         free->what = 1;
-        free->weight = readrun(MOD.rlemod, runlength);
+        free->weight = readrun(m->rlemod, m, runlength);
         free->sy_f = free->weight;
-      }
+
         *symbol = sym;
     }
-    else /* full model */
-    {   int sy_f, lt_f;
-        decode_update_shift(&(MOD.ac), MOD.whatmod[2], MOD.whatmod[0]+MOD.whatmod[1], 6);
-        MOD.whatmod[2] += 6;
-        /* first adjust the size of the MTF */
-        if (MOD.mtfsizeact>MTFSIZE) /* active MTF too big */
-        {   uint n, i;
-            i = MOD.mtffirst;
-            for (n=0; n<MTFSIZE; n++) /* skip active part of MTF */
-                i = MOD.mtfhist[i].next;
-            while (n<MOD.mtfsizeact)
-            {   bitreactivate(&(MOD.full),MOD.mtfhist[i].sym);
-                MOD.lastseen[MOD.mtfhist[i].sym] = FULLFLAG;
-                i = MOD.mtfhist[i].next;
+    else {  /* Full model */
+        int sy_f, lt_f;
+
+        decode_update_shift(&(m->ac), m->whatmod[2], m->whatmod[0] + m->whatmod[1], 6);
+        m->whatmod[2] += 6;
+
+        /* Adjust the size of the MTF */
+        if (m->mtfsizeact > MTFSIZE) {  /* Active MTF too big */
+            uint n, i;
+            i = m->mtffirst;
+            for (n = 0; n < MTFSIZE; n++)
+                i = m->mtfhist[i].next;
+
+            while (n < m->mtfsizeact) {
+                bitreactivate(&(m->full), m->mtfhist[i].sym);
+                m->lastseen[m->mtfhist[i].sym] = FULLFLAG;
+                i = m->mtfhist[i].next;
                 n++;
             }
-            MOD.mtfsizeact = MTFSIZE;
+            m->mtfsizeact = MTFSIZE;
         }
-        else if (MOD.mtfsizeact < MTFSIZE) /* active MTF too small */
-        {   uint n;
+        else if (m->mtfsizeact < MTFSIZE) {  /* Active MTF too small */
+            uint n;
             mtfentry *pred;
-            if (MOD.mtfsizeact==0)
-            {   activatenext(&MOD, &(MOD.mtffirst));
-                pred = MOD.mtfhist + MOD.mtffirst;
+
+            if (m->mtfsizeact == 0) {
+                activatenext(m, &(m->mtffirst));
+                pred = m->mtfhist + m->mtffirst;
             }
-            else
-            {   pred = MOD.mtfhist + MOD.mtffirst;
-                for(n=MOD.mtfsizeact-1; n; n--)
-                    pred = MOD.mtfhist + pred->next;
+            else {
+                pred = m->mtfhist + m->mtffirst;
+                for (n = m->mtfsizeact - 1; n; n--)
+                    pred = m->mtfhist + pred->next;
             }
-            while (MOD.mtfsizeact<MTFSIZE && activatenext(&(MOD), &(pred->next)))
-                pred = MOD.mtfhist + pred->next;
+
+            while (m->mtfsizeact < MTFSIZE && activatenext(m, &(pred->next)))
+                pred = m->mtfhist + pred->next;
         }
-        sym = bitgetsym( &(MOD.full), decode_culfreq( &(MOD.ac), bittotf(&(MOD.full))));
-        bitgetfreq( &(MOD.full), sym, &sy_f, &lt_f );
-        decode_update(&(MOD.ac), sy_f, lt_f, bittotf(&(MOD.full)));
-        bitupdate_ex(&(MOD.full), sym);
-      { cacheptr free = MOD.newest->next;
-        MOD.newest = free;
+
+        sym = bitgetsym(&(m->full), decode_culfreq(&(m->ac), bittotf(&(m->full))));
+        bitgetfreq(&(m->full), sym, &sy_f, &lt_f);
+        decode_update(&(m->ac), sy_f, lt_f, bittotf(&(m->full)));
+        bitupdate_ex(&(m->full), sym);
+
+        cacheptr free = m->newest->next;
+        m->newest = free;
         free->what = 2;
-        free->weight = readrun(MOD.rlemod, runlength);
+        free->weight = readrun(m->rlemod, m, runlength);
         free->sy_f = free->weight;
-      }
+
         *symbol = sym;
     }
+
     finishupdate(m, *symbol);
-};
-
-
-/* initialisation if the model */
-/* headersize -1 means decompression */
-/* first is the first byte written by the arithcoder */
-void initmodel(sz_model *m, int headersize, unsigned char *first)
-{   int i;
-
-    /* init the arithcoder */
-    if((MOD.compress = (headersize>=0)))
-        start_encoding(&(MOD.ac),*first,headersize);
-    else
-        *first = start_decoding(&(MOD.ac));
-
-    /* init the full model */
-    initbitmodel(&(MOD.full), ALPHABETSIZE, 40*ALPHABETSIZE, 10*ALPHABETSIZE, NULL);
-    for(i=0; i<ALPHABETSIZE; i++)
-        MOD.lastseen[i] = FULLFLAG;
-
-    /* init the cache with symbols CACHESIZE-1 to 0 */
-  { cacheptr tmp = MOD.cache;
-    for(i=0; i<CACHESIZE-1; i++)
-    {   tmp->next = tmp+1;
-        tmp->prev = tmp-1;
-        tmp->symbol = CACHESIZE - 2 - i;
-        MOD.lastseen[tmp->symbol] = tmp;
-        bitdeactivate(&(MOD.full),tmp->symbol);
-	tmp->sy_f = 1;
-        tmp->weight = 1;
-        tmp->what = 0;
-        tmp++;
-    }
-    MOD.cache[0].prev = MOD.cache + (CACHESIZE-1);
-    tmp->next = MOD.cache;
-    tmp->prev = tmp-1;
-    tmp->sy_f = 0;
-  }
-    MOD.newest = MOD.cache + (CACHESIZE-2);
-    MOD.lastnew = MOD.cache + (CACHESIZE-7);
-    MOD.cachetotf = CACHESIZE; // for starup only, decremented by 1 later
-    /* initialize the whatmodel */
-    MOD.whatmod[0] = 41; // 1 + 22*1 + 3*6
-    MOD.whatmod[1] = 8;  // 1 + 1*1 + 1*6
-    MOD.whatmod[2] = 15; // 1 + 2*1 + 2*6
-    /* make 2 old and 2 new full hits for what */
-    for(i=0; i<2; i++)
-    {   MOD.cache[i].what = 2;
-        MOD.lastnew[i].what = 2;
-    }
-    /* make 1 old and 1 new hit for MTF */
-    MOD.cache[2].what = 1;
-    MOD.lastnew[2].what = 1;
-
-    
-    /* init the mtf models with symbols CACHESIZE .. (CACHESIZE+MTFSIZE<<1)*/
-    MOD.mtfhist[0].next = MTFHISTSIZE-1;
-    MOD.mtfhist[0].sym = CACHESIZE;
-    for(i=1; i<MTFSIZE<<1; i++)
-    {   MOD.mtfhist[i].next = i-1;
-        MOD.mtfhist[i].sym = CACHESIZE+i;
-    }
-    for(; i<MTFHISTSIZE; i++)
-        MOD.mtfhist[i].next = 0xffff;
-    MOD.mtfsize = MTFSIZE<<1;
-    MOD.mtfsizeact = 0;
-    MOD.mtffirst = (MTFSIZE<<1) - 1;
-    initqsmodel(&(MOD.mtfmod),MTFSIZE,MTFSHIFT,400,NULL,MOD.compress);
-
-    /* init the runlengthmodels */
-    for(i=0; i<5; i++)
-        initqsmodel(MOD.rlemod+i,7,RLSHIFT,150,NULL,MOD.compress);
 }
 
 
+
+/* initialization of the model */
+/* headersize -1 means decompression */
+/* first is the first byte written by the arithcoder */
+void initmodel(sz_model *m, int headersize, unsigned char *first) {   
+    int i;
+
+    /* init the arithcoder */
+    *first = start_decoding(&(m->ac));
+
+    /* init the full model */
+    initbitmodel(&(m->full), ALPHABETSIZE, 40 * ALPHABETSIZE, 10 * ALPHABETSIZE, NULL);
+    for (i = 0; i < ALPHABETSIZE; i++)
+        m->lastseen[i] = FULLFLAG;
+
+    /* init the cache with symbols CACHESIZE-1 to 0 */
+    {   
+        cacheptr tmp = m->cache;
+        for (i = 0; i < CACHESIZE - 1; i++) {   
+            tmp->next = tmp + 1;
+            tmp->prev = tmp - 1;
+            tmp->symbol = CACHESIZE - 2 - i;
+            m->lastseen[tmp->symbol] = tmp;
+            bitdeactivate(&(m->full), tmp->symbol);
+            tmp->sy_f = 1;
+            tmp->weight = 1;
+            tmp->what = 0;
+            tmp++;
+        }
+        m->cache[0].prev = m->cache + (CACHESIZE - 1);
+        tmp->next = m->cache;
+        tmp->prev = tmp - 1;
+        tmp->sy_f = 0;
+    }
+    
+    m->newest = m->cache + (CACHESIZE - 2);
+    m->lastnew = m->cache + (CACHESIZE - 7);
+    m->cachetotf = CACHESIZE; // for startup only, decremented by 1 later
+
+    /* initialize the whatmodel */
+    m->whatmod[0] = 41; // 1 + 22*1 + 3*6
+    m->whatmod[1] = 8;  // 1 + 1*1 + 1*6
+    m->whatmod[2] = 15; // 1 + 2*1 + 2*6
+
+    /* make 2 old and 2 new full hits for what */
+    for (i = 0; i < 2; i++) {   
+        m->cache[i].what = 2;
+        m->lastnew[i].what = 2;
+    }
+
+    /* make 1 old and 1 new hit for MTF */
+    m->cache[2].what = 1;
+    m->lastnew[2].what = 1;
+
+    /* init the mtf models with symbols CACHESIZE .. (CACHESIZE+MTFSIZE<<1) */
+    m->mtfhist[0].next = MTFHISTSIZE - 1;
+    m->mtfhist[0].sym = CACHESIZE;
+    
+    for (i = 1; i < MTFSIZE << 1; i++) {   
+        m->mtfhist[i].next = i - 1;
+        m->mtfhist[i].sym = CACHESIZE + i;
+    }
+
+    for (; i < MTFHISTSIZE; i++)
+        m->mtfhist[i].next = 0xffff;
+
+    m->mtfsize = MTFSIZE << 1;
+    m->mtfsizeact = 0;
+    m->mtffirst = (MTFSIZE << 1) - 1;
+    
+    initqsmodel(&(m->mtfmod), MTFSIZE, MTFSHIFT, 400, NULL, m->compress);
+
+    /* init the runlength models */
+    for (i = 0; i < 5; i++)
+        initqsmodel(m->rlemod + i, 7, RLSHIFT, 150, NULL, m->compress);
+}
+
 /* call fixafterfirst after encoding/decoding the first run */
-void fixafterfirst(sz_model *m)
-{   MOD.cachetotf--;
+void fixafterfirst(sz_model *m) {   
+    m->cachetotf--;
 }
 
 
 /* deletion of the model */
-void deletemodel(sz_model *m)
-{   int i;
-    if (MOD.compress)
-        MOD.ac.bytecount = done_encoding(&(MOD.ac));
-    else
-        done_decoding(&(MOD.ac));
+void deletemodel(sz_model *m) {   
+    int i;
 
-//fprintf(stderr,"%d %d %d ",MOD.ac.bytecount,MAXCACHESIZE,MTFSIZE);
-//for(i=0; i<MTFSIZE; i++) fprintf(stderr,"%d ",modelused[i]);
+    done_decoding(&(m->ac));
 
-    /* delete the fullmodel */
-    deletebitmodel(&(MOD.full));
+    // fprintf(stderr,"%d %d %d ", m->ac.bytecount, MAXCACHESIZE, MTFSIZE);
+    // for(i = 0; i < MTFSIZE; i++) fprintf(stderr,"%d ", modelused[i]);
 
-    /* delete the mtfmodel */
-    deleteqsmodel(&(MOD.mtfmod));
+    /* delete the full model */
+    deletebitmodel(&(m->full));
 
-    /* init the runlengthmodels */
-    for(i=0; i<5; i++)
-        deleteqsmodel(MOD.rlemod+i);
+    /* delete the mtf model */
+    deleteqsmodel(&(m->mtfmod));
+
+    /* delete the runlength models */
+    for (i = 0; i < 5; i++)
+        deleteqsmodel(m->rlemod + i);
 }
+
 // =================================================================================================
 // sz_srt.c
 // -------------------------------------------------------------------------------------------------
@@ -2782,83 +2293,80 @@ static void no_szip() {
     exit(1);
 }
 
-static void readglobalheader()
-{
+
+/* Read the global header from the input stream */
+static void readglobalheader(rangecoder *rc) {
     /* Verify the Agon compression header prefix */
-    if (get_byte() != 'C') no_szip();
-    if (get_byte() != 'm') no_szip();
-    if (get_byte() != 'p') no_szip();
-    if (get_byte() != COMPRESSION_TYPE_SZIP) no_szip();
+    if (get_byte(rc) != 'C') no_szip();
+    if (get_byte(rc) != 'm') no_szip();
+    if (get_byte(rc) != 'p') no_szip();
+    if (get_byte(rc) != COMPRESSION_TYPE_SZIP) no_szip();
     debug_log("readglobalheader: Agon header ok\n");
 
     /* Read the original file size (4 bytes, little-endian) */
     uint4 orig_size = 0;
-    orig_size |= (uint4)(unsigned char)get_byte();
-    orig_size |= (uint4)(unsigned char)get_byte() << 8;
-    orig_size |= (uint4)(unsigned char)get_byte() << 16;
-    orig_size |= (uint4)(unsigned char)get_byte() << 24;
+    orig_size |= (uint4)(unsigned char)get_byte(rc);
+    orig_size |= (uint4)(unsigned char)get_byte(rc) << 8;
+    orig_size |= (uint4)(unsigned char)get_byte(rc) << 16;
+    orig_size |= (uint4)(unsigned char)get_byte(rc) << 24;
     debug_log("readglobalheader: Original size: %u\n", orig_size);
 
     /* Verify the SZIP magic SZ\012\004 magic chars */
-    if (get_byte() != 0x53) no_szip();  // 'S'
-    if (get_byte() != 0x5a) no_szip();  // 'Z'
-    if (get_byte() != 0x0a) no_szip();  // '\n'
-    if (get_byte() != 0x04) no_szip();  // version marker
+    if (get_byte(rc) != 0x53) no_szip();  // 'S'
+    if (get_byte(rc) != 0x5a) no_szip();  // 'Z'
+    if (get_byte(rc) != 0x0a) no_szip();  // '\n'
+    if (get_byte(rc) != 0x04) no_szip();  // version marker
     debug_log("readglobalheader: SZIP header ok\n");
 
     /* Verify the SZIP version number */
-    int vmay = get_byte();
-    int vmin = get_byte();
+    int vmay = get_byte(rc);
+    int vmin = get_byte(rc);
     if (vmay != vmayor || vmin != vminor) no_szip();
     debug_log("readglobalheader: SZIP version %d.%d\n", vmay, vmin);
 }
 
-static uint readblockdir(uint4 *buflen) {
-    int ch;
-    ch = get_byte();
+/* Read the block directory from the input stream */
+static uint readblockdir(rangecoder *rc, uint4 *buflen) {
+    int ch = get_byte(rc);
     if (ch == EOF) {
         *buflen = 0;
         return 0;
     }
     if (ch != 0x42) no_szip();
-    if (get_byte() != 0x48) no_szip();
-    *buflen = readuint3();
-    if (get_byte() != 0) no_szip();
+    if (get_byte(rc) != 0x48) no_szip();
+    *buflen = read_uint3(rc);
+    if (get_byte(rc) != 0) no_szip();
     debug_log("readblockdir: block size %d\n", *buflen);
     return 6;
 }
 
-static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
-    unsigned char *out_buffer;  // Explicit output buffer
+static void readszipblock(rangecoder *rc, uint dirsize, uint4 buflen, unsigned char *buffer) {
+    unsigned char *out_buffer;
     uint4 indexlast, charcount[256], bytesleft;
-
-#ifndef MODELGLOBAL
     sz_model *m = NULL;
-#endif
 
     debug_log("readszipblock: Decoding %d bytes\n", buflen);
 
-    // Read the block header info from your compressed stream:
-    indexlast = readuint3();
-    order = get_byte();
+    // Read the block header info from the compressed stream:
+    indexlast = read_uint3(rc);
+    uint order = get_byte(rc);
     debug_log("readszipblock: indexlast=%d order=%d\n", indexlast, order);
 
     // Initialize charcount to zero
     memset(charcount, 0, sizeof(charcount));
 
-#ifndef MODELGLOBAL
     // Dynamically allocate the sz_model
     m = (sz_model *)malloc(sizeof(sz_model));
     if (!m) {
         debug_log("readszipblock: memory allocation for sz_model failed\n");
         exit(1);
     }
-    // Initialize the model for DEcompression
-    initmodel(m, -1, &recordsize);
-#else
-    initmodel(&mod, -1, &recordsize);
-#endif
 
+    // Copy the current state from rc into the model’s rangecoder.
+    m->ac = *rc;
+    
+    // Initialize the model for decompression; this calls start_decoding() on m->ac.
+    initmodel(m, -1, &recordsize);
     debug_log("readszipblock: model initialized\n");
 
     // === Begin decoding runs into `buffer` ===
@@ -2870,11 +2378,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         uint4 runlength;
         uint ch;
 
-#ifndef MODELGLOBAL
         sz_decode(m, &ch, &runlength);
-#else
-        sz_decode(&mod, &ch, &runlength);
-#endif
 
         if (runlength > bytesleft) {
             debug_log("input file corrupt\n");
@@ -2887,12 +2391,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         }
     }
 
-#ifndef MODELGLOBAL
     fixafterfirst(m);
-#else
-    fixafterfirst(&mod);
-#endif
-
     debug_log("readszipblock: first run decoded, bytesleft=%d\n", bytesleft);
 
     // Decode the rest of the runs
@@ -2900,11 +2399,7 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         uint4 runlength;
         uint ch;
 
-#ifndef MODELGLOBAL
         sz_decode(m, &ch, &runlength);
-#else
-        sz_decode(&mod, &ch, &runlength);
-#endif
 
         if (runlength > bytesleft) {
             debug_log("input file corrupt\n");
@@ -2919,21 +2414,17 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
     debug_log("readszipblock: all runs decoded, bytesleft=%d\n", bytesleft);
 
     // Done with the model
-#ifndef MODELGLOBAL
     deletemodel(m);
-#else
-    deletemodel(&mod);
-#endif
     debug_log("readszipblock: model deleted\n");
 
     // Allocate a separate output buffer for "unsorting"
     out_buffer = (unsigned char *)malloc(buflen);
-    if (out_buffer == NULL) {
+    if (!out_buffer) {
         debug_log("memory allocation failure\n");
         exit(1);
     }
 
-    // Perform unsorting into `out_buffer`
+    // Perform unsorting into out_buffer
     if (recordsize == 1) {
         if (order == 0)
             sz_unsrt_BW(buffer, out_buffer, buflen, indexlast, charcount);
@@ -2959,21 +2450,22 @@ static void readszipblock(uint dirsize, uint4 buflen, unsigned char *buffer) {
         debug_log("readszipblock: unsorted\n");
     }
 
-    // Copy final output back into `buffer`
+    // Copy final output back into buffer
     memcpy(buffer, out_buffer, buflen);
     free(out_buffer);
 
-#ifndef MODELGLOBAL
-    // Finally, free the dynamically allocated sz_model
+    //  Update the original rangecoder state
+    rc->sourcePos = m->ac.sourcePos;
+
     free(m);
-#endif
 
     debug_log("readszipblock: done\n");
 }
 
-static void decompressit(unsigned char *inoutbuffer, uint32_t *outSize) {
+
+static void decompressit(rangecoder *rc, unsigned char *inoutbuffer, uint32_t *outSize) {
     uint4 blocksize = 0;
-    readglobalheader();  // Uses global stream
+    readglobalheader(rc); 
 
     *outSize = 0;  // Reset output size
 
@@ -2982,18 +2474,16 @@ static void decompressit(unsigned char *inoutbuffer, uint32_t *outSize) {
         uint dirsize;
         int ch;
 
-        dirsize = readblockdir(&blocklen);
+        dirsize = readblockdir(rc, &blocklen);
         if (dirsize == 0) break;
 
-        // Ensure we do not allocate new memory, use the provided buffer
-        if (blocklen > blocksize) {
-            blocksize = blocklen;  // Track max block size
-        }
+        if (blocklen > blocksize)
+            blocksize = blocklen;  // Track maximum block size
 
-        ch = get_byte();
+        ch = get_byte(rc);
         if (ch == 1) {
             debug_log("decompressit: Reading compressed block, size=%d bytes\n", blocklen);
-            readszipblock(dirsize + 1, blocklen, inoutbuffer);  // Decompress into provided buffer
+            readszipblock(rc, dirsize + 1, blocklen, inoutbuffer);
         } else {
             debug_log("decompressit: [ERROR] Expected block marker 0x01, got 0x%02X\n", ch);
             no_szip();
@@ -3025,18 +2515,16 @@ void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_
     }
     debug_log("\n");
 
-#ifdef GLOBALRANGECODER
-    /* Initialize the global rangecoder instance 'rngc' */
-    memset(&rngc, 0, sizeof(rangecoder));
-    rngc.sourceBuffer = compressedData;
-    rngc.sourceSize   = compressedSize;
-    rngc.sourcePos    = 0;
-#else
-    // (Omitted)
-#endif
+    // Initialize a **local** `rangecoder` instance
+    rangecoder rc;
+    memset(&rc, 0, sizeof(rangecoder));
+    rc.sourceBuffer = compressedData;
+    rc.sourceSize   = compressedSize;
+    rc.sourcePos    = 0;
 
+    // Pass the initialized `rc` instance to `decompressit`
     uint32_t decompressedSize = 0;
-    decompressit(buffer, &decompressedSize);
+    decompressit(&rc, buffer, &decompressedSize);
 
     if (decompressedSize == 0) {
         debug_log("szip_decompress: ERROR - Decompression failed: No data output.\n");
