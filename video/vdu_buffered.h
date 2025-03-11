@@ -2494,9 +2494,9 @@ void VDUStreamProcessor::bufferCompress(uint16_t bufferId, uint16_t sourceBuffer
 // Replaces the target buffer with the new one.
 //
 void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBufferId) {
-	// #ifdef DEBUG
+	#ifdef DEBUG
 	auto start = millis();
-	// #endif
+	#endif
 	auto sourceBufferIter = buffers.find(sourceBufferId);
 	if (sourceBufferIter == buffers.end()) {
 		debug_log("bufferDeompress: buffer %d not found\n\r", sourceBufferId);
@@ -2522,13 +2522,13 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	// Validate the compression type
 	switch (p_hdr->type) {
 		case COMPRESSION_TYPE_TURBO:
-			printf("Decompressing TVC  ");
+			debug_log("Decompressing TVC  ");
 			break;
 		case COMPRESSION_TYPE_RLE2:
-			printf("Decompressing RLE2 ");
+			debug_log("Decompressing RLE2 ");
 			break;
 		case COMPRESSION_TYPE_SZIP:
-			printf("Decompressing SZIP ");
+			debug_log("Decompressing SZIP ");
 			break;
 		default:
 			debug_log("bufferDecompress: unsupported compression type %d\n\r", p_hdr->type);
@@ -2575,9 +2575,9 @@ void VDUStreamProcessor::bufferDecompress(uint16_t bufferId, uint16_t sourceBuff
 	bufferClear(bufferId);
 	buffers[bufferId].push_back(bufferStream);
 
-	// #ifdef DEBUG
-	printf("took %u ms\n\r", millis() - start);
-	// #endif
+	#ifdef DEBUG
+	debug_log("took %u ms\n\r", millis() - start);
+	#endif
 }
 
 // VDU 23, 0, &A0, bufferId; &48, options, sourceBufferId; [width;] [mapBufferId;] [mapValues...] : Expand a bitmap buffer

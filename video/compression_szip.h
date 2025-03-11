@@ -2480,12 +2480,12 @@ void szip_decompress(uint16_t sourceBufferId, BufferVector &sourceBuffer, uint8_
     debug_log("szip_decompress: Starting decompression for buffer %u (compressed size: %u bytes, expected output: %u bytes)...\n",
               sourceBufferId, compressedSize, orig_size);
 
-    // Dump first few bytes of compressed data to verify input.
-    debug_log("Compressed data (first 64 bytes):");
-    for (int i = 0; i < 64 && i < compressedSize; i++) {
-        debug_log(" %02X", compressedData[i]);
-    }
-    debug_log("\n");
+    // // Dump first few bytes of compressed data to verify input.
+    // debug_log("Compressed data (first 64 bytes):");
+    // for (int i = 0; i < 64 && i < compressedSize; i++) {
+    //     debug_log(" %02X", compressedData[i]);
+    // }
+    // debug_log("\n");
 
     // Create and initialize a local szip_stream instance.
     szip_stream stream;
