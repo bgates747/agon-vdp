@@ -33,3 +33,31 @@ The AGON documentation can now be found on the [Community Documentation](https:/
 This project makes use of [PlatformIO](https://platformio.org) to build the firmware.  Using the PlatformIO IDE with Visual Studio Code is recommended, but it is also possible to use the PlatformIO CLI.
 
 Previously, it was also possible to use the Arduino IDE to build the firmware, but this is no longer supported.  This is because this project makes use of an updated version of vdp-gl, which is not directly able to be used with the Arduino IDE.  (It is technically still possible to use the Arduino IDE, but it is not recommended, as you would need to manually download the applicable vdp-gl version.)
+
+The reproducible CLI setup uses a project-local Python environment:
+
+```bash
+python3.14 -m venv .venv
+.venv/bin/python -m pip install -r requirements-dev.txt
+.venv/bin/pio run
+```
+
+To flash connected hardware, first identify its serial port and then name that
+port explicitly:
+
+```bash
+.venv/bin/pio device list
+.venv/bin/pio run --target upload --upload-port /dev/ttyUSB0
+```
+
+Replace `/dev/ttyUSB0` with the detected Agon ESP32 port. Do not select one of
+the host's built-in `/dev/ttyS*` ports.
+
+## Pingo development notes
+
+The reconstructed implementation state and current development decision are
+recorded in:
+
+- [Pingo reconstruction state](docs/pingo-reconstruction-state.md)
+- [Decision Record 0001: Run Pingo in Fab and forward-port it to VDP
+  2.16](docs/decisions/0001-pingo-fab-vdp216-strategy.md)

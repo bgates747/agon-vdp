@@ -1,4 +1,6 @@
 .pio
+.venv/
 .vscode
 .DS_Store
+*.d
 video/build
