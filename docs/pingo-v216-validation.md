@@ -349,6 +349,24 @@ described as flawless, with none of the remembered near-camera distortion.
 The Author made the same visual observation on physical hardware. This is
 accepted human visual evidence, not pixel-exact final-scanout equivalence.
 
+Fab integration commit `654ded9` adds the standard-library Python helper
+layer:
+
+```text
+scripts/build-pingo-vdp.py  native build, ABI/render smoke, artifact identity
+scripts/test-pingo.py       fresh-process deterministic fixture regressions
+scripts/pingo-status.py     cross-repository commits, dirt, and artifact hashes
+scripts/update-upstream.py  explicit Fab upstream report/fetch/merge
+scripts/run-pingo --rebuild everyday build-smoke-launch loop
+```
+
+The helper unit suite passed four tests. The build helper passed the native
+smoke test. The status tool produced both human and valid JSON reports. The
+upstream helper fetched and reported `upstream/main` without merging. The
+regression helper reproduced both accepted frame-1 hashes in fresh Fab
+processes, and the rebuild launcher reached live 320x240 triangle rendering
+before a deliberate timeout. Temporary SD cleanup passed.
+
 ## Validation gate ledger
 
 | Gate | Result |

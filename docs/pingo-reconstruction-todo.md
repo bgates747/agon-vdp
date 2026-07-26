@@ -245,7 +245,7 @@ Deliverable: a compact correctness and performance regression suite.
 - [x] Create `bgates747/fab-agon-emulator`, clone it separately under
   `~/Agon/mystuff`, preserve the official checkout, and publish a `pingo`
   branch with a reproducible fixture launcher.
-- [ ] Add build, regression, state-report, and upstream-report helpers to the
+- [x] Add build, regression, state-report, and upstream-report helpers to the
   Fab integration branch to automate the edit-build-run-test loop.
 
 Deliverable:

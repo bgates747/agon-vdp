@@ -258,6 +258,13 @@ the capture-enabled VDP module: the exact module loaded, the 320x240 target
 and control buffer initialized, object 1 was created, and rendering began.
 The timeout was deliberate and the disposable SD directory was removed.
 
+Commit `654ded9` completes the first orchestration layer with dependency-free
+Python helpers for native VDP build/smoke, deterministic Jet and triangle
+regressions, cross-repository status and artifact identity, and explicit Fab
+upstream reporting/fetch/merge. `scripts/run-pingo --rebuild` provides the
+everyday edit-build-run loop. Both accepted regression hashes passed after a
+fresh native rebuild.
+
 Physical hardware became available later on 2026-07-26. The VDP was identified
 as a Silicon Labs CP2104 USB-to-UART bridge:
 
