@@ -66,9 +66,9 @@ tag `v2.10.0`.
 
 - Checkout: `/home/smith/Agon/mystuff/pingoasm`
 - Branch: `main`
-- Commit: `4d14d308711a4e611c3bece11ba08a8215688ac4`
-- Recorded upstream: `origin/main` at the same commit
-- Working tree: clean
+- Last clean workflow checkpoint: `9da1c25`
+- Current working tree: top-level application-layout and build migration
+  staged but not committed
 - Alpha-6 tag: `pingo3d2.10.0.alpha6` at
   `217c4e7b0035e64f2e7f0d01b52914b8012ff2a5`
 
@@ -82,6 +82,26 @@ image conversion, dithering experiments, and diagnostic plotting. This
 pipeline belongs with the clients and assets rather than in the Fab
 orchestration fork. Its durable guide is
 `pingoasm/docs/rendering-pipeline.md`.
+
+The assembly applications now live at the project root. Each deployable app
+has a flat tracked `apps/<name>/src` containing only `.asm`/`.inc` and a flat
+ignored `apps/<name>/tgt` containing only `.bin`/`.rgba2`. Shared authoritative
+assembly lives in `apps/_common`; generated apps copy every needed common file
+into their own source directories.
+
+The former mini-linker is now `build/scripts/build_samples.py`. It successfully
+builds eleven binaries across `movecam`, `moveobj`, `moveair`, `movefsim`, and
+`wolf`; generated assembly identifies the generator and source in a prominent
+header. Emulator deployment clears its project-local SD card and copies the
+complete `apps` tree to `/mystuff/pingoasm/apps` while preserving the
+user-controlled `autoexec.txt`; hardware deployment mirrors one selected
+`apps/<name>/tgt` to the matching path.
+The owned Fab `moveobj/tri` headless oracle passed from the reorganized target
+with its accepted 76,800-byte framebuffer hash.
+
+The complete rationale, history, verification, and deferred model-layout work
+are recorded in `pingoasm/docs/assembly-build-pipeline.md` and
+`pingoasm/docs/model-asset-reorganization-todo.md`.
 
 ### TurboVega Agon port
 
@@ -562,11 +582,14 @@ tracked regression harness.
 
 ## Recorded performance evidence
 
-The final `pingoasm` commit contains raw timing logs in:
+The final 2024 `pingoasm` commit contains raw timing logs in the historical
+paths:
 
 - `src/asm/fpscomparisons.txt`
 - `src/asm/fpscomparisons2.txt`
 - `src/asm/fpscomparisons3.txt`
+
+The structural migration moves their current locations to `docs/benchmarks`.
 
 For the main September `earthuv` sequence:
 
