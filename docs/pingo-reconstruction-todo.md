@@ -194,7 +194,10 @@ Deliverable: an evidence-backed history organized by technical question.
   - back-face and occluded-face behavior;
   - textured and textureless triangles;
   - Y-axis orientation and UV landmarks.
-- [ ] Capture reference images or deterministic framebuffer results.
+- [x] Capture repeatable native Pingo-target results for current Jet and
+  `moveobj/tri`.
+- [ ] Compare selected target results with Alpha 7 or another explicitly
+  accepted reference.
 - [ ] Define a repeatable timing workload and measurement method.
 - [ ] Record image dimensions, pixel format, model data, camera parameters,
   and build configuration.
@@ -224,13 +227,21 @@ Deliverable: a compact correctness and performance regression suite.
 - [x] Repeat the elementary native render test without permissive C++ build
   shortcuts.
 - [x] Run the exact current `moveair/jet.bin` under Fab.
-- [ ] Capture deterministic output for simple Pingo correctness scenes.
+- [x] Add deterministic native Pingo render-target capture at the external
+  VDP seam.
+- [x] Capture byte-identical Jet targets at selected render ordinals across
+  fresh Fab processes.
+- [x] Capture a byte-identical textured `moveobj/tri` target in fresh Fab
+  processes.
+- [ ] Extend deterministic output to the selected simple correctness-scene
+  set and compare it with accepted references.
 - [x] Build the VDP 2.16 Pingo firmware and record real flash/RAM use.
 - [ ] Re-run stock-VDU and Pingo smoke tests on physical hardware.
 - [ ] Harden invalid target ordering, ownership, teardown, and packed-pixel
   dithering only after compatibility is established.
-- [x] Defer a Fab fork and packaged profile until deterministic capture or
-  distribution requires one.
+- [x] Demonstrate deterministic Pingo-target capture without a Fab fork;
+  continue deferring a fork until final-scanout capture or distribution
+  requires one.
 
 Deliverable:
 [pingo-v216-validation.md](pingo-v216-validation.md), with a reviewable Pingo
