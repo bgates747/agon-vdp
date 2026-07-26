@@ -411,7 +411,8 @@ agon-vdp
     Pingo firmware source, native module build, ABI smoke, target capture
 
 pingoasm
-    client programs and runtime assets
+    client programs, Blender sources, rendering/asset-pipeline scripts,
+    and runtime assets
 
 bgates747/fab-agon-emulator:pingo
     cross-repository build/run/test/status orchestration

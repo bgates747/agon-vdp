@@ -75,6 +75,14 @@ tag `v2.10.0`.
 This is the only user-owned `pingoasm` checkout found. It is not yet listed in
 the shared canonical repository catalog.
 
+The repository also owns the historical and resumed asset pipeline:
+`src/blender/` contains tracked Blender scenes and source assets, while
+`build/scripts/` contains Blender automation, mesh/OBJ conversion, packed
+image conversion, dithering experiments, and diagnostic plotting. This
+pipeline belongs with the clients and assets rather than in the Fab
+orchestration fork. Its durable guide is
+`pingoasm/docs/rendering-pipeline.md`.
+
 ### TurboVega Agon port
 
 - Checkout: `/home/smith/Agon/TurboVega`
