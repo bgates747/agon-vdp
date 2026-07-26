@@ -65,6 +65,9 @@ current-state report is
 The later decision to preserve Alpha 7 and forward-port the coherent Pingo
 feature to VDP 2.16 is recorded separately in
 [Decision Record 0001](../decisions/0001-pingo-fab-vdp216-strategy.md).
+The resulting ESP32 and Fab builds, exact Jet liveness run, resource audit,
+and remaining visual/hardware gates are recorded in
+[the VDP 2.16 validation ledger](../pingo-v216-validation.md).
 
 ## Chronology from the Author's commit messages
 

@@ -17,6 +17,8 @@ The original implementation boundary is recorded in
 [pingo-turbovega-baseline.md](pingo-turbovega-baseline.md).
 The accepted VDP 2.16 and emulator strategy is recorded in
 [Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md).
+The resulting builds and validation gates are recorded in
+[pingo-v216-validation.md](pingo-v216-validation.md).
 
 ## Working principles
 
@@ -211,26 +213,29 @@ Deliverable: a compact correctness and performance regression suite.
 - [x] Run an elementary native Pingo bitmap/control/render smoke test.
 - [x] Record the ownership, branch, implementation, and validation decision
   in [Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md).
-- [ ] Preserve `47a6609` with an explicit archival ref.
-- [ ] Create isolated `pingo-v2.16` and `pingo-v2.16-userspace` development
+- [x] Preserve `47a6609` with an explicit archival ref.
+- [x] Create isolated `pingo-v2.16` and `pingo-v2.16-userspace` development
   worktrees without modifying upstream-owned checkouts.
-- [ ] Import the coherent Pingo runtime onto official VDP 2.16.
-- [ ] Add the narrow `0x49` and `0x22` VDU integration.
-- [ ] Compile Pingo runtime sources explicitly in the native VDP build.
-- [ ] Add an explicit ESP32/userspace allocation seam and remove the unused
+- [x] Import the coherent Pingo runtime onto official VDP 2.16.
+- [x] Add the narrow `0x49` and `0x22` VDU integration.
+- [x] Compile Pingo runtime sources explicitly in the native VDP build.
+- [x] Add an explicit ESP32/userspace allocation seam and remove the unused
   ESP-DSP host dependency.
-- [ ] Repeat the elementary native render test without permissive C++ build
+- [x] Repeat the elementary native render test without permissive C++ build
   shortcuts.
-- [ ] Run the exact current `moveair/jet.bin` under Fab.
+- [x] Run the exact current `moveair/jet.bin` under Fab.
 - [ ] Capture deterministic output for simple Pingo correctness scenes.
-- [ ] Build the VDP 2.16 Pingo firmware and record real flash/RAM use.
+- [x] Build the VDP 2.16 Pingo firmware and record real flash/RAM use.
 - [ ] Re-run stock-VDU and Pingo smoke tests on physical hardware.
 - [ ] Harden invalid target ordering, ownership, teardown, and packed-pixel
   dithering only after compatibility is established.
-- [ ] Decide whether a Fab fork and packaged Pingo profile are warranted.
+- [x] Defer a Fab fork and packaged profile until deterministic capture or
+  distribution requires one.
 
-Deliverable: a reviewable Pingo feature on current VDP with matched native and
-ESP32 validation.
+Deliverable:
+[pingo-v216-validation.md](pingo-v216-validation.md), with a reviewable Pingo
+feature on current VDP, matched native and ESP32 builds, and explicit visual
+and hardware gates.
 
 ## Phase 6: Produce the “where I left it” report
 

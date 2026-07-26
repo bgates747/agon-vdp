@@ -2,11 +2,11 @@
 
 Date: 2026-07-26
 
-Status: archaeology, physical Alpha 7 baseline, emulator feasibility, and the
-resumption strategy are established. The current firmware builds, flashes,
-boots, passes an initial stock-VDU workload, and runs the current
-`moveair/jet.bin` Pingo demo on physical hardware. A disposable native proof
-has also run elementary Pingo rendering on VDP 2.16.
+Status: archaeology and the physical Alpha 7 baseline are established. A
+clean compatibility port now builds on official VDP 2.16 for ESP32 and as an
+external Fab module. The exact current `moveair/jet.bin` runs under that
+module without crashing; deterministic visual comparison and physical
+qualification of the modern image remain pending.
 
 This is the working evidence report for
 [pingo-reconstruction-todo.md](pingo-reconstruction-todo.md). Historical
@@ -16,6 +16,8 @@ The exact original source boundary is recorded separately in
 [pingo-turbovega-baseline.md](pingo-turbovega-baseline.md).
 The accepted modernization and emulator strategy is recorded in
 [Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md).
+Its implementation evidence is in
+[pingo-v216-validation.md](pingo-v216-validation.md).
 
 ## Evidence conventions
 
@@ -36,15 +38,18 @@ freshly cloned on 2026-07-26.
 
 - Checkout: `/home/smith/Agon/mystuff/agon-vdp`
 - Branch: `pingo`
-- Commit: `47a6609bf3d2409cb49a08ff93b22bd569476cd4`
+- Documentation HEAD: `1ca1786b6ae2d6d920cdcf4937d65ee57a69177b`
+- Archived Alpha 7 source:
+  `archive/pingo-alpha7` at
+  `47a6609bf3d2409cb49a08ff93b22bd569476cd4`
 - Version: `ScratchPingo 2.10.0 Alpha 7`
-- Recorded upstream: `origin/pingo` at the same commit
+- Recorded upstream: `origin/pingo` at the archived source commit
 - Relevant recorded tips:
   - `origin/hecker`: `ccd3781`
   - `origin/hecker2`: `dfc921b`
   - `origin/main`: `b8c2862`
-- Tracked source was clean at the start of the pass. The project-local
-  reconstruction documents are untracked.
+- Tracked source was clean at the start of the pass. The reconstruction and
+  decision documents are now committed separately from the Alpha 7 source.
 
 `pingo` and the recorded `origin/main` share merge base `471dc92` from
 2024-07-10. They have 109 and 129 unique commits respectively. The 2.10.0
@@ -89,6 +94,23 @@ TurboVega's `dacb520` import already contains small port edits, so no upstream
 commit matches all 38 files byte-for-byte. Revision `216d2db` is the strongest
 fingerprint: its README, license, every math file, and the unchanged renderer
 files match the import.
+
+### Modern compatibility port
+
+- `pingo-v2.16`:
+  `72b17cc251aa74b39ac3d6af8d5871b585d9e0d9`
+- Official base:
+  `c7ac293d2aa81ddfa693390549bcd909069c8fc3` (`v2.16.0`)
+- `pingo-v2.16-userspace`:
+  `d0bb3e13c876a9465c5ba19d8d53b97424eca5fa`
+- Fab VDP base:
+  `7bcf28e0a2376e32328a6a5554d0df852b75c80e`
+
+The hardware branch is a three-commit, reviewable feature series: decision
+documents, the exact Alpha 7 runtime import, and the narrow VDP 2.16 protocol
+bridge. The userspace branch merges that feature with Fab's VDP adaptation
+and adds a native build/test adapter. Full revision and validation evidence is
+in [pingo-v216-validation.md](pingo-v216-validation.md).
 
 ## Build and execution state
 
@@ -169,17 +191,18 @@ macro-source compatibility issue is addressed.
 ### Emulator and hardware
 
 The installed Fab Agon emulator does not ship a Pingo-capable Console8 VDP
-shared object, and there is no packaged Pingo emulator profile. Fab does,
-however, compile VDP source into a host-native shared library and support an
-explicit `--vdp` path. It does not execute the ESP32 `firmware.bin`.
+shared object, and there is no packaged Pingo emulator profile. Fab compiles
+VDP source into a host-native shared library, supports an explicit `--vdp`
+path, and does not execute the ESP32 `firmware.bin`.
 
-A disposable proof overlaid Pingo on Fab's current VDP 2.16 userspace source,
-built and loaded a native shared object, created RGBA2222 bitmap 257 and a
-64x64 Pingo control, rendered an empty scene, and retrieved a 640x480
-framebuffer at 59.94 Hz. The exact `jet.bin` workload has not yet been run
-under Fab. Architecture, evidence, ownership, rejected alternatives, and the
-accepted forward-port plan are in
-[Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md).
+The tracked native adapter now builds the Pingo port without changing Fab or
+its submodules. Its immediate-resolution ABI test and elementary Pingo render
+smoke pass. The exact current `moveair/jet.bin` initialized a 320x148 scene
+and rendered repeatedly for a deliberate 15-second headless interval without
+a VDP or emulator crash. That proves protocol/liveness compatibility, not
+visual equivalence. Exact revisions, artifact hashes, commands, resource
+measurements, and remaining gates are in
+[pingo-v216-validation.md](pingo-v216-validation.md).
 
 Physical hardware became available later on 2026-07-26. The VDP was identified
 as a Silicon Labs CP2104 USB-to-UART bridge:
@@ -607,26 +630,26 @@ These are findings, not yet an implementation plan.
 
 ## Recommended next milestone
 
-The smallest useful next milestone is a reproducible correctness baseline, not
-another optimization:
+The smallest useful next milestone is deterministic visual equivalence, not
+another optimization or an immediate hardware flash:
 
-1. Preserve the now-verified `47a6609` firmware as the stock-VDU-compatible
-   hardware baseline.
-2. Preserve the successful `moveair/jet.bin` run as the first known-good
-   Pingo hardware baseline.
-3. Add a null check or explicit render-target binding contract so an old or
-   malformed client cannot reset the VDP during control initialization.
-4. Apply the byte-neutral macro-parameter repair in `pingoasm`.
-5. Run alpha-6 `tri` and `cube`, then current `tri`, `cube`, and `earthuv`.
-6. Capture exact firmware/demo commits, build hashes, camera parameters,
-   screenshots or framebuffer hashes, and timing output.
-7. Promote the disposable host probe into a tracked test only after its
-   intended compatibility contract is agreed.
-8. Fix correctness and ownership defects before revisiting rasterizer speed.
+1. Preserve `archive/pingo-alpha7` and the known-good physical image as the
+   recovery baseline.
+2. Capture a simple scene and Jet from the native module, either through a
+   small external framebuffer harness or a minimal Fab frame-CRC/capture
+   feature.
+3. Compare orientation, camera response, UV landmarks, depth ordering, and
+   stable framebuffer regions against Alpha 7 hardware.
+4. If visual parity passes, flash the recorded `pingo-v2.16` image.
+5. On hardware, test stock VDU workloads before Pingo, then run a short
+   correctness scene and current Jet with dithering disabled.
+6. Only after those gates, fix missing-target handling, ownership/teardown,
+   texture bounds, the missing-return path, and packed-pixel dithering as
+   separate tested commits.
 
-The project-local toolchain, clean build, physical flash path, and basic stock
-VDU smoke test are complete. A current, revision-matched Pingo workload is
-available in the post-`b25a3be` companion demos.
+The Alpha 7 recovery image, VDP 2.16 ESP32 build, native adapter, ABI smoke,
+and full Jet command-stream liveness test are now complete. A Fab fork remains
+deferred until deterministic capture or packaging actually requires it.
 
 ## Questions that evidence has not answered
 

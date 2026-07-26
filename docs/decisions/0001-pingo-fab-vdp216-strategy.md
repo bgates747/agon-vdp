@@ -2,7 +2,8 @@
 
 Date: 2026-07-26
 
-Status: Accepted for implementation
+Status: Accepted. The compatibility port is implemented; deterministic visual
+comparison and physical-hardware qualification remain pending.
 
 Scope: Pingo source ownership, VDP modernization, Fab Agon Emulator
 integration, and the order in which those changes will be developed and
@@ -156,6 +157,12 @@ native VDP started: 640x480 at 59.94 Hz
 This proves architectural, compilation, ABI, command-dispatch, allocation,
 and elementary rendering feasibility. It does not yet prove the full
 `jet.bin` workload or visual equivalence.
+
+The later tracked implementation did run the exact current `jet.bin` for a
+deliberate 15-second headless interval without a crash. That later evidence,
+including exact commits and artifact hashes, is in
+[the VDP 2.16 validation ledger](../pingo-v216-validation.md). Visual
+equivalence is still not established.
 
 The proof also established two useful diagnostic facts:
 
@@ -319,8 +326,12 @@ The forward-port is not complete until it passes these gates in order:
 The current Alpha 7 image costs 19,868 bytes more flash and 16 bytes more
 static RAM than its contemporary stock baseline. Applying that measured cost
 to the present VDP 2.16 build estimates approximately 83.7% application-flash
-use, leaving roughly 213 KiB. Capacity is therefore not presently a blocker,
-but the real port must record its own linked result.
+use, leaving roughly 213 KiB. At decision time, capacity was therefore not a
+likely blocker, but the real port still had to record its own linked result.
+
+The completed compatibility build confirmed that estimate: it costs 19,964
+bytes of application flash and 16 bytes of static RAM over a clean stock VDP
+2.16 build. It uses 1,097,393 of 1,310,720 application-flash bytes (83.7%).
 
 ## Consequences
 
@@ -356,6 +367,7 @@ Reconsider this structure if:
 
 ## Related records
 
+- [VDP 2.16 implementation and validation](../pingo-v216-validation.md)
 - [Pingo reconstruction state](../pingo-reconstruction-state.md)
 - [Pingo reconstruction TODO](../pingo-reconstruction-todo.md)
 - [TurboVega point-of-departure audit](../pingo-turbovega-baseline.md)
