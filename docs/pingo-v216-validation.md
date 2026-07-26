@@ -21,10 +21,10 @@ this repository:
 | Ref or commit | Purpose |
 | --- | --- |
 | `archive/pingo-alpha7` at `47a6609bf3d2409cb49a08ff93b22bd569476cd4` | Exact hardware-verified Alpha 7 source |
-| `pingo-v2.16` at `72b17cc251aa74b39ac3d6af8d5871b585d9e0d9` | Pingo compatibility port on official VDP 2.16.0 |
+| `pingo-v2.16` feature commit `72b17cc251aa74b39ac3d6af8d5871b585d9e0d9` | Pingo compatibility port on official VDP 2.16.0 |
 | `d8e8bfa` | Import the 16-file Pingo renderer runtime and its license |
 | `72b17cc` | Add the narrow Pingo protocol bridge to official VDP 2.16 |
-| `pingo-v2.16-userspace` at `d0bb3e13c876a9465c5ba19d8d53b97424eca5fa` | Native Fab adapter and tests |
+| `pingo-v2.16-userspace` adapter commit `d0bb3e13c876a9465c5ba19d8d53b97424eca5fa` | Native Fab adapter and tests |
 | `da1d3d4` | Merge parents `7bcf28e` and `72b17cc` without changing Fab |
 | `d0bb3e1` | Compile and load Pingo as an external Fab VDP module |
 

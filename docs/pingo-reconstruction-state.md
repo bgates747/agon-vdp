@@ -97,11 +97,11 @@ files match the import.
 
 ### Modern compatibility port
 
-- `pingo-v2.16`:
+- `pingo-v2.16` feature implementation:
   `72b17cc251aa74b39ac3d6af8d5871b585d9e0d9`
 - Official base:
   `c7ac293d2aa81ddfa693390549bcd909069c8fc3` (`v2.16.0`)
-- `pingo-v2.16-userspace`:
+- `pingo-v2.16-userspace` adapter implementation:
   `d0bb3e13c876a9465c5ba19d8d53b97424eca5fa`
 - Fab VDP base:
   `7bcf28e0a2376e32328a6a5554d0df852b75c80e`
