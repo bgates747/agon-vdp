@@ -2,9 +2,9 @@
 
 Date: 2026-07-26
 
-Status: Accepted. The compatibility port and live visual Jet smoke are
-complete; deterministic framebuffer comparison and physical-hardware
-qualification remain pending.
+Status: Accepted. The compatibility port, live visual Jet smoke, and
+deterministic native Jet and textured-triangle target baselines are complete;
+reference comparison and physical-hardware qualification remain pending.
 
 Scope: Pingo source ownership, VDP modernization, Fab Agon Emulator
 integration, and the order in which those changes will be developed and
@@ -38,8 +38,10 @@ pingo-v2.16-userspace
 
 The Fab emulator itself will initially remain unchanged. Development builds
 will be loaded through its existing `--vdp /absolute/path/vdp_pingo.so`
-override. Fab will be forked only if and when a packaged Pingo firmware choice,
-repeatable outer build, or distributable emulator profile is required.
+override. That seam is also sufficient for deterministic Pingo render-target
+capture. Fab will be forked only if and when deterministic final Fab scanout,
+a packaged Pingo firmware choice, repeatable outer build, or distributable
+emulator profile is required.
 
 The initial forward-port will preserve the behavior of the hardware-verified
 Alpha 7 client contract. Robustness and API corrections will follow in
@@ -163,8 +165,11 @@ The later tracked implementation did run the exact current `jet.bin` for a
 deliberate 15-second headless interval without a crash. That later evidence,
 including exact commits and artifact hashes, is in
 [the VDP 2.16 validation ledger](../pingo-v216-validation.md). Visual
-presentation was subsequently confirmed in a live interactive smoke test;
-deterministic equivalence is still not established.
+presentation was subsequently confirmed in a live interactive smoke test,
+and repeated native captures established byte-identical Jet target bitmap 257
+output. A textured-triangle fixture also produced a repeatable target. These
+results establish repeatability at the Pingo renderer boundary, not
+equivalence with Alpha 7 or deterministic final Fab scanout.
 
 The proof also established two useful diagnostic facts:
 
@@ -257,9 +262,10 @@ there is useful; authoritative development there is not.
 ### Fork Fab immediately
 
 Deferred. The existing `--vdp` override already runs an external Pingo shared
-library. An outer fork alone would not own unpublished changes inside the VDP
-or FabGL submodules. Forking becomes useful when packaging and repeatable
-submodule pinning become deliverables.
+library and proved sufficient for Pingo render-target capture. An outer fork
+alone would not own unpublished changes inside the VDP or FabGL submodules.
+Forking becomes useful when final Fab-composited scanout capture, packaging,
+or repeatable submodule pinning becomes a deliverable.
 
 ### Flash or emulate the ESP32 firmware image inside Fab
 
@@ -297,6 +303,14 @@ These will be addressed as explicit post-compatibility changes. Dithering and
 invalid initialization order should not be exercised on hardware until their
 memory safety is resolved.
 
+The current Jet client creates an untextured KOAK object with bitmap ID zero.
+The wrapper still binds a non-null `Texture` whose pixel pointer is null, so
+visible textureless geometry can reach the inherited non-void `shade()` path
+that has no return value. Native Jet signatures are consequently scoped to
+the recorded source, inputs, and GCC/G++ 13.3.0 `-O2` toolchain until that
+undefined behavior is corrected. The textured-triangle fixture does not
+exercise this known null-texture path.
+
 Fab remains a behavioral approximation:
 
 - host allocation does not enforce real ESP32 PSRAM limits;
@@ -318,8 +332,10 @@ The forward-port is not complete until it passes these gates in order:
 3. build and load the native Pingo shared object through `--vdp`;
 4. repeat the 64x64 bitmap/control/empty-render smoke test;
 5. run the exact existing `moveair/jet.bin` under Fab;
-6. capture screenshots or deterministic framebuffer signatures for selected
-   simple scenes;
+6. capture deterministic Pingo-target signatures for Jet and selected simple
+   scenes, then compare them with Alpha 7 or another accepted reference; Jet
+   and textured-triangle target repeatability are complete, while reference
+   comparison remains pending;
 7. run stock VDU workloads, including the existing Wolfenstein smoke test;
 8. build the Pingo VDP 2.16 ESP32 image and record flash/RAM use;
 9. flash physical hardware and repeat stock-VDU and current `jet.bin` tests;
