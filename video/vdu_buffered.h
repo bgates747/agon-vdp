@@ -22,6 +22,7 @@
 #include "vdp_variables.h"
 #include "types.h"
 #include "vdu_stream_processor.h"
+#include "pingo_3d.h"
 
 // VDU 23, 0, &A0, bufferId; command: Buffered command support
 //
@@ -249,6 +250,9 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 			auto sourceBufferId = readWord_t();
 			if (sourceBufferId == -1) return;
 			bufferExpandBitmap(bufferId, options, sourceBufferId);
+		}	break;
+		case BUFFERED_PINGO_3D: {
+			bufferUsePingo3D(bufferId);
 		}	break;
 		case BUFFERED_ADD_CALLBACK: {
 			auto type = readWord_t(); if (type == -1) return;
@@ -2767,6 +2771,70 @@ void VDUStreamProcessor::bufferCallCallbacks(uint16_t type) {
 	for (const auto & bufferId : callbackBuffers[type]) {
 		bufferCall(bufferId, {});
 	}
+}
+
+// VDU 23, 0, &A0, bufferId; &49, subcommand: Configure or render with Pingo 3D.
+void VDUStreamProcessor::bufferUsePingo3D(uint16_t bufferId) {
+	auto subcommand = readByte_t();
+	if (subcommand < 0) {
+		return;
+	}
+
+	if (subcommand == 0) {
+		auto width = readWord_t();
+		if (width <= 0) {
+			debug_log("bufferUsePingo3D: buffer %d missing width\n\r", bufferId);
+			return;
+		}
+
+		auto height = readWord_t();
+		if (height <= 0) {
+			debug_log("bufferUsePingo3D: buffer %d missing height\n\r", bufferId);
+			return;
+		}
+
+		auto storage = bufferCreate(bufferId, sizeof(Pingo3dControl));
+		if (!storage || !storage->getBuffer()) {
+			debug_log("bufferUsePingo3D: failed to create buffer %d\n\r", bufferId);
+			if (storage) {
+				buffers.erase(bufferId);
+			}
+			return;
+		}
+
+		auto control = reinterpret_cast<Pingo3dControl *>(storage->getBuffer());
+		control->initialize(
+			*this, static_cast<uint16_t>(width), static_cast<uint16_t>(height));
+		return;
+	}
+
+	auto bufferIter = buffers.find(bufferId);
+	if (bufferIter == buffers.end()) {
+		debug_log("bufferUsePingo3D: buffer %d not found\n\r", bufferId);
+		return;
+	}
+
+	auto &blocks = bufferIter->second;
+	if (blocks.size() != 1 || !blocks.front() ||
+			blocks.front()->size() < sizeof(Pingo3dControl) ||
+			!blocks.front()->getBuffer()) {
+		debug_log("bufferUsePingo3D: buffer %d has an invalid layout\n\r", bufferId);
+		return;
+	}
+
+	auto control = reinterpret_cast<Pingo3dControl *>(blocks.front()->getBuffer());
+	if (!control->validate()) {
+		debug_log("bufferUsePingo3D: buffer %d is invalid\n\r", bufferId);
+		return;
+	}
+
+	if (subcommand == 39) {
+		control->deinitialize(*this);
+		buffers.erase(bufferIter);
+		return;
+	}
+
+	control->handle_subcommand(*this, static_cast<uint8_t>(subcommand));
 }
 
 
