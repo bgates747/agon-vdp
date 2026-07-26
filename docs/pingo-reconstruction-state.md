@@ -103,6 +103,9 @@ files match the import.
 
 ### Modern compatibility port
 
+- Permanent native worktree:
+  `/home/smith/Agon/mystuff/agon-vdp-pingo-v216-userspace`
+- Branch: `pingo-v2.16-userspace`
 - `pingo-v2.16` feature implementation:
   `72b17cc251aa74b39ac3d6af8d5871b585d9e0d9`
 - Official base:
@@ -264,6 +267,10 @@ regressions, cross-repository status and artifact identity, and explicit Fab
 upstream reporting/fetch/merge. `scripts/run-pingo --rebuild` provides the
 everyday edit-build-run loop. Both accepted regression hashes passed after a
 fresh native rebuild.
+
+Fab commit `73452ed` changes all VDP defaults to the permanent userspace
+worktree. Bare build, status, regression, and rebuild-launch commands now work
+without exporting a temporary path.
 
 Physical hardware became available later on 2026-07-26. The VDP was identified
 as a Silicon Labs CP2104 USB-to-UART bridge:

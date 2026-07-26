@@ -19,8 +19,9 @@ bounded, and how the modern image was qualified on hardware.
 
 ## Durable revision structure
 
-The temporary worktree paths may be discarded; the refs and commits live in
-this repository:
+The userspace worktree is retained permanently at
+`/home/smith/Agon/mystuff/agon-vdp-pingo-v216-userspace`. The hardware
+worktree remains disposable; all refs and commits live in this repository:
 
 | Ref or commit | Purpose |
 | --- | --- |
@@ -366,6 +367,15 @@ upstream helper fetched and reported `upstream/main` without merging. The
 regression helper reproduced both accepted frame-1 hashes in fresh Fab
 processes, and the rebuild launcher reached live 320x240 triangle rendering
 before a deliberate timeout. Temporary SD cleanup passed.
+
+The registered userspace worktree was subsequently moved from `/tmp` to
+`/home/smith/Agon/mystuff/agon-vdp-pingo-v216-userspace`. Fab commit
+`73452ed` makes that permanent sibling the default for every helper and for
+`run-pingo --rebuild`. With no path options or environment overrides, the
+native build/smoke passed, both accepted regression hashes matched, and the
+rebuild launcher again reached live triangle rendering before a deliberate
+timeout. The old worktree path and temporary SD directory were absent after
+cleanup.
 
 ## Validation gate ledger
 
