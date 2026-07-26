@@ -2,8 +2,9 @@
 
 Date: 2026-07-26
 
-Status: Accepted. The compatibility port is implemented; deterministic visual
-comparison and physical-hardware qualification remain pending.
+Status: Accepted. The compatibility port and live visual Jet smoke are
+complete; deterministic framebuffer comparison and physical-hardware
+qualification remain pending.
 
 Scope: Pingo source ownership, VDP modernization, Fab Agon Emulator
 integration, and the order in which those changes will be developed and
@@ -162,7 +163,8 @@ The later tracked implementation did run the exact current `jet.bin` for a
 deliberate 15-second headless interval without a crash. That later evidence,
 including exact commits and artifact hashes, is in
 [the VDP 2.16 validation ledger](../pingo-v216-validation.md). Visual
-equivalence is still not established.
+presentation was subsequently confirmed in a live interactive smoke test;
+deterministic equivalence is still not established.
 
 The proof also established two useful diagnostic facts:
 
