@@ -6,8 +6,6 @@
 #include <math.h>
 #include <stdint.h>
 
-#include "esp_dsp.h"
-
 Mat4 mat4Identity() {
     return (Mat4){{
             1,  0,  0, 0,
@@ -335,6 +333,5 @@ float mat4FarFromProjection(Mat4 mat)
 
     return D / (C + 1.0);
 }
-
 
 

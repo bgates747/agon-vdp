@@ -10,7 +10,7 @@
 #include "scene.h"
 #include "rasterizer.h"
 #include "object.h"
-#include <esp_heap_caps.h>
+#include "../pingo_platform.h"
 
 #define MIN(a, b)(((a) < (b)) ? (a) : (b))
 #define MAX(a, b)(((a) > (b)) ? (a) : (b))
@@ -34,7 +34,7 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     printf("Frame buffer initialized\n");
 
     int zsize = sizeof(PingoDepth) * size.x * size.y;
-    r->z_buffer = (PingoDepth*) heap_caps_malloc(zsize, MALLOC_CAP_SPIRAM);
+    r->z_buffer = (PingoDepth*) pingo_platform_alloc(zsize);
     printf("Z buffer initialized\n");
     printf("Renderer initialized\n");
     return 0;
