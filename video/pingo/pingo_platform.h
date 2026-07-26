@@ -2,6 +2,7 @@
 #define PINGO_PLATFORM_H
 
 #include <stddef.h>
+#include <stdint.h>
 
 #ifdef USERSPACE
 
@@ -11,6 +12,8 @@ extern "C" {
 
 void *pingo_platform_alloc(size_t size);
 void pingo_platform_free(void *ptr);
+void pingo_platform_rgba2222_frame_ready(
+    const uint8_t *pixels, uint16_t width, uint16_t height);
 
 #ifdef __cplusplus
 }
@@ -26,6 +29,13 @@ static inline void *pingo_platform_alloc(size_t size) {
 
 static inline void pingo_platform_free(void *ptr) {
     heap_caps_free(ptr);
+}
+
+static inline void pingo_platform_rgba2222_frame_ready(
+    const uint8_t *pixels, uint16_t width, uint16_t height) {
+    (void)pixels;
+    (void)width;
+    (void)height;
 }
 
 #endif

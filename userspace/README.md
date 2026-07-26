@@ -43,6 +43,38 @@ The smoke test loads the shared object with immediate symbol resolution,
 starts the native VDP, creates RGBA2222 bitmap 257, creates Pingo control
 buffer 1000, renders an empty 64x64 scene, and reads the emulator framebuffer.
 
+Set `PINGO_CAPTURE_PREFIX` to a fresh absolute path to capture an exact Pingo
+render target. The native-only hook writes packed RGBA2222 bytes, a viewable
+RGB PPM preview, and a metadata file immediately after rendering:
+
+```sh
+PINGO_CAPTURE_PREFIX=/tmp/pingo-frame \
+  PINGO_CAPTURE_FRAME=1 \
+  make -C userspace \
+    FAB_ROOT=/absolute/path/to/fab-agon-emulator \
+    smoke
+```
+
+This produces `/tmp/pingo-frame.rgba2`, `/tmp/pingo-frame.ppm`, and
+`/tmp/pingo-frame.txt`, then prints a machine-readable CRC32 record to
+standard error. The raw `.rgba2` file is the regression oracle; the PPM drops
+alpha bits and is only a visual preview. Raw pixels are tightly packed in
+top-to-bottom row order with a top-left origin and Agon's `AABBGGRR` bit
+layout. The metadata identifies the checksum as CRC-32/ISO-HDLC.
+
+`PINGO_CAPTURE_FRAME` defaults to 1 and counts Pingo renders, not Fab display
+refreshes; a set value must be a positive decimal integer. No final output path
+may already exist. PID-scoped temporary files are created exclusively, and
+publication never replaces an existing path. The `.txt` file is published
+last and is the completeness marker: ignore `.rgba2` or `.ppm` without it,
+since a failed multi-file publication can leave an incomplete final set. The
+hook is disabled when `PINGO_CAPTURE_PREFIX` is unset and compiles to a no-op
+in ESP32 builds.
+
+The hook captures Pingo's target bitmap immediately after the selected render
+and configured dithering path. It does not capture later VDU bitmap plotting,
+composition, scaling, or Fab's final 640x480 scanout.
+
 Fab can load the result without an emulator fork:
 
 ```sh

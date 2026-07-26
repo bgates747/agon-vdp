@@ -6,6 +6,7 @@
 #include <agon.h>
 #include <map>
 #include "esp_heap_caps.h"
+#include "pingo/pingo_platform.h"
 #include "sprites.h"
 #include "vdu_stream_processor.h"
 
@@ -378,6 +379,15 @@ typedef struct tag_Pingo3dControl {
         auto diff = stop - start;
         float fps = 1000.0 / diff;
         printf("Render to %ux%u took %u ms (%.2f FPS)\n", m_width, m_height, diff, fps);
+
+        static_assert(
+            sizeof(p3d::Pixel) == 1,
+            "Pingo capture requires packed one-byte RGBA2222 pixels");
+        pingo_platform_rgba2222_frame_ready(
+            reinterpret_cast<const uint8_t*>(
+                m_renderer.frameBuffer.pixels),
+            m_width,
+            m_height);
     }
 
     // VDU 23, 0, &A0, sid; &49, 0, 0 :  Deinitialize Control Structure

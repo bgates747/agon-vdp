@@ -134,6 +134,7 @@ VDP_GL_OBJECTS := $(addprefix $(BUILD_DIR)/fabgl/,$(VDP_GL_CXX_SOURCES:.cpp=.o))
 VDP_OBJECTS := \
 	$(BUILD_DIR)/vdp_pingo.o \
 	$(BUILD_DIR)/pingo_host_platform.o \
+	$(BUILD_DIR)/pingo_capture.o \
 	$(BUILD_DIR)/rust_glue.o
 OBJECTS := $(VDP_OBJECTS) $(PINGO_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
@@ -157,6 +158,10 @@ $(BUILD_DIR)/vdp_pingo.o: vdp_pingo.cpp $(ADAPTER_MAKEFILE)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/pingo_host_platform.o: pingo_host_platform.cpp $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/pingo_capture.o: pingo_capture.cpp $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -c $< -o $@
 
