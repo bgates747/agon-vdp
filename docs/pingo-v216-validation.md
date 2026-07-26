@@ -2,11 +2,12 @@
 
 Date: 2026-07-26
 
-Status: the compatibility port is implemented and builds for ESP32 and native
-x86-64. The exact current `moveair/jet.bin` runs under Fab without crashing
-and has passed a live human visual/interactive smoke test. A deterministic
-framebuffer baseline and physical-hardware qualification are still
-deliberately pending.
+Status: the compatibility port builds for ESP32 and native x86-64. The exact
+current `moveair/jet.bin` passes headless liveness and live visual/interactive
+smoke tests. Repeatable native captures of its 320x148 Pingo render target and
+the 320x240 `moveobj/tri` target are now established. Comparison with Alpha 7
+or another accepted reference, deterministic final Fab scanout, and physical
+qualification of the modern image remain pending.
 
 This is the implementation evidence ledger for
 [Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md). It records
@@ -26,6 +27,7 @@ this repository:
 | `d8e8bfa` | Import the 16-file Pingo renderer runtime and its license |
 | `72b17cc` | Add the narrow Pingo protocol bridge to official VDP 2.16 |
 | `pingo-v2.16-userspace` adapter commit `d0bb3e13c876a9465c5ba19d8d53b97424eca5fa` | Native Fab adapter and tests |
+| `pingo-v2.16-userspace` capture commit `c490406ee721c5a53f04c069ee10302a855b7564` | Opt-in deterministic native Pingo render-target capture |
 | `da1d3d4` | Merge parents `7bcf28e` and `72b17cc` without changing Fab |
 | `d0bb3e1` | Compile and load Pingo as an external Fab VDP module |
 
@@ -94,7 +96,8 @@ has the known-good Alpha 7 firmware.
 
 ## Native adapter evidence
 
-The native adapter was built from scratch on x86-64 with GCC/G++ 13.3.0:
+The native adapter used for the original ABI, headless-liveness, and live GUI
+tests was built from scratch on x86-64 with GCC/G++ 13.3.0:
 
 ```text
 video/build/userspace/vdp_pingo.so
@@ -102,10 +105,18 @@ video/build/userspace/vdp_pingo.so
   SHA-256 716127d32f4b2aac12fe872f4797bbfe6848cd703aa45a982607ccd8ed608ecc
 ```
 
-`ldd -r` reported no missing relocations. The shared object exports all 15
-entry points loaded by Fab's `VdpInterface`, and the smoke harness now checks
-all 15 with `RTLD_NOW` before exercising Pingo. It also verifies the unmangled
-Pingo renderer symbol.
+After capture commit `c490406`, the clean capture-enabled build was:
+
+```text
+video/build/userspace/vdp_pingo.so
+  10,779,168 bytes
+  SHA-256 da645a9c79be1780759efa5d49c239e0c254515239abe571475fce0b5b591e26
+```
+
+`ldd -r` reported no missing relocations for both checkpoints. The shared
+object exports all 15 entry points loaded by Fab's `VdpInterface`, and the
+smoke harness checks all 15 with `RTLD_NOW` before exercising Pingo. It also
+verifies the unmangled Pingo renderer symbol.
 
 The tracked smoke test:
 
@@ -156,9 +167,10 @@ showed:
 - repeated `Render to 320x148` output through the full interval.
 
 The emulator did not crash or reset. This passes protocol and liveness gate 5
-for the exact current client. It does **not** establish pixel correctness:
-Fab has no screenshot or frame-dump option, and SDL's dummy driver exposes no
-window to inspect.
+for the exact current client. That original run did not enable pixel capture.
+The later render-target run below establishes repeatable Pingo target bytes;
+it does not establish historical equivalence or deterministic final Fab
+presentation.
 
 The reproducible build, disposable SD profile, headless command, expected
 markers, and safety constraints are in `userspace/README.md` on the
@@ -174,8 +186,84 @@ reported the test successful.
 
 This is the first direct visual/interactive confirmation of Jet on the modern
 port. It proves that the emulator presents a usable scene rather than merely
-surviving the command stream. It is still a smoke test, not a deterministic
-equivalence oracle: no reference screenshot or framebuffer hash was captured.
+surviving the command stream. It remains a qualitative presentation smoke
+test, not a deterministic final-scanout or Alpha 7 equivalence oracle. The
+separate deterministic result below covers only Pingo target bitmap 257.
+
+### Deterministic Jet Pingo-target capture
+
+Capture commit `c490406` adds an opt-in userspace hook at the owned VDP seam.
+It copies packed target bitmap 257 immediately after the selected Pingo
+render and configured dithering path. `PINGO_CAPTURE_FRAME` counts Pingo
+render commands, not Fab display refreshes. The writer uses exclusive,
+PID-scoped temporary files, never replaces an existing path, and publishes
+metadata last as the completeness marker.
+
+With dithering disabled, render ordinals 1 (repeated), 2, 3, and 5 were
+selected in fresh Fab processes using the same Jet artifacts and disposable
+SD profile. The final capture-enabled artifact above independently reproduced
+ordinals 1 and 5. Every raw target was byte-for-byte identical:
+
+```text
+scope      Pingo render target bitmap 257
+format     RGBA2222, packed AABBGGRR, one byte per pixel
+size       320x148, 47,360 bytes
+CRC-32     10A67048 (CRC-32/ISO-HDLC)
+SHA-256    768f07b8115df6391d9a0a1611adf9e293a96740a4962d049788c15777ecdd5e
+PPM        142,095 bytes
+PPM SHA-256
+           8dab28be024597f0cf278b9fa40a266224bd686bea16452e44e4df76054f15c8
+```
+
+The raw `.rgba2` bytes are the regression oracle; the generated PPM is only a
+visual preview because it discards alpha. This capture is taken at the Pingo
+renderer boundary. It precedes later VDU bitmap plotting, instrument-panel
+composition, scaling, and Fab's final 640x480 scanout. The successful live GUI
+run supplies qualitative evidence for that later presentation path, not a
+deterministic scanout comparison.
+
+Jet creates its KOAK object with bitmap ID zero while the wrapper binds a
+non-null `Texture` whose pixel pointer remains null. Visible textureless
+geometry can therefore reach the inherited non-void `shade()` path that has no
+return value. The stable signature is scoped to the recorded revisions,
+inputs, and GCC/G++ 13.3.0 `-O2` build; it is not a compiler-independent
+language guarantee.
+
+### Textured-triangle localization fixture
+
+The existing `moveobj/tri` fixture exercises a textured object and avoids the
+known null-texture `shade()` path:
+
+| File | Bytes | SHA-256 |
+| --- | ---: | --- |
+| `tri.bin` | 3,422 | `ae6b514c0c7739c88a6ed7315f16f937969a572ff8c2afd60eae131da7a9a9b5` |
+| `blenderaxes.rgba2` | 1,156 | `6d7156081386707a0ed346256a95b64409fb3fe90045a833ac42d85b4b21e25c` |
+
+The disposable SD profile placed those files under `/moveobj` and used this
+CRLF `autoexec.txt`:
+
+```text
+SET KEYBOARD 1
+cd /moveobj
+load tri.bin
+run
+```
+
+Two fresh Fab processes produced byte-identical first-render targets:
+
+```text
+format     RGBA2222, packed AABBGGRR, one byte per pixel
+size       320x240, 76,800 bytes
+CRC-32     323B33E6 (CRC-32/ISO-HDLC)
+SHA-256    f81dd66876ef012a6f1e52bae2821c275f1cf33e9a7e977c193be93bad4b4958
+PPM        230,415 bytes
+PPM SHA-256
+           dafd0f8efbb9685fd7e866730d18458b67c053469593739f4d8e0114d9b2e64a
+```
+
+The PPM preview showed the expected single textured triangle. This is a
+repeatable native localization fixture, not yet a correctness comparison with
+Alpha 7 or another accepted reference.
 
 ## Fail-closed emulator procedure
 
@@ -221,7 +309,9 @@ The companion `pingoasm` checkout also remained clean.
 | 64x64 native bitmap/control/render smoke | Passed |
 | Exact current `moveair/jet.bin` under Fab | Passed for protocol and 15-second liveness |
 | Live human visual/interactive Jet smoke | Passed |
-| Deterministic framebuffer comparison | Pending |
+| Deterministic native Jet Pingo-target repeatability | Passed: selected render ordinals 1, 2, 3, and 5 were byte-identical |
+| Deterministic native `moveobj/tri` target repeatability | Passed in two fresh processes |
+| Alpha 7/reference comparison or deterministic final Fab scanout | Pending |
 | Stock VDU workload on the modern Pingo port | Pending |
 | Modern Pingo ESP32 build and resource audit | Passed |
 | Modern Pingo image on physical hardware | Pending |
@@ -230,20 +320,20 @@ The companion `pingoasm` checkout also remained clean.
 ## Decision at this checkpoint
 
 Do not fork Fab yet. The external `--vdp` seam is sufficient for compilation,
-ABI, protocol, liveness, and native crash diagnostics, and it keeps durable
-changes in the Author's VDP fork. A Fab fork becomes justified when one of
-these is an actual deliverable:
+ABI, protocol, liveness, native crash diagnostics, and deterministic Pingo
+render-target capture, and it keeps durable changes in the Author's VDP fork.
+A Fab fork becomes justified when one of these is an actual deliverable:
 
-- deterministic framebuffer capture or frame CRC;
+- deterministic final Fab-composited scanout unavailable at the VDP seam;
 - timed/headless graceful exit and keyboard injection;
 - a packaged Pingo firmware profile;
 - a repeatable outer build that pins and distributes all native libraries.
 
-Do not flash the modern image yet. The next smallest useful gate is a
-deterministic framebuffer capture using a simple scene and Jet, now anchored
-by the successful live visual run. Once that passes, flash `pingo-v2.16`, run
-stock VDU workloads first, and only then run the Pingo demos. Alpha 7 remains
-the immediate recovery image throughout.
+Do not flash the modern image yet. Native Jet and textured-triangle target
+repeatability now pass; the next smallest useful gate is to compare the simple
+fixture with Alpha 7 or another accepted reference. Once that passes, flash
+`pingo-v2.16`, run stock VDU workloads first, and only then run the Pingo
+demos. Alpha 7 remains the immediate recovery image throughout.
 
 Do not mix inherited correctness fixes into this compatibility checkpoint.
 Missing-target handling, ownership and teardown, texture bounds, the

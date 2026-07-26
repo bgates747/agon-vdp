@@ -5,9 +5,10 @@ Date: 2026-07-26
 Status: archaeology and the physical Alpha 7 baseline are established. A
 clean compatibility port now builds on official VDP 2.16 for ESP32 and as an
 external Fab module. The exact current `moveair/jet.bin` runs under that
-module without crashing and has passed a live visual/interactive smoke test;
-deterministic framebuffer comparison and physical qualification of the
-modern image remain pending.
+module without crashing, has passed a live visual/interactive smoke test, and
+now has a repeatable 320x148 native Pingo-target signature. The textured
+`moveobj/tri` target is repeatable as well. Reference or final-scanout
+comparison and physical qualification of the modern image remain pending.
 
 This is the working evidence report for
 [pingo-reconstruction-todo.md](pingo-reconstruction-todo.md). Historical
@@ -39,7 +40,8 @@ freshly cloned on 2026-07-26.
 
 - Checkout: `/home/smith/Agon/mystuff/agon-vdp`
 - Branch: `pingo`
-- Documentation HEAD: `1ca1786b6ae2d6d920cdcf4937d65ee57a69177b`
+- Initial reconstruction documentation commit:
+  `1ca1786b6ae2d6d920cdcf4937d65ee57a69177b`
 - Archived Alpha 7 source:
   `archive/pingo-alpha7` at
   `47a6609bf3d2409cb49a08ff93b22bd569476cd4`
@@ -104,6 +106,8 @@ files match the import.
   `c7ac293d2aa81ddfa693390549bcd909069c8fc3` (`v2.16.0`)
 - `pingo-v2.16-userspace` adapter implementation:
   `d0bb3e13c876a9465c5ba19d8d53b97424eca5fa`
+- `pingo-v2.16-userspace` render-target capture:
+  `c490406ee721c5a53f04c069ee10302a855b7564`
 - Fab VDP base:
   `7bcf28e0a2376e32328a6a5554d0df852b75c80e`
 
@@ -201,10 +205,19 @@ its submodules. Its immediate-resolution ABI test and elementary Pingo render
 smoke pass. The exact current `moveair/jet.bin` initialized a 320x148 scene
 and rendered repeatedly for a deliberate 15-second headless interval without
 a VDP or emulator crash. A later live Wayland run of the same artifact passed
-the Author's visual/interactive smoke test. That is strong usability evidence,
-but not yet a deterministic framebuffer oracle. Exact revisions, artifact
-hashes, commands, resource measurements, and remaining gates are in
-[pingo-v216-validation.md](pingo-v216-validation.md).
+the Author's visual/interactive smoke test.
+
+The adapter's opt-in host hook then captured Jet target bitmap 257 at render
+ordinals 1, 2, 3, and 5 in fresh processes. All 47,360-byte RGBA2222 targets
+matched SHA-256
+`768f07b8115df6391d9a0a1611adf9e293a96740a4962d049788c15777ecdd5e`
+and CRC-32 `10A67048`. Two fresh `moveobj/tri` runs also produced identical
+76,800-byte targets with SHA-256
+`f81dd66876ef012a6f1e52bae2821c275f1cf33e9a7e977c193be93bad4b4958`
+and CRC-32 `323B33E6`. These are deterministic renderer-boundary baselines,
+not the final 640x480 Fab scanout or Alpha 7 equivalence results. Exact
+revisions, artifact hashes, commands, resource measurements, and remaining
+gates are in [pingo-v216-validation.md](pingo-v216-validation.md).
 
 Physical hardware became available later on 2026-07-26. The VDP was identified
 as a Silicon Labs CP2104 USB-to-UART bridge:
@@ -587,6 +600,9 @@ These are findings, not yet an implementation plan.
 - Texture sampling wraps V by texture width rather than height, making
   non-square textures incorrect and potentially unsafe.
 - Missing texture pixels can reach a non-void `shade()` path with no return.
+  Jet's untextured KOAK object can exercise this inherited undefined behavior,
+  so its native target hash is scoped to the recorded GCC/G++ 13.3.0 `-O2`
+  build until the path is fixed.
 
 ### Incomplete cleanup
 
@@ -632,17 +648,17 @@ These are findings, not yet an implementation plan.
 
 ## Recommended next milestone
 
-The smallest useful next milestone is deterministic framebuffer evidence,
+Native Jet and textured-triangle target repeatability are complete. The
+smallest useful next milestone is reference comparison for the simple scene,
 not another optimization or an immediate hardware flash:
 
 1. Preserve `archive/pingo-alpha7` and the known-good physical image as the
    recovery baseline.
-2. Capture a simple scene and Jet from the now visually verified native
-   module, either through a
-   small external framebuffer harness or a minimal Fab frame-CRC/capture
-   feature.
-3. Compare orientation, camera response, UV landmarks, depth ordering, and
-   stable framebuffer regions against Alpha 7 hardware.
+2. Treat the recorded `moveobj/tri` bytes and preview as the first native
+   localization fixture.
+3. Compare its orientation and UV landmarks with Alpha 7 hardware or another
+   explicitly accepted reference, then extend the fixture set to depth,
+   camera, culling, and near-plane cases.
 4. If visual parity passes, flash the recorded `pingo-v2.16` image.
 5. On hardware, test stock VDU workloads before Pingo, then run a short
    correctness scene and current Jet with dithering disabled.
@@ -651,9 +667,10 @@ not another optimization or an immediate hardware flash:
    separate tested commits.
 
 The Alpha 7 recovery image, VDP 2.16 ESP32 build, native adapter, ABI smoke,
-full Jet command-stream liveness test, and live visual Jet smoke are now
-complete. A Fab fork remains deferred until deterministic capture or
-packaging actually requires it.
+full Jet command-stream liveness test, live visual Jet smoke, and deterministic
+native Jet and textured-triangle targets are now complete. They required no
+Fab changes. A Fab fork remains deferred unless deterministic final Fab
+scanout capture or packaging actually requires it.
 
 ## Questions that evidence has not answered
 
