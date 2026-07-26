@@ -25,8 +25,12 @@ extern uint16_t getVDPVariable(uint16_t flag);
 extern void setVDPVariable(uint16_t flag, uint16_t value);
 extern void clearVDPVariable(uint16_t flag);
 
+struct tag_Pingo3dControl;
+
 class VDUStreamProcessor {
 	private:
+		friend struct tag_Pingo3dControl;
+
 		std::shared_ptr<Stream> inputStream;
 		std::shared_ptr<Stream> outputStream;
 		std::shared_ptr<Stream> originalOutputStream;
@@ -118,6 +122,7 @@ class VDUStreamProcessor {
 		void receiveBitmap(uint16_t bufferId, uint16_t width, uint16_t height);
 		void createBitmapFromScreen(uint16_t bufferId);
 		void createEmptyBitmap(uint16_t bufferId, uint16_t width, uint16_t height, uint32_t color);
+		void createEmptyBitmap2222(uint16_t bufferId, uint16_t width, uint16_t height, uint8_t color);
 		void createBitmapFromBuffer(uint16_t bufferId, uint8_t format, uint16_t width, uint16_t height);
 
 		void vdu_sys_hexload(void);
@@ -159,6 +164,7 @@ class VDUStreamProcessor {
 		void bufferCompress(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferDecompress(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferExpandBitmap(uint16_t bufferId, uint8_t options, uint16_t sourceBufferId);
+		void bufferUsePingo3D(uint16_t bufferId);
 		void bufferAddCallback(uint16_t bufferId, uint16_t type);
 		void bufferRemoveCallback(uint16_t bufferId, uint16_t type);
 
