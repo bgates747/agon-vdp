@@ -5,8 +5,9 @@ Date: 2026-07-26
 Status: archaeology and the physical Alpha 7 baseline are established. A
 clean compatibility port now builds on official VDP 2.16 for ESP32 and as an
 external Fab module. The exact current `moveair/jet.bin` runs under that
-module without crashing; deterministic visual comparison and physical
-qualification of the modern image remain pending.
+module without crashing and has passed a live visual/interactive smoke test;
+deterministic framebuffer comparison and physical qualification of the
+modern image remain pending.
 
 This is the working evidence report for
 [pingo-reconstruction-todo.md](pingo-reconstruction-todo.md). Historical
@@ -199,9 +200,10 @@ The tracked native adapter now builds the Pingo port without changing Fab or
 its submodules. Its immediate-resolution ABI test and elementary Pingo render
 smoke pass. The exact current `moveair/jet.bin` initialized a 320x148 scene
 and rendered repeatedly for a deliberate 15-second headless interval without
-a VDP or emulator crash. That proves protocol/liveness compatibility, not
-visual equivalence. Exact revisions, artifact hashes, commands, resource
-measurements, and remaining gates are in
+a VDP or emulator crash. A later live Wayland run of the same artifact passed
+the Author's visual/interactive smoke test. That is strong usability evidence,
+but not yet a deterministic framebuffer oracle. Exact revisions, artifact
+hashes, commands, resource measurements, and remaining gates are in
 [pingo-v216-validation.md](pingo-v216-validation.md).
 
 Physical hardware became available later on 2026-07-26. The VDP was identified
@@ -630,12 +632,13 @@ These are findings, not yet an implementation plan.
 
 ## Recommended next milestone
 
-The smallest useful next milestone is deterministic visual equivalence, not
-another optimization or an immediate hardware flash:
+The smallest useful next milestone is deterministic framebuffer evidence,
+not another optimization or an immediate hardware flash:
 
 1. Preserve `archive/pingo-alpha7` and the known-good physical image as the
    recovery baseline.
-2. Capture a simple scene and Jet from the native module, either through a
+2. Capture a simple scene and Jet from the now visually verified native
+   module, either through a
    small external framebuffer harness or a minimal Fab frame-CRC/capture
    feature.
 3. Compare orientation, camera response, UV landmarks, depth ordering, and
@@ -648,8 +651,9 @@ another optimization or an immediate hardware flash:
    separate tested commits.
 
 The Alpha 7 recovery image, VDP 2.16 ESP32 build, native adapter, ABI smoke,
-and full Jet command-stream liveness test are now complete. A Fab fork remains
-deferred until deterministic capture or packaging actually requires it.
+full Jet command-stream liveness test, and live visual Jet smoke are now
+complete. A Fab fork remains deferred until deterministic capture or
+packaging actually requires it.
 
 ## Questions that evidence has not answered
 

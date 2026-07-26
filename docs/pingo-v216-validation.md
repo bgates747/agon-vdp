@@ -3,9 +3,10 @@
 Date: 2026-07-26
 
 Status: the compatibility port is implemented and builds for ESP32 and native
-x86-64. The exact current `moveair/jet.bin` command stream runs under Fab
-without crashing. Visual equivalence and physical-hardware qualification are
-still deliberately pending.
+x86-64. The exact current `moveair/jet.bin` runs under Fab without crashing
+and has passed a live human visual/interactive smoke test. A deterministic
+framebuffer baseline and physical-hardware qualification are still
+deliberately pending.
 
 This is the implementation evidence ledger for
 [Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md). It records
@@ -163,6 +164,19 @@ The reproducible build, disposable SD profile, headless command, expected
 markers, and safety constraints are in `userspace/README.md` on the
 `pingo-v2.16-userspace` branch.
 
+### Live visual run
+
+The same external library and disposable SD profile were then launched in a
+Wayland Fab window with the software renderer. The log confirmed the absolute
+Pingo VDP path, completed Jet initialization, and continued rendering the
+320x148 viewport while the Author exercised the application. The Author
+reported the test successful.
+
+This is the first direct visual/interactive confirmation of Jet on the modern
+port. It proves that the emulator presents a usable scene rather than merely
+surviving the command stream. It is still a smoke test, not a deterministic
+equivalence oracle: no reference screenshot or framebuffer hash was captured.
+
 ## Fail-closed emulator procedure
 
 Fab tries the requested `--vdp` path and then may fall back to
@@ -206,7 +220,8 @@ The companion `pingoasm` checkout also remained clean.
 | Native external Pingo VDP load and ABI | Passed |
 | 64x64 native bitmap/control/render smoke | Passed |
 | Exact current `moveair/jet.bin` under Fab | Passed for protocol and 15-second liveness |
-| Deterministic framebuffer or visual comparison | Pending |
+| Live human visual/interactive Jet smoke | Passed |
+| Deterministic framebuffer comparison | Pending |
 | Stock VDU workload on the modern Pingo port | Pending |
 | Modern Pingo ESP32 build and resource audit | Passed |
 | Modern Pingo image on physical hardware | Pending |
@@ -224,10 +239,11 @@ these is an actual deliverable:
 - a packaged Pingo firmware profile;
 - a repeatable outer build that pins and distributes all native libraries.
 
-Do not flash the modern image yet. The next smallest useful gate is a visual
-or deterministic framebuffer comparison using a simple scene and Jet. Once
-that passes, flash `pingo-v2.16`, run stock VDU workloads first, and only then
-run the Pingo demos. Alpha 7 remains the immediate recovery image throughout.
+Do not flash the modern image yet. The next smallest useful gate is a
+deterministic framebuffer capture using a simple scene and Jet, now anchored
+by the successful live visual run. Once that passes, flash `pingo-v2.16`, run
+stock VDU workloads first, and only then run the Pingo demos. Alpha 7 remains
+the immediate recovery image throughout.
 
 Do not mix inherited correctness fixes into this compatibility checkpoint.
 Missing-target handling, ownership and teardown, texture bounds, the
