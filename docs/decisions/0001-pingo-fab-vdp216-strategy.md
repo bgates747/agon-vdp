@@ -390,3 +390,33 @@ Reconsider this structure if:
 - [Pingo reconstruction TODO](../pingo-reconstruction-todo.md)
 - [TurboVega point-of-departure audit](../pingo-turbovega-baseline.md)
 - [2024 history handoff](../handoffs/pingo-history-2024.md)
+
+## Implementation update: owned Fab orchestration fork
+
+On 2026-07-26, after the external `--vdp` workflow had passed live visual and
+deterministic target tests, the Author accepted a narrower reason to fork Fab:
+owning the reproducible cross-project development loop. This updates the
+earlier “defer Fab” decision without changing the architectural boundary.
+
+The fork is `bgates747/fab-agon-emulator`, cloned separately at
+`/home/smith/Agon/mystuff/fab-agon-emulator`. The official checkout remains
+at `/home/smith/Agon/fab-agon-emulator` as an untouched reference. Branch
+`pingo`, commit `1b582ed38e57541ca902319e42fe28677800316b`,
+adds a fixture-driven launcher and operating documentation.
+
+The resulting ownership model is:
+
+```text
+agon-vdp
+    Pingo firmware source, native module build, ABI smoke, target capture
+
+pingoasm
+    client programs and runtime assets
+
+bgates747/fab-agon-emulator:pingo
+    cross-repository build/run/test/status orchestration
+```
+
+This does not package Pingo inside Fab, change Fab's plugin ABI, or duplicate
+the VDP source. It makes the already-proven dynamic-library injection workflow
+repeatable and gives future helper scripts a durable home.

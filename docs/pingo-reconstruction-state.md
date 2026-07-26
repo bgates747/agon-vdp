@@ -3,12 +3,15 @@
 Date: 2026-07-26
 
 Status: archaeology and the physical Alpha 7 baseline are established. A
-clean compatibility port now builds on official VDP 2.16 for ESP32 and as an
-external Fab module. The exact current `moveair/jet.bin` runs under that
-module without crashing, has passed a live visual/interactive smoke test, and
-now has a repeatable 320x148 native Pingo-target signature. The textured
-`moveobj/tri` target is repeatable as well. Reference or final-scanout
-comparison and physical qualification of the modern image remain pending.
+clean compatibility port builds on official VDP 2.16 for ESP32 and as an
+external Fab module. The modern image has now been flashed successfully and
+the Author reported that all tests performed on it passed. The exact current
+`moveair/jet.bin` runs under the native module without crashing and has a
+repeatable 320x148 Pingo-target signature. The textured `moveobj/tri` target
+is repeatable, and its near-camera behavior was accepted by the Author on
+both physical hardware and Fab. A durable owned Fab fork and integration
+launcher now reproduce that emulator workflow. Exact reference-image or
+final-scanout comparison remains pending.
 
 This is the working evidence report for
 [pingo-reconstruction-todo.md](pingo-reconstruction-todo.md). Historical
@@ -117,6 +120,24 @@ bridge. The userspace branch merges that feature with Fab's VDP adaptation
 and adds a native build/test adapter. Full revision and validation evidence is
 in [pingo-v216-validation.md](pingo-v216-validation.md).
 
+### Owned Fab integration fork
+
+- Official reference checkout:
+  `/home/smith/Agon/fab-agon-emulator`
+- Owned development checkout:
+  `/home/smith/Agon/mystuff/fab-agon-emulator`
+- GitHub fork:
+  `https://github.com/bgates747/fab-agon-emulator`
+- Branch: `pingo`
+- Baseline: upstream Fab `98bbb392b75b196171cc620b60839220e5ce53ed`
+- Integration commit:
+  `1b582ed38e57541ca902319e42fe28677800316b`
+
+The owned checkout uses `origin` for `bgates747/fab-agon-emulator` and
+`upstream` for `tomm/fab-agon-emulator`. Its pinned submodules match the
+validated native VDP baseline. The official reference checkout remains
+untouched, including its pre-existing local changes.
+
 ## Build and execution state
 
 ### VDP firmware
@@ -219,6 +240,24 @@ not the final 640x480 Fab scanout or Alpha 7 equivalence results. Exact
 revisions, artifact hashes, commands, resource measurements, and remaining
 gates are in [pingo-v216-validation.md](pingo-v216-validation.md).
 
+Fab was subsequently forked for workflow ownership rather than because the
+external module seam was inadequate. The owned `pingo` branch adds
+`scripts/run-pingo`, which stages a disposable SD card from a named
+`pingoasm` fixture, creates `autoexec.txt`, supplies absolute MOS and VDP
+paths, launches from outside Fab's bundled-firmware fallback directory, and
+cleans up after exit. `moveobj/tri` is the default fixture.
+
+The fork built independently after its pinned submodules were initialized.
+On this host, SDL3 is installed under `~/.local`; linking required
+`LIBRARY_PATH=~/.local/lib`, and the launcher adds that directory to the
+runtime loader path when present. The resulting emulator executable had
+SHA-256
+`832f6f8a18e4608f420381124ba33c4b550a034eb3973facdd9e8108fef8264b`.
+The launcher passed a headless six-second `moveobj/tri` integration run using
+the capture-enabled VDP module: the exact module loaded, the 320x240 target
+and control buffer initialized, object 1 was created, and rendering began.
+The timeout was deliberate and the disposable SD directory was removed.
+
 Physical hardware became available later on 2026-07-26. The VDP was identified
 as a Silicon Labs CP2104 USB-to-UART bridge:
 
@@ -260,6 +299,24 @@ creating control structure so we can use it during intialization.”
 
 This is still a firmware robustness defect: a missing prerequisite bitmap can
 cause a null-pointer fault instead of a rejected command or recoverable error.
+
+The later VDP 2.16 Pingo image was also built and flashed successfully.
+Esptool identified the same ESP32-PICO-D4 revision 1.1 and verified every
+written region before reset. The flashed `firmware.bin` was 1,097,776 bytes,
+SHA-256
+`f44a5aa034c5c38c26dc8e7da3b81d96c4b00f4b11f9fd60b6a1eefc2d7ad089`.
+The Author subsequently reported “all tests pass.” The individual workloads
+included in that final report were not enumerated in the durable record, so
+the statement must not be expanded into more specific claims without a
+repeat run or clarification.
+
+Immediately before the modern flash, the Author ran the exact
+`moveobj/tri` fixture on physical hardware and reported that the remembered
+near-camera distortion was not present. Afterward, the same fixture was run
+through the durable Fab/Pingo path and was described as working flawlessly,
+again with no remembered near-camera distortion. This is accepted human
+visual comparison evidence, not a pixel-exact hardware-versus-emulator
+capture.
 
 The debug serial monitor connects at 115200 baud but remains silent during
 normal operation, as expected from `DEBUG` being set to `0` in
@@ -648,29 +705,30 @@ These are findings, not yet an implementation plan.
 
 ## Recommended next milestone
 
-Native Jet and textured-triangle target repeatability are complete. The
-smallest useful next milestone is reference comparison for the simple scene,
-not another optimization or an immediate hardware flash:
+Native Jet and textured-triangle target repeatability, modern hardware
+flashing, and human visual acceptance of the triangle on hardware and Fab are
+complete. The smallest useful next milestone is to automate the established
+edit-build-run-test loop before beginning renderer changes:
 
 1. Preserve `archive/pingo-alpha7` and the known-good physical image as the
    recovery baseline.
-2. Treat the recorded `moveobj/tri` bytes and preview as the first native
-   localization fixture.
-3. Compare its orientation and UV landmarks with Alpha 7 hardware or another
-   explicitly accepted reference, then extend the fixture set to depth,
-   camera, culling, and near-plane cases.
-4. If visual parity passes, flash the recorded `pingo-v2.16` image.
-5. On hardware, test stock VDU workloads before Pingo, then run a short
-   correctness scene and current Jet with dithering disabled.
+2. Extend the owned Fab integration harness with explicit build, regression,
+   and state-report helpers around `scripts/run-pingo`.
+3. Treat the recorded `moveobj/tri` bytes and preview as the first native
+   localization fixture and preserve the Author's visual acceptance result.
+4. Extend the fixture set to depth, camera, culling, and near-plane cases,
+   with deterministic target captures where possible.
+5. Re-run and enumerate the modern physical qualification workloads so the
+   broad “all tests pass” report becomes a precise release checklist.
 6. Only after those gates, fix missing-target handling, ownership/teardown,
    texture bounds, the missing-return path, and packed-pixel dithering as
    separate tested commits.
 
 The Alpha 7 recovery image, VDP 2.16 ESP32 build, native adapter, ABI smoke,
 full Jet command-stream liveness test, live visual Jet smoke, and deterministic
-native Jet and textured-triangle targets are now complete. They required no
-Fab changes. A Fab fork remains deferred unless deterministic final Fab
-scanout capture or packaging actually requires it.
+native Jet and textured-triangle targets are complete. The owned Fab fork is
+now the orchestration layer; the VDP implementation remains in `agon-vdp`,
+and fixtures remain in `pingoasm`.
 
 ## Questions that evidence has not answered
 

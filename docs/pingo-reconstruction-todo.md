@@ -236,12 +236,17 @@ Deliverable: a compact correctness and performance regression suite.
 - [ ] Extend deterministic output to the selected simple correctness-scene
   set and compare it with accepted references.
 - [x] Build the VDP 2.16 Pingo firmware and record real flash/RAM use.
-- [ ] Re-run stock-VDU and Pingo smoke tests on physical hardware.
+- [x] Flash the modern VDP 2.16 Pingo image and obtain an Author report that
+  all performed tests passed. The exact workload list still needs to be
+  enumerated for a formal release checklist.
 - [ ] Harden invalid target ordering, ownership, teardown, and packed-pixel
   dithering only after compatibility is established.
-- [x] Demonstrate deterministic Pingo-target capture without a Fab fork;
-  continue deferring a fork until final-scanout capture or distribution
-  requires one.
+- [x] Demonstrate deterministic Pingo-target capture without a Fab fork.
+- [x] Create `bgates747/fab-agon-emulator`, clone it separately under
+  `~/Agon/mystuff`, preserve the official checkout, and publish a `pingo`
+  branch with a reproducible fixture launcher.
+- [ ] Add build, regression, state-report, and upstream-report helpers to the
+  Fab integration branch to automate the edit-build-run-test loop.
 
 Deliverable:
 [pingo-v216-validation.md](pingo-v216-validation.md), with a reviewable Pingo

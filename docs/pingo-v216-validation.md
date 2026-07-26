@@ -5,15 +5,17 @@ Date: 2026-07-26
 Status: the compatibility port builds for ESP32 and native x86-64. The exact
 current `moveair/jet.bin` passes headless liveness and live visual/interactive
 smoke tests. Repeatable native captures of its 320x148 Pingo render target and
-the 320x240 `moveobj/tri` target are now established. Comparison with Alpha 7
-or another accepted reference, deterministic final Fab scanout, and physical
-qualification of the modern image remain pending.
+the 320x240 `moveobj/tri` target are established. The modern image has been
+flashed, all tests performed afterward were reported passing, and the
+triangle's remembered near-camera defect was absent on hardware and Fab.
+Pixel-exact comparison with Alpha 7 or another accepted reference and
+deterministic final Fab scanout remain pending.
 
 This is the implementation evidence ledger for
 [Decision Record 0001](decisions/0001-pingo-fab-vdp216-strategy.md). It records
 what was changed, which exact revisions and artifacts were tested, why the
-Fab repository was not forked, and why the modern image has not yet replaced
-the known-good Alpha 7 image on hardware.
+external-module seam was selected, how the later Fab orchestration fork is
+bounded, and how the modern image was qualified on hardware.
 
 ## Durable revision structure
 
@@ -299,6 +301,54 @@ userspace-vdp-gl   ecb8aabffe97d66d6c6eb30a8a08e09932dbe2e4 (clean)
 
 The companion `pingoasm` checkout also remained clean.
 
+## Durable Fab integration
+
+The initial validation deliberately required no Fab changes. After the
+external VDP seam and visual fixture had proved useful, the Author chose to
+make the cross-project workflow durable in a separate owned fork:
+
+```text
+GitHub       https://github.com/bgates747/fab-agon-emulator
+checkout     /home/smith/Agon/mystuff/fab-agon-emulator
+branch       pingo
+base         98bbb392b75b196171cc620b60839220e5ce53ed
+commit       1b582ed38e57541ca902319e42fe28677800316b
+```
+
+The official checkout at `/home/smith/Agon/fab-agon-emulator` remains the
+untouched upstream reference. In the owned checkout, `origin` names the
+Author's fork and `upstream` names `tomm/fab-agon-emulator`.
+
+Commit `1b582ed` adds `scripts/run-pingo` and `docs/pingo.md`. The launcher:
+
+- defaults to `moveobj/tri` and accepts fixtures such as `moveair/jet`;
+- stages the selected binary and runtime data in a disposable SD directory;
+- writes a CRLF `autoexec.txt` that loads and runs the program;
+- uses absolute MOS and VDP paths and a fail-closed working directory;
+- supports explicit repository and artifact path overrides;
+- handles the host's user-local SDL3 runtime; and
+- removes the temporary SD card on exit unless preservation is requested.
+
+The fork's pinned submodules were initialized at their recorded baseline
+commits. Its release executable built successfully with the existing
+user-local SDL3 installation:
+
+```text
+LIBRARY_PATH=/home/smith/.local/lib cargo build --release
+target/release/fab-agon-emulator
+SHA-256 832f6f8a18e4608f420381124ba33c4b550a034eb3973facdd9e8108fef8264b
+```
+
+A six-second headless run using the fork's executable, the exact
+capture-enabled Pingo module, and `moveobj/tri` reached repeated 320x240
+rendering. Exit status 124 was the expected external timeout, and the
+disposable SD directory was removed.
+
+The same fixture was also reviewed interactively by the Author in Fab and
+described as flawless, with none of the remembered near-camera distortion.
+The Author made the same visual observation on physical hardware. This is
+accepted human visual evidence, not pixel-exact final-scanout equivalence.
+
 ## Validation gate ledger
 
 | Gate | Result |
@@ -311,29 +361,28 @@ The companion `pingoasm` checkout also remained clean.
 | Live human visual/interactive Jet smoke | Passed |
 | Deterministic native Jet Pingo-target repeatability | Passed: selected render ordinals 1, 2, 3, and 5 were byte-identical |
 | Deterministic native `moveobj/tri` target repeatability | Passed in two fresh processes |
-| Alpha 7/reference comparison or deterministic final Fab scanout | Pending |
-| Stock VDU workload on the modern Pingo port | Pending |
+| Human visual `moveobj/tri` comparison on hardware and Fab | Passed; no remembered near-camera distortion observed |
+| Pixel-exact Alpha 7/reference comparison or deterministic final Fab scanout | Pending |
+| Stock VDU workload on the modern Pingo port | Author reported all performed tests passed; exact workload list was not recorded |
 | Modern Pingo ESP32 build and resource audit | Passed |
-| Modern Pingo image on physical hardware | Pending |
+| Modern Pingo image on physical hardware | Flash passed with esptool verification; subsequent tests reported passing |
 | Robustness corrections | Intentionally not started |
 
 ## Decision at this checkpoint
 
-Do not fork Fab yet. The external `--vdp` seam is sufficient for compilation,
-ABI, protocol, liveness, native crash diagnostics, and deterministic Pingo
-render-target capture, and it keeps durable changes in the Author's VDP fork.
-A Fab fork becomes justified when one of these is an actual deliverable:
+The earlier instruction to defer a Fab fork is superseded. The external
+`--vdp` seam remains sufficient for VDP execution and capture, but a fork is
+now justified as the owned integration and orchestration layer. It does not
+move VDP implementation ownership out of `agon-vdp`.
 
-- deterministic final Fab-composited scanout unavailable at the VDP seam;
-- timed/headless graceful exit and keyboard injection;
-- a packaged Pingo firmware profile;
-- a repeatable outer build that pins and distributes all native libraries.
+The earlier instruction not to flash the modern image is also superseded.
+The recorded image was flashed successfully, and the Author reported that all
+performed tests passed. Because the individual tests were not enumerated,
+formal qualification should repeat them against an explicit checklist.
 
-Do not flash the modern image yet. Native Jet and textured-triangle target
-repeatability now pass; the next smallest useful gate is to compare the simple
-fixture with Alpha 7 or another accepted reference. Once that passes, flash
-`pingo-v2.16`, run stock VDU workloads first, and only then run the Pingo
-demos. Alpha 7 remains the immediate recovery image throughout.
+The next integration task is to extend the Fab branch from one launcher into
+a compact build/test/status harness. Pixel-exact reference comparison and
+final Fab scanout remain separate future gates.
 
 Do not mix inherited correctness fixes into this compatibility checkpoint.
 Missing-target handling, ownership and teardown, texture bounds, the
