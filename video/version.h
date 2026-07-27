@@ -7,7 +7,7 @@
 #define		VERSION_CANDIDATE	0			// Optional
 #define		VERSION_TYPE		"Release"	// RC, Alpha, Beta, etc.
 
-#define		VERSION_VARIANT		"Platform"
+#define		VERSION_VARIANT		"Pingo TV Port"
 #define     VERSION_SUBTITLE    "Bistromathics"
 
 #endif // VERSION_H

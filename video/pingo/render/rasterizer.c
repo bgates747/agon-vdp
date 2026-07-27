@@ -1,7 +1,6 @@
 #include "rasterizer.h"
+#include "math/mat4.h"
 #include "renderer.h"
-#include "../math/mat3.h"
-#include "../math/mat4.h"
 
 #define MIN(a,b) (((a)<(b))?(a):(b))
 #define MAX(a,b) (((a)>(b))?(a):(b))
@@ -13,7 +12,7 @@ Vec2i vec2iClamp(Vec2i in, Vec2i min, Vec2i max) {
 }
 
 int rasterizer_draw_pixel_perfect(Vec2i off, Renderer *r, Texture * src) {
-    Texture des = r->frameBuffer;
+    Texture des = r->framebuffer;
 
     //Transform coords on destination (it is only translation so it is easy)
     Vec2f a = (Vec2f){off.x,off.y};
@@ -47,7 +46,7 @@ int rasterizer_draw_pixel_perfect(Vec2i off, Renderer *r, Texture * src) {
 }
 
 int rasterizer_draw_pixel_perfect_doubled(Vec2i off, Renderer *r, Texture * src) {
-    Texture des = r->frameBuffer;
+    Texture des = r->framebuffer;
 
     //Transform coords on destination (double the size of the frame)
     Vec2f a = (Vec2f){off.x,off.y};
@@ -88,7 +87,7 @@ int rasterizer_draw_pixel_perfect_doubled(Vec2i off, Renderer *r, Texture * src)
 }
 
 int rasterizer_draw_transformed(Mat4 t, Renderer *r, Texture * src) {
-    Texture des = r->frameBuffer;
+    Texture des = r->framebuffer;
 
     Mat4 inv = mat4Inverse(&t);
 
@@ -172,10 +171,10 @@ int rasterizer_draw_transformed(Mat4 t, Renderer *r, Texture * src) {
             Vec2i srcPosI3 = vec2iClamp((Vec2i) {srcPosF2.x,srcPosF1.y},(Vec2i){0,0},src->size);
             Vec2i srcPosI4 = vec2iClamp((Vec2i) {srcPosF2.x,srcPosF2.y},(Vec2i){0,0},src->size);
 
-            float p1 = src->pixels[(int)(srcPosI1.x + srcPosI1.y * src->size.x)].g;
-            float p2 = src->pixels[(int)(srcPosI2.x + srcPosI2.y * src->size.x)].g;
-            float p3 = src->pixels[(int)(srcPosI3.x + srcPosI3.y * src->size.x)].g;
-            float p4 = src->pixels[(int)(srcPosI4.x + srcPosI4.y * src->size.x)].g;
+            float p1 = src->frameBuffer[(int)(srcPosI1.x + srcPosI1.y * src->size.x)].g;
+            float p2 = src->frameBuffer[(int)(srcPosI2.x + srcPosI2.y * src->size.x)].g;
+            float p3 = src->frameBuffer[(int)(srcPosI3.x + srcPosI3.y * src->size.x)].g;
+            float p4 = src->frameBuffer[(int)(srcPosI4.x + srcPosI4.y * src->size.x)].g;
 
             Pixel color = {(p1+p2+p3+p4) / 4};
 #endif
@@ -215,22 +214,22 @@ int rasterizer_draw_transformed(Mat4 t, Renderer *r, Texture * src) {
             Vec2i srcPosI15 = vec2iClamp((Vec2i) {srcPosF4.x,srcPosF3.y},(Vec2i){0,0},src->size);
             Vec2i srcPosI16 = vec2iClamp((Vec2i) {srcPosF4.x,srcPosF4.y},(Vec2i){0,0},src->size);
 
-            float p1 = src->pixels[(int)(srcPosI1.x + srcPosI1.y * src->size.x)].g;
-            float p2 = src->pixels[(int)(srcPosI2.x + srcPosI2.y * src->size.x)].g;
-            float p3 = src->pixels[(int)(srcPosI3.x + srcPosI3.y * src->size.x)].g;
-            float p4 = src->pixels[(int)(srcPosI4.x + srcPosI4.y * src->size.x)].g;
-            float p5 = src->pixels[(int)(srcPosI5.x + srcPosI5.y * src->size.x)].g;
-            float p6 = src->pixels[(int)(srcPosI6.x + srcPosI6.y * src->size.x)].g;
-            float p7 = src->pixels[(int)(srcPosI7.x + srcPosI7.y * src->size.x)].g;
-            float p8 = src->pixels[(int)(srcPosI8.x + srcPosI8.y * src->size.x)].g;
-            float p9 = src->pixels[(int)(srcPosI9.x + srcPosI9.y * src->size.x)].g;
-            float p0 = src->pixels[(int)(srcPosI0.x + srcPosI0.y * src->size.x)].g;
-            float p11 = src->pixels[(int)(srcPosI11.x + srcPosI11.y * src->size.x)].g;
-            float p12 = src->pixels[(int)(srcPosI12.x + srcPosI12.y * src->size.x)].g;
-            float p13 = src->pixels[(int)(srcPosI13.x + srcPosI13.y * src->size.x)].g;
-            float p14 = src->pixels[(int)(srcPosI14.x + srcPosI14.y * src->size.x)].g;
-            float p15 = src->pixels[(int)(srcPosI15.x + srcPosI15.y * src->size.x)].g;
-            float p16 = src->pixels[(int)(srcPosI16.x + srcPosI16.y * src->size.x)].g;
+            float p1 = src->frameBuffer[(int)(srcPosI1.x + srcPosI1.y * src->size.x)].g;
+            float p2 = src->frameBuffer[(int)(srcPosI2.x + srcPosI2.y * src->size.x)].g;
+            float p3 = src->frameBuffer[(int)(srcPosI3.x + srcPosI3.y * src->size.x)].g;
+            float p4 = src->frameBuffer[(int)(srcPosI4.x + srcPosI4.y * src->size.x)].g;
+            float p5 = src->frameBuffer[(int)(srcPosI5.x + srcPosI5.y * src->size.x)].g;
+            float p6 = src->frameBuffer[(int)(srcPosI6.x + srcPosI6.y * src->size.x)].g;
+            float p7 = src->frameBuffer[(int)(srcPosI7.x + srcPosI7.y * src->size.x)].g;
+            float p8 = src->frameBuffer[(int)(srcPosI8.x + srcPosI8.y * src->size.x)].g;
+            float p9 = src->frameBuffer[(int)(srcPosI9.x + srcPosI9.y * src->size.x)].g;
+            float p0 = src->frameBuffer[(int)(srcPosI0.x + srcPosI0.y * src->size.x)].g;
+            float p11 = src->frameBuffer[(int)(srcPosI11.x + srcPosI11.y * src->size.x)].g;
+            float p12 = src->frameBuffer[(int)(srcPosI12.x + srcPosI12.y * src->size.x)].g;
+            float p13 = src->frameBuffer[(int)(srcPosI13.x + srcPosI13.y * src->size.x)].g;
+            float p14 = src->frameBuffer[(int)(srcPosI14.x + srcPosI14.y * src->size.x)].g;
+            float p15 = src->frameBuffer[(int)(srcPosI15.x + srcPosI15.y * src->size.x)].g;
+            float p16 = src->frameBuffer[(int)(srcPosI16.x + srcPosI16.y * src->size.x)].g;
 
             Pixel color = pixelFromUInt8((p1+p2+p3+p4+p5+p6+p7+p8+p9+p0+p11+p12+p13+p14+p15+p16) / 16);
 #endif
