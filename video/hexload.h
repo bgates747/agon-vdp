@@ -61,7 +61,9 @@ void consumeHexMarker(void) {
 
 // Receive a single iHex Nibble from the external Debug serial interface
 uint8_t getIHexNibble(bool addcrc) {
-#ifndef USERSPACE
+#ifdef USERSPACE
+	return 0;
+#else
 	uint8_t nibble, input;
 	input = toupper(serialRx_t());
 	if(addcrc) linecrc16.add(input);
@@ -69,7 +71,7 @@ uint8_t getIHexNibble(bool addcrc) {
 	else nibble = input - 'A' + 10;
 	// illegal characters will be dealt with by checksum later
 	return nibble;
-#endif /* !USERSPACE */
+#endif /* USERSPACE */
 }
 
 // Receive a byte from the external Debug serial interface as two iHex nibbles

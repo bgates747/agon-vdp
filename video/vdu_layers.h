@@ -824,8 +824,10 @@ void VDUStreamProcessor::vdu_sys_layers_tilelayer_init(uint8_t tileLayerNum, uin
 
 
 			if (tileLayer0Buffer != nullptr) {
+#ifndef USERSPACE
 				size_t actualSize = heap_caps_get_allocated_size(tileLayer0Buffer);
 				debug_log("Allocated size: %zu bytes\r\n", actualSize);
+#endif /* USERSPACE */
 			} else {
 				debug_log("Memory allocation failed\r\n");
 			}
