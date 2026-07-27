@@ -7,7 +7,7 @@
 #define		VERSION_CANDIDATE	0			// Optional
 #define		VERSION_TYPE		"Release"	// RC, Alpha, Beta, etc.
 
-#define		VERSION_VARIANT		"Platform"
-#define     VERSION_SUBTITLE    "SEP Field"
+#define		VERSION_VARIANT		"Pingo TV Port"
+#define     VERSION_SUBTITLE    "TurboVega-compatible upstream Pingo"
 
 #endif // VERSION_H
