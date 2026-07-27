@@ -1,12 +1,7 @@
 #include "vec3.h"
 #include <math.h>
 
-#if defined(_MSC_VER)
-    #pragma warning(push)
-    #pragma warning(disable: 4244)
-#endif
-
-Vec3f vec3fmul(Vec3f a, F_TYPE b)
+Vec3f vec3fmul(Vec3f a, float b)
 {
     a.x = a.x * b;
     a.y = a.y * b;
@@ -33,7 +28,7 @@ Vec3f vec3fsubV(Vec3f a, Vec3f b)
     return a;
 }
 
-Vec3f vec3fsum(Vec3f a, F_TYPE b)
+Vec3f vec3fsum(Vec3f a, float b)
 {
     a.x = a.x + b;
     a.y = a.y + b;
@@ -42,12 +37,12 @@ Vec3f vec3fsum(Vec3f a, F_TYPE b)
     return a;
 }
 
-F_TYPE vec3Dot(Vec3f a, Vec3f b)
+float vec3Dot(Vec3f a, Vec3f b)
 {
     return a.x * b.x + a.y * b.y + a.z * b.z;
 }
 
-Vec3f vec3f(F_TYPE x, F_TYPE y, F_TYPE z)
+Vec3f vec3f(float x, float y, float z)
 {
     return (Vec3f){x,y,z};
 }
@@ -62,25 +57,6 @@ Vec3f vec3Cross(Vec3f a, Vec3f b)
 
 Vec3f vec3Normalize(Vec3f v)
 {
-    F_TYPE length_sq = v.x * v.x + v.y * v.y + v.z * v.z;
-    
-    // Fast path for zero vector
-    if (length_sq == 0.0f) {
-        return (Vec3f){0.0f, 0.0f, 0.0f};
-    }
-    
-    // Fast path for unit vectors (already normalized)
-    if (length_sq == 1.0f) {
-        return v;
-    }
-    
-    // Use fast inverse square root approximation for better performance
-    F_TYPE length = sqrtf(length_sq);
-    F_TYPE inv_length = 1.0f / length;
-    
-    return (Vec3f){v.x * inv_length, v.y * inv_length, v.z * inv_length};
+    float sqrt = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
+    return (Vec3f){v.x / sqrt, v.y / sqrt, v.z / sqrt};
 }
-
-#if defined(_MSC_VER)
-    #pragma warning(pop)
-#endif

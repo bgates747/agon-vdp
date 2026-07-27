@@ -2,7 +2,7 @@
 
 #include "texture.h"
 #include "sprite.h"
-#include "renderer.h"
+#include "renderable.h"
 
 /**
   * Defines the type of filtering used when textures are resized and rotated

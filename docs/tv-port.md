@@ -1,36 +1,43 @@
-# Latest-upstream Pingo / TurboVega Agon port
+# TurboVega Pingo port on VDP 2.15
 
 Status date: 2026-07-27
 
-The `tv-port` branch is the clean point of departure for renewed Pingo
-development. It combines the current canonical Agon VDP with the current
-upstream Pingo renderer while exposing only the Agon-facing feature surface
-present at TurboVega's final `pingo3D` commit. It intentionally contains none
-of the later `bgates747/agon-vdp` Pingo enhancements or extensions.
+The `tv-port` branch has one deliberately narrow purpose: establish a clean,
+reproducible baseline consisting of canonical Agon VDP 2.15 plus TurboVega's
+Pingo port exactly as he last left it.
+
+It must not contain later Pingo renderer innovations, whether from
+`fededevi/pingo` or from the later local Pingo development branches. Those
+changes can only be evaluated after this baseline passes its hardware
+fixtures.
 
 ## Exact source pins
 
-1. Canonical Agon VDP base:
-   `AgonPlatform/agon-vdp` release tag `v2.15.0`, commit
+1. Canonical VDP base: `AgonPlatform/agon-vdp` tag `v2.15.0`, commit
    `5e628a81d2a1329cf33873b783684f1b7d9d8b7f`.
-2. Agon integration reference:
-   `TurboVega/agon-vdp-otf` branch `pingo3D`, commit
+2. Pingo renderer, math library, and Agon bridge:
+   `TurboVega/agon-vdp-otf`, branch `pingo3D`, final commit
    `f4814813e8155780c5ad2602cd45f82ca5a72eec`.
-3. Pingo renderer:
-   `fededevi/pingo` branch `master`, commit
-   `f171c81aa597436e8db8fafd842ab7af6ef13b83`.
-4. The upstream Pingo repository publishes no tags or GitHub releases.
-   `f171c81` is therefore a pinned development-branch tip, not a versioned
-   release.
 
-The active `video/pingo/math` and `video/pingo/render` trees came from upstream
-`f171c81`. The only renderer configuration change is selecting
-`PINGO_PIXEL_RGBA8888`, because Agon RGBA8888 bitmap memory is byte ordered
-R, G, B, A. Upstream defaults to B, G, R, A.
+The following paths are restored from TurboVega's final commit:
+
+1. `video/pingo/math/`
+2. `video/pingo/render/`
+3. `video/pingo_3d.h`
+
+The renderer and math directories are byte-for-byte TurboVega-final sources.
+The bridge differs in one packaging-only respect: its unused include of
+`pingo/assets/teapot.h` is removed because sample assets are not embedded in
+this firmware tree. No transform, projection, rasterization, or protocol
+behavior is changed.
+
+TurboVega's host-side sample assets are maintained separately as test
+fixtures. They are not renderer source and are not required to build the
+firmware.
 
 ## Strict TurboVega protocol surface
 
-The only Pingo envelope is:
+The Pingo envelope remains:
 
 ```text
 VDU 23, 0, &A0, scene_id; &49, subcommand; arguments...
@@ -41,130 +48,83 @@ Arguments after the one-byte subcommand are little-endian 16-bit words.
 1. `0`: create control.
 2. `1`: define mesh vertices.
 3. `2`: set mesh vertex indexes.
-4. `3`: define mesh-owned UV coordinates.
-5. `4`: set mesh-owned UV indexes.
-6. `5`: create an object from an object ID, mesh ID, and texture bitmap ID.
+4. `3`: define mesh texture coordinates.
+5. `4`: set texture-coordinate indexes.
+6. `5`: create an object from an object ID, mesh ID, and bitmap ID.
 7. `6`–`17`: object scale, rotation, and translation.
 8. `18`–`25`: camera rotation and translation.
 9. `26`–`37`: scene scale, rotation, and translation.
 10. `38`: render to an existing bitmap.
-11. `39`: TurboVega's outer delete route; its deinitializer remains
-    incomplete.
-12. `40`: define an object-local UV-coordinate override. UV indexes remain
-    mesh-owned through command `4`.
+11. `39`: TurboVega's incomplete delete route.
+12. `40`: define object texture coordinates.
 
-Run `python3 scripts/check_pingo_scope.py` to verify the dispatch whitelist.
-
-The following later-local commands are deliberately absent:
-`41`, `42`, `129`, `130`, `141`, `145`, `149`, and `153`. Commands `3` and
-`4` retain TurboVega's mesh semantics rather than the later local object
-semantics.
-
-## API adaptation
-
-Latest Pingo changed its C API after TurboVega's port:
-
-1. `Scene` was replaced by callback `Renderable` objects and transformed
-   `Entity` objects.
-2. Object transforms moved from `Object` to `Entity`.
-3. `BackEnd` became `Backend` and lost TurboVega's client-data field.
-4. Renderer entry points became snake-case functions.
-
-The Agon bridge adapts those changes without restoring the old renderer:
-
-1. A small root `Renderable` iterates at most 32 objects in ascending object-ID
-   order, preserving TurboVega's scene limit and ordering.
-2. Each Agon object owns an upstream `Object` and `Entity`.
-3. Each object also owns a shallow mesh view. Command `40` substitutes only
-   that view's UV-coordinate pointer, retaining shared mesh geometry and UV
-   indexes without modifying upstream `Object`.
-4. An `AgonPingoBackend` embeds upstream `Backend` as its first member and
-   carries the owning control pointer beside it.
-5. The latest C headers use `this` as a parameter identifier. The C++ bridge
-   temporarily macro-renames that identifier while parsing the headers; the
-   upstream C sources remain unchanged.
-6. Rendering still uses a private four-byte PSRAM frame and four-byte depth
-   buffer, then copies the completed frame into the requested VDP bitmap.
-
-## Deliberate safety and correctness decisions
-
-These are fixes within TurboVega-supported functions, not added features:
-
-1. Texture and output bitmaps are rejected unless their FabGL format is
-   `RGBA8888`. This enforces TurboVega's documented four-byte contract and
-   prevents four-byte reads or writes through later one-byte `RGBA2222`
-   bitmaps.
-2. TurboVega's command `8` and `28` copy/paste errors wrote Z-only scale values
-   into Y. This port writes the supported Z scale as documented.
-3. The host-only `pingo/assets/obj2vdu.c` converter is excluded from firmware
-   compilation. Its large globals otherwise collide with the embedded teapot
-   symbols at link time.
-
-No attempt has yet been made to repair TurboVega's incomplete command `39`
-teardown, borrowed bitmap lifetime, allocation-failure continuation, or
-unvalidated geometry indexes.
-
-## Validation
-
-Latest upstream Pingo was built independently with GCC 13.3. Its six math test
-groups passed. The suite has no automated renderer correctness assertions.
-Warnings remain in upstream code for strict-aliasing in `object.c`, unused
-projection-extraction variables, and an implicit test-runner declaration.
-
-The combined ESP32 firmware builds cleanly apart from the inherited Arduino
-UART missing-return warning:
+Run the following scope guard after bridge changes:
 
 ```bash
+python3 scripts/check_pingo_scope.py
+```
+
+Later local commands `41`, `42`, `129`, `130`, `141`, `145`, `149`, and `153`
+must not appear on this baseline branch.
+
+## Build
+
+Use the project-local PlatformIO environment:
+
+```bash
+~/Agon/mystuff/agon-vdp/.venv/bin/pio run --target clean
 ~/Agon/mystuff/agon-vdp/.venv/bin/pio run
 ```
 
-Initial `tv-port` build result:
+Current clean build:
 
 ```text
-RAM:     42,504 / 327,680 bytes (13.0%)
-Flash: 1,066,153 / 1,310,720 bytes (81.3%)
+RAM:     42,520 / 327,680 bytes (13.0%)
+Flash: 1,063,353 / 1,310,720 bytes (81.1%)
 firmware.bin SHA-256:
-ed891af17f38f2e7948824b389f8963c96284fcdd0396b0184d90d9b83eb43c2
+97e4a2c1c86ba6d2d6a524086441131d0c89b619d8cab0445c7f5462947239a1
+firmware.elf SHA-256:
+33a0b1386b075d4772c0d7cf07a85fae8f987957de9319e710246c1b5daeb5f1
 ```
 
-The final ELF SHA-256 is
-`a66a12cab59bc36b2e984867904f7c6783be7773d47e731efd35b18747d59ec4`.
-The firmware identifies itself as `Pingo TV Port 2.15.0`.
+The inherited Arduino UART missing-return warning remains. The build otherwise
+completes successfully.
 
-## Runtime observations
+## Hardware qualification
 
-The earlier isolated prototype was flashed successfully and booted normally.
-The new canonical-VDP `tv-port` branch has compiled but has not yet been
-flashed.
+The durable strict fixtures live in:
 
-1. Jukebox runs successfully. It is not a complete VDU exercise, but it is a
-   useful smoke test against a fundamental non-Pingo firmware regression.
-2. TurboVega's `video/pingo/assets/teapot.bas` remains alive and repeatedly
-   renders, but its image is garbage resembling a motion-streaked line. This
-   points toward a deterministic 3D transform/projection/bitmap-path defect
-   rather than an immediate crash or random memory corruption.
-3. TurboVega's exact final firmware subsequently passed `teapot.bas` and
-   `orientation.bas` on hardware. This confirms that those fixtures do not
-   expose all general pipeline defects.
-4. The strict triangle, cube, and HeavyTank RGBA8888 move-object fixtures run
-   on TurboVega's exact final firmware. Triangle and cube expose the inherited
-   perspective-incorrect texture interpolation. HeavyTank additionally
-   renders upside down and appears inside out during rotation, although its
-   historically post-processed model data remains an independent variable.
+```text
+~/Agon/mystuff/pingoasm/apps/turbovega
+```
 
-The strict fixtures now live durably in
-`~/Agon/mystuff/pingoasm/apps/turbovega`. Their `src/` directory is tracked;
-their assembled binaries and RGBA8888 textures live in the ignored `tgt/`
-directory.
+Their `src/` directories are tracked; assembled programs and RGBA8888 textures
+are generated into ignored `tgt/` directories.
 
-## Upstream findings to test, not assume
+Qualification order:
 
-Latest upstream includes the camera-view inversion, projection, and depth
-changes TurboVega never saw. It also still has no geometric near-plane
-clipping. Its Entity root behavior, zero-length Array initialization,
-texture/index validation, and advertised early-Z switch contain suspicious or
-incomplete paths.
+1. Triangle: smallest geometry and texture-path check.
+2. Cube: unambiguous face orientation, UV orientation, and object-transform
+   check.
+3. HeavyTank: chiral geometry that exposes compounded transform, winding,
+   mirroring, and perspective defects hidden by simpler models.
+4. Jukebox: non-Pingo smoke test confirming that ordinary VDP operation remains
+   healthy.
 
-Consequently, successful compilation proves the port boundary and API
-translation—not visual correctness. The cube/orientation fixtures must decide
-whether latest upstream behavior is correct.
+TurboVega's exact original firmware runs all three strict fixtures, with the
+historical rendering faults expected at this point of departure. In
+particular, texture interpolation is not perspective-correct, and HeavyTank
+renders upside down and appears inside out during rotation.
+
+## Superseded experiment
+
+An earlier construction of this branch mistakenly combined VDP 2.15 with the
+latest `fededevi/pingo` renderer. Hardware testing first produced empty
+light-blue targets because newer Pingo inverted the camera transform. Adding a
+compatibility inversion made geometry visible, but models appeared too distant
+and object rotation behaved like orbiting the scene origin.
+
+Those results demonstrated broader transform-semantic drift and invalidated
+that renderer as the clean TurboVega baseline. The experiment has been removed
+rather than patched further. Any later upstream Pingo work must be introduced
+incrementally on a separate branch after this baseline is hardware-qualified.

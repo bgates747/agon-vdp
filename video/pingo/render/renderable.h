@@ -1,10 +1,21 @@
 #pragma once
 
-#include "math/mat4.h"
+#include "../math/mat4.h"
 
-typedef struct Renderer Renderer;
+typedef struct tag_Renderer Renderer;
 
-/// A basic type which provide a render function pointer
+typedef enum  {
+    RENDERABLE_SCENE  =0,
+    RENDERABLE_SPRITE,
+    RENDERABLE_OBJECT,
+    RENDERABLE_COUNT,
+} RenderableType;
+
 typedef struct {
-  int (*render)(void *this, Mat4 transform, Renderer *renderer);
+    RenderableType renderableType;
+    void * impl;
 } Renderable;
+
+extern int (*renderingFunctions[RENDERABLE_COUNT])(Mat4 transform, Renderer *, Renderable);
+
+

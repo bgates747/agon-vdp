@@ -1,14 +1,17 @@
 #pragma once
 
-#include "renderable.h"
+#include "../math/mat4.h"
 
-typedef struct Mesh Mesh;
-typedef struct Material Material;
+#include "mesh.h"
+#include "renderable.h"
+#include "material.h"
 
 typedef struct Object {
-  Renderable renderable;
-  Mesh *mesh;
-  Material *material;
+    Mesh * mesh;
+    Mat4 transform;
+    Material * material;
+    Vec2f * textCoord;
 } Object;
 
-extern int object_init(Object *this, Mesh *mesh, Material *material);
+Renderable object_as_renderable(Object * object);
+
