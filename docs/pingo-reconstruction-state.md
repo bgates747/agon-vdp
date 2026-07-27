@@ -666,9 +666,29 @@ The imported reference package states “Copyright 1997 Chris Hecker, All Rights
 Reserved” and supplies no permissive license. It should remain reference
 material unless reuse permission is established.
 
+For branch-independent inspection, exact source snapshots now live outside Git
+under `~/Agon/mystuff/pingo-hecker-reference/{hecker,hecker2}`. The directory
+also contains binary-safe diffs from the common `47a6609` baseline and a
+manifest recording both branch tips. The imported `hecker2/hecker/gradient.txt`
+contains substantial derivation prose and references the August/September
+article; source headers point to Hecker's historical homepage. No complete,
+clearly titled copy of the magazine series has been identified in the package.
+
 The code evidence makes `hecker2` the high-confidence match for the remembered
-elegant but unsuccessful magazine algorithm. The precise visual failure still
-requires recollection or execution.
+elegant but unsuccessful magazine algorithm. On 2026-07-27, the Author
+confirmed that the Hecker optimization work rendered garbage. Development was
+stopped because these optimization attempts could not be made to work.
+
+The near-camera repair is known only as a collective historical sequence, not
+as an isolated root cause. Alpha 6 introduced the Scratchapixel-derived
+triangle path while restoring camera transforms and changing `Z_THRESHOLD`,
+reciprocal depth, perspective UV interpolation, culling, and Y orientation.
+The contemporary report attributes the corrected close-camera output to that
+body of work, but the commits do not prove which individual change or
+interaction fixed it. Because the renderer still lacks geometric near-plane
+clipping, visual acceptance of current behavior is not proof that it follows
+standard 3D conventions. The clean upstream port must resolve this by comparing
+upstream behavior and applying the changes independently.
 
 ## Current high-confidence unfinished or unsafe areas
 
@@ -752,22 +772,27 @@ These are findings, not yet an implementation plan.
 
 Native Jet and textured-triangle target repeatability, modern hardware
 flashing, and human visual acceptance of the triangle on hardware and Fab are
-complete. The smallest useful next milestone is to automate the established
-edit-build-run-test loop before beginning renderer changes:
+complete. The Author has now made a fresh port from latest upstream Pingo the
+top priority. The purpose is to avoid preserving local repairs for defects that
+upstream may since have fixed differently, while retaining TurboVega's
+Agon-specific integration idioms.
 
-1. Preserve `archive/pingo-alpha7` and the known-good physical image as the
-   recovery baseline.
-2. Extend the owned Fab integration harness with explicit build, regression,
-   and state-report helpers around `scripts/run-pingo`.
-3. Treat the recorded `moveobj/tri` bytes and preview as the first native
-   localization fixture and preserve the Author's visual acceptance result.
-4. Extend the fixture set to depth, camera, culling, and near-plane cases,
-   with deterministic target captures where possible.
-5. Re-run and enumerate the modern physical qualification workloads so the
-   broad “all tests pass” report becomes a precise release checklist.
-6. Only after those gates, fix missing-target handling, ownership/teardown,
-   texture bounds, the missing-return path, and packed-pixel dithering as
-   separate tested commits.
+The port should proceed as a comparison-controlled replacement:
+
+1. Preserve the current VDP 2.16 Pingo port, `archive/pingo-alpha7`, and their
+   known outputs as comparison baselines.
+2. Identify the latest suitable `fededevi/pingo` revision and document its
+   renderer behavior, API, ownership model, and relevant fixes since
+   TurboVega's import.
+3. Recreate the Agon port using TurboVega's command, bitmap, framebuffer, and
+   platform-integration idioms without copying the old runtime wholesale.
+4. Audit each historical local geometry, projection, clipping, depth, UV, and
+   rasterizer change against upstream before deciding whether to reapply it.
+5. Run the canonical single-object `movecam` and `moveobj` fixtures against
+   both ports, testing not only agreement with the Author's intended behavior
+   but also documented 3D rendering conventions.
+6. Use the 320×240 `earthuv` globe as the performance comparison after
+   correctness is established; retain 15 FPS as the target.
 
 The Alpha 7 recovery image, VDP 2.16 ESP32 build, native adapter, ABI smoke,
 full Jet command-stream liveness test, live visual Jet smoke, and deterministic
@@ -775,14 +800,92 @@ native Jet and textured-triangle targets are complete. The owned Fab fork is
 now the orchestration layer; the VDP implementation remains in `agon-vdp`,
 and fixtures remain in `pingoasm`.
 
+## Isolated latest-upstream / TurboVega port
+
+An isolated port now exists at
+`~/Agon/mystuff/pingo-tv-clean-port`. It is a new standalone working tree and
+does not alter any existing VDP checkout.
+
+Its exact inputs are:
+
+1. latest upstream `fededevi/pingo` `master` at
+   `f171c81aa597436e8db8fafd842ab7af6ef13b83`; upstream publishes no tag or
+   release;
+2. TurboVega's final `pingo3D` commit
+   `f4814813e8155780c5ad2602cd45f82ca5a72eec`.
+
+The active math and renderer trees are byte-identical to upstream `f171c81`
+except that its supported pixel-format configuration selects RGBA8888 for
+Agon byte order. A new C++ adapter maps upstream's callback `Renderable`,
+`Entity`, and `Backend` API to TurboVega's original VDU contract.
+
+The exposed Pingo command surface is strictly TurboVega's `0`–`40` protocol.
+Commands `3` and `4` remain mesh-owned; command `40` retains the per-object UV
+override through an adapter-owned shallow mesh view. No later local commands
+or semantics are present. A scope-check script verifies the dispatch set.
+
+The clean ESP32 firmware build passes and identifies itself as
+`PingoUpstreamTV 2.9.2`. Its final binary SHA-256 is
+`8ed7a7f8021e9c2696d6cf7d92562aceecd81028887fbac340273d5597e63a18`.
+Upstream's six math test groups also pass independently.
+
+This is compile validation, not renderer validation. Current `pingoasm`
+artifacts use later protocol semantics and one-byte RGBA2222 data, whereas the
+TurboVega contract requires four-byte RGBA8888 textures and targets. The port
+therefore rejects non-RGBA8888 bitmaps. Runtime qualification must begin with
+TurboVega-compatible clients such as `teapot.bas` and `orientation.bas`, then a
+purpose-built TurboVega-wire-compatible cube fixture. Detailed provenance,
+adaptation decisions, exclusions, build commands, and unresolved risks are in
+the isolated workspace's `PORTING.md`.
+
+## Author clarification: fixtures and performance target
+
+The Author clarified the intended hierarchy on 2026-07-27:
+
+1. `movecam` and `moveobj` are the canonical correctness-test families. Each
+   scene contains one object and moves either the camera or the object—using
+   translation, rotation, or both—but never both.
+2. `moveair` and `movefsim` exercise behavior expected from fuller
+   applications, but they are premature as primary correctness fixtures.
+3. `wolf` was the beginning of a maze-like 3D shooter experiment. The Author's
+   present assessment is that Pingo is not suitable for that application,
+   although sufficiently large performance gains could change the conclusion.
+4. There was no particular next feature planned. The main objective was to
+   improve the 320×240 spinning-globe (`earthuv`) benchmark from roughly 3 FPS
+   to at least 15 FPS, the Author's minimum playable threshold.
+
+This makes the immediate strategy correctness-first on the simple `movecam`
+and `moveobj` scenes, followed by profiling and optimization against
+`earthuv`. The 15 FPS figure is a target, not a measured or promised outcome.
+
+### Correctness-fixture rationale
+
+The Author clarified the intended model roles:
+
+1. `cube` is the simplest complete rendering-pipeline regression model. With
+   zero rotation, each face has a distinct color, a signed normal-axis label
+   such as `+X` or `-X`, and asymmetric decoration. A correct render therefore
+   exposes face orientation, axis direction, UV placement, and mirroring in a
+   single compact fixture.
+2. Historically, simultaneous UV errors and the inverted render Y axis
+   produced confounding output: a wrong image did not reveal whether geometry
+   transforms or texture mapping caused it.
+3. `heavytank` was introduced as a complementary diagnostic because it is
+   chiral about all three axes. Its geometry can disambiguate transform errors
+   independently of texture orientation.
+4. `cube` should remain the primary full-pipeline fixture because it is small
+   enough for deterministic comparison and, if necessary, visual inspection.
+5. If machine inspection of its human-oriented labels and decorations proves
+   unreliable, create a separate machine-oriented texture with a deliberately
+   decodable spatial/color pattern. Do not replace the human-readable cube
+   oracle merely to optimize for automated inspection.
+
 ## Questions that evidence has not answered
 
-- Which model originally exposed the severe close-camera defect?
-- Was `6f18f26` the exact flashed alpha-6 firmware, or was the good build made
+1. Which model originally exposed the severe close-camera defect?
+2. Was `6f18f26` the exact flashed alpha-6 firmware, or was the good build made
   from uncommitted changes?
-- Were the 3.10/3.62 FPS results measured on physical hardware, with dithering
+3. Were the 3.10/3.62 FPS results measured on physical hardware, with dithering
   disabled?
-- What did the final `hecker2` attempt display before it was abandoned?
-- Are any historical screenshots, firmware binaries, or SD-card snapshots
+4. Are any historical screenshots, firmware binaries, or SD-card snapshots
   available?
-- What feature was intended to follow the optimization work?
