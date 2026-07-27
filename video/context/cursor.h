@@ -664,7 +664,11 @@ void Context::resetPagedModeCount() {
 	uint8_t x, y;
 	auto pageRows = getNormalisedViewportCharHeight();
 	getCursorTextPosition(&x, &y);
+#ifdef USERSPACE
+	pagedModeCount = std::max(pageRows - y, pageRows - pagedModeContext);
+#else
 	pagedModeCount = max(pageRows - y, pageRows - pagedModeContext);
+#endif
 }
 
 // Get number of characters remaining beyond the cursor position in the current line
