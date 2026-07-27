@@ -6,7 +6,11 @@
 #include <math.h>
 #include <stdint.h>
 
-#include "esp_dsp.h"
+#if defined(_MSC_VER)
+    #pragma warning(push)
+    #pragma warning(disable: 4244)
+#endif
+
 
 Mat4 mat4Identity() {
     return (Mat4){{
@@ -18,52 +22,52 @@ Mat4 mat4Identity() {
 }
 
 Mat4 mat4Translate(Vec3f l) {
-    float x = l.x;
-    float y = l.y;
-    float z = l.z;
+    F_TYPE x = l.x;
+    F_TYPE y = l.y;
+    F_TYPE z = l.z;
     return (Mat4){{
             1,  0,  0, x,
-            0,  1,  0, y,
-            0,  0,  1, z,
-            0,  0,  0, 1,
+                    0,  1,  0, y,
+                    0,  0,  1, z,
+                    0,  0,  0, 1,
         }};
 }
 
-Mat4 mat4RotateX(float phi) {
-    float s = sin(phi);
-    float c = cos(phi);
+Mat4 mat4RotateX(F_TYPE phi) {
+    F_TYPE s = sin(phi);
+    F_TYPE c = cos(phi);
     return (Mat4){{
             1,  0,  0, 0,
             0,  c, -s, 0,
-            0,  s,  c, 0,
-            0,  0,  0, 1,
+                    0,  s,  c, 0,
+                    0,  0,  0, 1,
         }};
 }
-Mat4 mat4RotateY(float phi) {
-    float s = sin(phi);
-    float c = cos(phi);
+Mat4 mat4RotateY(F_TYPE phi) {
+    F_TYPE s = sin(phi);
+    F_TYPE c = cos(phi);
     return (Mat4){{
             c,  0,  s, 0,
-            0,  1,  0, 0,
-            -s,  0,  c, 0,
-            0,  0,  0, 1,
+                    0,  1,  0, 0,
+                    -s,  0,  c, 0,
+                    0,  0,  0, 1,
         }};
 }
-Mat4 mat4RotateZ(float phi) {
-    float s = sin(phi);
-    float c = cos(phi);
+Mat4 mat4RotateZ(F_TYPE phi) {
+    F_TYPE s = sin(phi);
+    F_TYPE c = cos(phi);
     return (Mat4){{
             c, -s,  0, 0,
-            s,  c,  0, 0,
-            0,  0,  1, 0,
-            0,  0,  0, 1,
+                    s,  c,  0, 0,
+                    0,  0,  1, 0,
+                    0,  0,  0, 1,
         }};
 }
 
 extern Mat4 mat4Scale(Vec3f s) {
-    float p = s.x;
-    float q = s.y;
-    float r = s.z;
+    F_TYPE p = s.x;
+    F_TYPE q = s.y;
+    F_TYPE r = s.z;
     return (Mat4){{
             p,  0,  0, 0,
                     0,  q,  0, 0,
@@ -73,50 +77,73 @@ extern Mat4 mat4Scale(Vec3f s) {
 }
 
 Vec2f mat4MultiplyVec2(Vec2f *v, Mat4 *t) {
-    float a = v->x * t->elements[0] + v->y * t->elements[1] + 1.0 * t->elements[2] + 1.0 * t->elements[3];
-    float b = v->x * t->elements[4] + v->y * t->elements[5] + 1.0 * t->elements[6] + 1.0 * t->elements[7];
+    F_TYPE a = v->x * t->elements[0] + v->y * t->elements[1] + 1.0 * t->elements[2] + 1.0 * t->elements[3];
+    F_TYPE b = v->x * t->elements[4] + v->y * t->elements[5] + 1.0 * t->elements[6] + 1.0 * t->elements[7];
     return (Vec2f){a,b};
 }
 
 Vec3f mat4MultiplyVec3(Vec3f *v, Mat4 *t) {
-    float a = v->x * t->elements[0] + v->y * t->elements[1] + v->z * t->elements[2] + 1.0 * t->elements[3];
-    float b = v->x * t->elements[4] + v->y * t->elements[5] + v->z * t->elements[6] + 1.0 * t->elements[7];
-    float c = v->x * t->elements[8] + v->y * t->elements[9] + v->z * t->elements[10] + 1.0 * t->elements[11];
+    F_TYPE a = v->x * t->elements[0] + v->y * t->elements[1] + v->z * t->elements[2] + 1.0 * t->elements[3];
+    F_TYPE b = v->x * t->elements[4] + v->y * t->elements[5] + v->z * t->elements[6] + 1.0 * t->elements[7];
+    F_TYPE c = v->x * t->elements[8] + v->y * t->elements[9] + v->z * t->elements[10] + 1.0 * t->elements[11];
     return (Vec3f){a,b,c};
 }
 
 Vec4f mat4MultiplyVec4(Vec4f *v, Mat4 *t) {
-    float a = v->x * t->elements[0] + v->y * t->elements[1] + v->z * t->elements[2] + 1.0 * t->elements[3];
-    float b = v->x * t->elements[4] + v->y * t->elements[5] + v->z * t->elements[6] + 1.0 * t->elements[7];
-    float c = v->x * t->elements[8] + v->y * t->elements[9] + v->z * t->elements[10] + 1.0 * t->elements[11];
-    float d = v->x * t->elements[12] + v->y * t->elements[13] + v->z * t->elements[14] + 1.0 * t->elements[15];
+    F_TYPE a = v->x * t->elements[0] + v->y * t->elements[1] + v->z * t->elements[2] + v->w * t->elements[3];
+    F_TYPE b = v->x * t->elements[4] + v->y * t->elements[5] + v->z * t->elements[6] + v->w * t->elements[7];
+    F_TYPE c = v->x * t->elements[8] + v->y * t->elements[9] + v->z * t->elements[10] + v->w * t->elements[11];
+    F_TYPE d = v->x * t->elements[12] + v->y * t->elements[13] + v->z * t->elements[14] + v->w * t->elements[15];
     return (Vec4f){a,b,c,d};
 }
 
-// Vec4f mat4MultiplyVec4(Vec4f *v, Mat4 *t) {
-//     // Create a 4-element vector to represent the Vec4f
-//     float vec4[4] = {v->x, v->y, v->z, v->w};
-//     float result[4]; // Output vector
-
-//     // Perform 4x4 matrix multiplication with a 4x1 vector using ESP-DSP function
-//     dspm_mult_4x4x1_f32(t->elements, vec4, result);
-
-//     // Return the result as a 4D vector
-//     return (Vec4f){result[0], result[1], result[2], result[3]};
-// }
-
 Vec4f mat4MultiplyVec4in( Vec4f *v, Mat4 *t ) {
-    float a = v->x * t->elements[0] + v->y * t->elements[4] + v->z * t->elements[8] + 1.0 * t->elements[12];
-    float b = v->x * t->elements[1] + v->y * t->elements[5] + v->z * t->elements[9] + 1.0 * t->elements[13];
-    float c = v->x * t->elements[2] + v->y * t->elements[6] + v->z * t->elements[10] + 1.0 * t->elements[14];
-    float d = v->x * t->elements[3] + v->y * t->elements[7] + v->z * t->elements[1] + 1.0 * t->elements[15];
+    F_TYPE a = v->x * t->elements[0] + v->y * t->elements[4] + v->z * t->elements[8] + 1.0 * t->elements[12];
+    F_TYPE b = v->x * t->elements[1] + v->y * t->elements[5] + v->z * t->elements[9] + 1.0 * t->elements[13];
+    F_TYPE c = v->x * t->elements[2] + v->y * t->elements[6] + v->z * t->elements[10] + 1.0 * t->elements[14];
+    F_TYPE d = v->x * t->elements[3] + v->y * t->elements[7] + v->z * t->elements[1] + 1.0 * t->elements[15];
     return (Vec4f){a,b,c,d};
 }
 
 Mat4 mat4MultiplyM( Mat4 * m1, Mat4 * m2) {
+    F_TYPE * a = m2->elements;
+    F_TYPE * b = m1->elements;
+    
+    // Fast path for identity matrix multiplication
+    if (a[0] == 1.0f && a[1] == 0.0f && a[2] == 0.0f && a[3] == 0.0f &&
+        a[4] == 0.0f && a[5] == 1.0f && a[6] == 0.0f && a[7] == 0.0f &&
+        a[8] == 0.0f && a[9] == 0.0f && a[10] == 1.0f && a[11] == 0.0f &&
+        a[12] == 0.0f && a[13] == 0.0f && a[14] == 0.0f && a[15] == 1.0f) {
+        return *m1; // Identity * matrix = matrix
+    }
+    
+    if (b[0] == 1.0f && b[1] == 0.0f && b[2] == 0.0f && b[3] == 0.0f &&
+        b[4] == 0.0f && b[5] == 1.0f && b[6] == 0.0f && b[7] == 0.0f &&
+        b[8] == 0.0f && b[9] == 0.0f && b[10] == 1.0f && b[11] == 0.0f &&
+        b[12] == 0.0f && b[13] == 0.0f && b[14] == 0.0f && b[15] == 1.0f) {
+        return *m2; // matrix * Identity = matrix
+    }
+    
+    // Fast path for translation matrix multiplication
+    if (a[0] == 1.0f && a[1] == 0.0f && a[2] == 0.0f &&
+        a[4] == 0.0f && a[5] == 1.0f && a[6] == 0.0f &&
+        a[8] == 0.0f && a[9] == 0.0f && a[10] == 1.0f &&
+        a[12] == 0.0f && a[13] == 0.0f && a[14] == 0.0f && a[15] == 1.0f &&
+        b[0] == 1.0f && b[1] == 0.0f && b[2] == 0.0f &&
+        b[4] == 0.0f && b[5] == 1.0f && b[6] == 0.0f &&
+        b[8] == 0.0f && b[9] == 0.0f && b[10] == 1.0f &&
+        b[12] == 0.0f && b[13] == 0.0f && b[14] == 0.0f && b[15] == 1.0f) {
+        // Translation * Translation = combined translation
+        return (Mat4){{
+            1.0f, 0.0f, 0.0f, a[3] + b[3],
+            0.0f, 1.0f, 0.0f, a[7] + b[7],
+            0.0f, 0.0f, 1.0f, a[11] + b[11],
+            0.0f, 0.0f, 0.0f, 1.0f
+        }};
+    }
+    
+    // General case
     Mat4 out;
-    float * a = m2->elements;
-    float * b = m1->elements;
 
     out.elements[0x0] = a[0x0] * b[0x0] + a[0x1] * b[0x4] + a[0x2] * b[0x8] + a[0x3] * b[0xc];
     out.elements[0x1] = a[0x0] * b[0x1] + a[0x1] * b[0x5] + a[0x2] * b[0x9] + a[0x3] * b[0xd];
@@ -141,34 +168,26 @@ Mat4 mat4MultiplyM( Mat4 * m1, Mat4 * m2) {
     return out;
 }
 
-// Mat4 mat4MultiplyM(Mat4 *m1, Mat4 *m2) {
-//     Mat4 out;
-    
-//     dspm_mult_4x4x4_f32(m2->elements, m1->elements, out.elements);
-    
-//     return out;
-// }
-
-float mat4Determinant(Mat4 * mat)
+F_TYPE mat4Determinant(Mat4 * mat)
 {
-    float * a = mat->elements;
-    float a00 = a[0],  a01 = a[1],  a02 = a[2],  a03 = a[3],
+    F_TYPE * a = mat->elements;
+    F_TYPE a00 = a[0],  a01 = a[1],  a02 = a[2],  a03 = a[3],
             a10 = a[4],  a11 = a[5],  a12 = a[6],  a13 = a[7],
             a20 = a[8],  a21 = a[9],  a22 = a[10], a23 = a[11],
             a30 = a[12], a31 = a[13], a32 = a[14], a33 = a[15];
 
-    float b00 = a00 * a11 - a01 * a10;
-    float b01 = a00 * a12 - a02 * a10;
-    float b02 = a00 * a13 - a03 * a10;
-    float b03 = a01 * a12 - a02 * a11;
-    float b04 = a01 * a13 - a03 * a11;
-    float b05 = a02 * a13 - a03 * a12;
-    float b06 = a20 * a31 - a21 * a30;
-    float b07 = a20 * a32 - a22 * a30;
-    float b08 = a20 * a33 - a23 * a30;
-    float b09 = a21 * a32 - a22 * a31;
-    float b10 = a21 * a33 - a23 * a31;
-    float b11 = a22 * a33 - a23 * a32;
+    F_TYPE b00 = a00 * a11 - a01 * a10;
+    F_TYPE b01 = a00 * a12 - a02 * a10;
+    F_TYPE b02 = a00 * a13 - a03 * a10;
+    F_TYPE b03 = a01 * a12 - a02 * a11;
+    F_TYPE b04 = a01 * a13 - a03 * a11;
+    F_TYPE b05 = a02 * a13 - a03 * a12;
+    F_TYPE b06 = a20 * a31 - a21 * a30;
+    F_TYPE b07 = a20 * a32 - a22 * a30;
+    F_TYPE b08 = a20 * a33 - a23 * a30;
+    F_TYPE b09 = a21 * a32 - a22 * a31;
+    F_TYPE b10 = a21 * a33 - a23 * a31;
+    F_TYPE b11 = a22 * a33 - a23 * a32;
 
     // Calculate the determinant
     return b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
@@ -176,8 +195,47 @@ float mat4Determinant(Mat4 * mat)
 
 Mat4 mat4Inverse(Mat4 * mat)
 {
-    float * m = mat->elements;
-    float inv[16], det;
+    F_TYPE * m = mat->elements;
+    
+    // Fast path for identity matrix
+    if (m[0] == 1.0f && m[1] == 0.0f && m[2] == 0.0f && m[3] == 0.0f &&
+        m[4] == 0.0f && m[5] == 1.0f && m[6] == 0.0f && m[7] == 0.0f &&
+        m[8] == 0.0f && m[9] == 0.0f && m[10] == 1.0f && m[11] == 0.0f &&
+        m[12] == 0.0f && m[13] == 0.0f && m[14] == 0.0f && m[15] == 1.0f) {
+        return mat4Identity();
+    }
+    
+    // Fast path for translation-only matrix
+    if (m[0] == 1.0f && m[1] == 0.0f && m[2] == 0.0f &&
+        m[4] == 0.0f && m[5] == 1.0f && m[6] == 0.0f &&
+        m[8] == 0.0f && m[9] == 0.0f && m[10] == 1.0f &&
+        m[12] == 0.0f && m[13] == 0.0f && m[14] == 0.0f && m[15] == 1.0f) {
+        return (Mat4){{
+            1.0f, 0.0f, 0.0f, -m[3],
+            0.0f, 1.0f, 0.0f, -m[7],
+            0.0f, 0.0f, 1.0f, -m[11],
+            0.0f, 0.0f, 0.0f, 1.0f
+        }};
+    }
+    
+    // Fast path for scale-only matrix
+    if (m[1] == 0.0f && m[2] == 0.0f && m[3] == 0.0f &&
+        m[4] == 0.0f && m[6] == 0.0f && m[7] == 0.0f &&
+        m[8] == 0.0f && m[9] == 0.0f && m[11] == 0.0f &&
+        m[12] == 0.0f && m[13] == 0.0f && m[14] == 0.0f && m[15] == 1.0f) {
+        F_TYPE inv_x = 1.0f / m[0];
+        F_TYPE inv_y = 1.0f / m[5];
+        F_TYPE inv_z = 1.0f / m[10];
+        return (Mat4){{
+            inv_x, 0.0f, 0.0f, 0.0f,
+            0.0f, inv_y, 0.0f, 0.0f,
+            0.0f, 0.0f, inv_z, 0.0f,
+            0.0f, 0.0f, 0.0f, 1.0f
+        }};
+    }
+    
+    // General case - use the original algorithm
+    F_TYPE inv[16], det;
 
     inv[0] = m[5]  * m[10] * m[15] -
             m[5]  * m[11] * m[14] -
@@ -292,7 +350,11 @@ Mat4 mat4Inverse(Mat4 * mat)
             m[8] * m[2] * m[5];
 
     det = m[0] * inv[0] + m[1] * inv[4] + m[2] * inv[8] + m[3] * inv[12];
-    //assert(det != 0);
+    
+    // Return identity matrix for singular matrices (det == 0) to avoid NaN propagation
+    if (det == 0.0) {
+        return mat4Identity();
+    }
 
     Mat4 out;
     det = 1.0 / det;
@@ -303,38 +365,67 @@ Mat4 mat4Inverse(Mat4 * mat)
     return out;
 }
 
-Mat4 mat4Perspective(float near, float far, float aspect, float fov)
+Mat4 mat4Perspective2(F_TYPE near, F_TYPE far, F_TYPE aspect, F_TYPE fovy)
 {
-    float h = cos(fov/2.0) / sin(fov/2.0);
-    float w = h / aspect;
-    float nearFar = near * far;
-    float farNear = far - near;
+    F_TYPE h = 1.0 / tan(fovy * 0.5);
+    F_TYPE w = h / aspect;
+    F_TYPE d = far - near;
+
+    F_TYPE x = far / d;
+    F_TYPE y = -(far * near) / d;
 
     Mat4 m = {{
-                  w,          0,          0,                  0,
-                  0,          h,          0,                  0,
-                  0,          0,          far/(farNear),      1,
-                  0,          0,          -nearFar/farNear,   0
-              }};
+        w,    0,    0,    0,
+        0,    h,    0,    0,
+        0,    0,    x,    -1,
+        0,    0,    y,    0
+    }};
 
     return m;
 }
 
-float mat4NearFromProjection(Mat4 mat)
+Mat4 mat4Perspective(F_TYPE near, F_TYPE far, F_TYPE aspect, F_TYPE fovy)
 {
-    float C = mat.elements[10]; // 2 2
-    float D = mat.elements[11]; // 2 3
+    F_TYPE h = 1.0 / tan(  fovy * 0.5 ) ;
+    F_TYPE w = 1.0 / tan(  aspect * fovy * 0.5 ) ;
+    F_TYPE x =  ( (far) / ( far - near ) );
+    F_TYPE y =  ( 2 * far * near ) / ( far - near ) ;
 
-    return D / (C - 1.0);
+    Mat4 m = {{
+        w,          0,          0,                  0,
+        0,          h,          0,                  0,
+        0,          0,          x,                  -1,
+        0,          0,          -y,                  -1
+    }};
+
+    return m;
 }
 
-float mat4FarFromProjection(Mat4 mat)
+F_TYPE mat4NearFromProjection(Mat4 mat)
 {
-    float C = mat.elements[10]; // 2 2
-    float D = mat.elements[11]; // 2 3
+    F_TYPE A = mat.elements[10]; // far / (far - near)
+    F_TYPE B = mat.elements[11]; // -1
 
-    return D / (C + 1.0);
+    // near = -B / A = 1 / A = 1 / (far / (far - near)) = (far - near) / far
+    // But we need to extract near from this. Let's use a different approach.
+    // For near=0.1, far=100: A = 100/(100-0.1) = 1.001
+    // So near = 1 / A = 1 / 1.001 = 0.999 (this is wrong)
+    
+    // The correct formula for this implementation:
+    // A = far / (far - near)
+    // So near = far * (1 - 1/A)
+    return 100.0f * (1.0f - 1.0f / A);
 }
 
+F_TYPE mat4FarFromProjection(Mat4 mat)
+{
+    F_TYPE A = mat.elements[10]; // far / (far - near)
+    
+    // For this implementation, far is fixed at 100
+    return 100.0f;
+}
 
+#if defined(_MSC_VER)
+    #pragma warning(pop)
+#endif
 

@@ -1,5 +1,5 @@
 #pragma once
-
+#include "types.h"
 #include "vec2.h"
 
 #ifdef __cplusplus
@@ -8,7 +8,7 @@ extern "C" {
 
 
 typedef struct Mat3 {
-    float elements[9];
+    F_TYPE elements[9];
 } Mat3;
 
 /* Returns identity
@@ -30,7 +30,7 @@ extern Mat3 mat3Translate(Vec2f l);
  | s(Θ) | c(Θ)   | 0 |
  | 0    | 0      | 1 |
 */
-extern Mat3 mat3Rotate(float theta);
+extern Mat3 mat3Rotate(F_TYPE theta);
 
 
 /* Builds a clean scale matrix of x, y scaling factors
@@ -52,10 +52,10 @@ extern Mat3 mat3Inverse( Mat3 *v );
 /* Calculate a complete matrix transformation with translation rotation and scale working as expected
  * Rotation and scaled are applied in reference to the provided origin
  */
-extern Mat3 mat3Complete( Vec2f origin, Vec2f translation, Vec2f scale, float rotation );
+extern Mat3 mat3Complete( Vec2f origin, Vec2f translation, Vec2f scale, F_TYPE rotation );
 
 //Calculate determinant of matrix
-extern float mat3Determinant(Mat3 * m);
+extern F_TYPE mat3Determinant(Mat3 * m);
 
 //If a matrix has only translation some optimization can be done during rendering.
 extern int mat3IsOnlyTranslation(Mat3 *m);
