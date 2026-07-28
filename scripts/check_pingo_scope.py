@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify that the clean port exposes only TurboVega's Pingo subcommands."""
+"""Verify TurboVega's Pingo surface plus qualified local extensions."""
 
 from pathlib import Path
 import re
@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "video/pingo_3d.h"
 BUFFERED = ROOT / "video/vdu_buffered.h"
 
-EXPECTED_DISPATCH = set(range(1, 39)) | {40}
+EXPECTED_DISPATCH = set(range(1, 39)) | {40, 41}
 
 
 def main() -> None:
@@ -21,7 +21,7 @@ def main() -> None:
         missing = sorted(EXPECTED_DISPATCH - actual)
         unexpected = sorted(actual - EXPECTED_DISPATCH)
         raise SystemExit(
-            f"TurboVega dispatch mismatch; missing={missing}, unexpected={unexpected}"
+            f"Pingo dispatch mismatch; missing={missing}, unexpected={unexpected}"
         )
 
     required_outer_routes = (0, 39)
@@ -33,7 +33,9 @@ def main() -> None:
     if absent:
         raise SystemExit(f"Missing outer lifecycle routes: {absent}")
 
-    print("TurboVega Pingo scope verified: 0-40, with no later dispatch commands")
+    print(
+        "Pingo scope verified: TurboVega 0-40 plus render notification 41"
+    )
 
 
 if __name__ == "__main__":

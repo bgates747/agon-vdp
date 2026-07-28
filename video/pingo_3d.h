@@ -40,6 +40,10 @@ namespace p3d {
 } // namespace p3d
 
 #define PINGO_3D_CONTROL_TAG    0x43443350 // "P3DC"
+#define PINGO_RENDER_NOTIFY_DISABLED 0
+#define PINGO_RENDER_NOTIFY_KEYCODE  1
+#define PINGO_RENDER_NOTIFY_VERSION  1
+#define PINGO_RENDER_NOTIFY_COMPLETE 1
 
 class VDUStreamProcessor;
 
@@ -155,6 +159,8 @@ typedef struct tag_Pingo3dControl {
     std::map<uint16_t, p3d::Mesh>* m_meshes;    // Map of meshes for use by objects
     std::map<uint16_t, TexObject>* m_objects;   // Map of textured objects that use meshes and have transforms
     uint32_t            m_render_sequence;  // Diagnostic sequence for render timing records
+    uint8_t             m_render_notify_mode;   // Opt-in render-completion transport
+    uint16_t            m_render_notify_token;  // Caller-supplied completion token
 
     void show_free_ram() {
         debug_log("Free PSRAM: %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -251,7 +257,42 @@ typedef struct tag_Pingo3dControl {
             case 36: set_scene_z_translation_distance(); break;
             case 37: set_scene_xyz_translation_distances(); break;
             case 38: render_to_bitmap(); break;
+            case 41: set_render_notification(); break;
         }
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 41, mode, token;
+    // mode 0 disables notification; mode 1 emits a stock MOS keyboard packet.
+    void set_render_notification() {
+        auto mode = m_proc->readByte_t();
+        auto token = m_proc->readWord_t();
+        if (mode < 0 || token < 0) {
+            return;
+        }
+        m_render_notify_mode =
+            mode == PINGO_RENDER_NOTIFY_KEYCODE
+                ? PINGO_RENDER_NOTIFY_KEYCODE
+                : PINGO_RENDER_NOTIFY_DISABLED;
+        m_render_notify_token = (uint16_t)token;
+    }
+
+    void send_render_complete(uint32_t sequence) {
+        if (m_render_notify_mode != PINGO_RENDER_NOTIFY_KEYCODE) {
+            return;
+        }
+
+        // Keep the complete wire frame below the eZ80's 16-byte UART FIFO.
+        // Twelve bytes matches the largest stock VDP event (mouse packet).
+        uint8_t packet[10] = {
+            'P', '3', 'D', 'R',
+            PINGO_RENDER_NOTIFY_VERSION,
+            PINGO_RENDER_NOTIFY_COMPLETE,
+            (uint8_t)(m_render_notify_token & 0xFF),
+            (uint8_t)(m_render_notify_token >> 8),
+            (uint8_t)(sequence & 0xFF),
+            (uint8_t)((sequence >> 8) & 0xFF),
+        };
+        m_proc->send_packet(PACKET_KEYCODE, sizeof(packet), packet);
     }
 
     p3d::Mesh* establish_mesh(uint16_t mid) {
@@ -901,8 +942,12 @@ typedef struct tag_Pingo3dControl {
         }
         m_frame = private_frame;
 
+        auto sequence = m_render_sequence++;
         force_debug_log("PINGO_RENDER seq=%u bmid=%u render_us=%u\n",
-            m_render_sequence++, bmid, render_elapsed_us);
+            sequence, bmid, render_elapsed_us);
+        // Completion is deliberately last: RGBA8888 compatibility expansion
+        // and restoration of Pingo's private frame have both finished.
+        send_render_complete(sequence);
         //debug_log("Frame data:  %02hX %02hX %02hX %02hX\n", m_frame->r, m_frame->g, m_frame->b, m_frame->a);
         //debug_log("Final data:  %02hX %02hX %02hX %02hX\n", dst_pix->r, dst_pix->g, dst_pix->b, dst_pix->a);
     }
