@@ -16,7 +16,8 @@ TurboVega supplied `video/pingo/math`, `video/pingo/render`, and
 packaging. No later `fededevi/pingo` renderer was merged.
 
 Active correction work is on `pingo-codex`. Alpha 1 preserves TurboVega's VDU
-commands `0` through `40` while correcting the rendering pipeline:
+commands `0` through `40`; the hardware-qualified callback milestone adds
+opt-in render notification command `41`. The rendering corrections are:
 
 1. Camera VDU transforms are poses; the bridge inverts the pose once to create
    the view matrix.
@@ -61,8 +62,10 @@ bridge changes:
 python3 scripts/check_pingo_scope.py
 ```
 
-Commands added by later local ports (`41`, `42`, `129`, `130`, `141`, `145`,
-`149`, and `153`) must not appear on this branch.
+The immutable `tv-port` branch contains only TurboVega commands `0`–`40`.
+`pingo-codex` additionally permits the qualified render-notification command
+`41`. Other commands from later local ports (`42`, `129`, `130`, `141`, `145`,
+`149`, and `153`) must not appear.
 
 ## Embedded build and flash
 
