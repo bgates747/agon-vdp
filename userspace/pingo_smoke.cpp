@@ -80,8 +80,13 @@ int main(int argc, char **argv) {
 	sendBytes({23, 0, 0x80, 1});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-	// Create RGBA8888 bitmap 257 before creating the Pingo control.
+	// Create native RGBA2222 target 257.
 	sendBytes({23, 27, 0x20, 1, 1});
+	sendBytes({23, 27, 0x22, 64, 0, 64, 0, 0xF3});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+
+	// Also create legacy RGBA8888 target 258.
+	sendBytes({23, 27, 0x20, 2, 1});
 	sendBytes({
 		23, 27, 2,
 		64, 0,
@@ -90,10 +95,12 @@ int main(int argc, char **argv) {
 	});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
-	// Create control buffer 1000 and render an empty 64x64 scene.
+	// Create control buffer 1000 and render an empty scene to both formats.
 	sendBytes({23, 0, 0xA0, 0xE8, 0x03, 0x49, 0, 64, 0, 64, 0});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	sendBytes({23, 0, 0xA0, 0xE8, 0x03, 0x49, 38, 1, 1});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	sendBytes({23, 0, 0xA0, 0xE8, 0x03, 0x49, 38, 2, 1});
 	std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
 	std::vector<std::uint8_t> framebuffer(1024 * 768 * 3);
@@ -115,7 +122,7 @@ int main(int argc, char **argv) {
 	}
 
 	std::printf(
-		"TurboVega baseline native smoke passed: %dx%d at %.2f Hz\n",
+		"Pingo dual-target native smoke passed: %dx%d at %.2f Hz\n",
 		width,
 		height,
 		frameRate);

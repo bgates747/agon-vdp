@@ -254,11 +254,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
                     backendDrawPixel(r, &r->frameBuffer, (Vec2i){x,y}, text, diffuseLight);
                 } else {
-                    Pixel pixel;
-                    pixel.a = 255;
-                    pixel.b = 255;
-                    pixel.g = 0;
-                    pixel.r = 255;
+                    Pixel pixel = pixelFromRGBA(255, 0, 255, 255);
                     backendDrawPixel(r, &r->frameBuffer, (Vec2i){x,y}, pixel, diffuseLight);
                 }
 

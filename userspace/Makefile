@@ -173,12 +173,15 @@ $(SMOKE_TARGET): pingo_smoke.cpp $(ADAPTER_MAKEFILE)
 	$(CXX) -Wall -Werror -O2 -g -std=c++17 $< -ldl -pthread -o $@
 
 $(TEXTURE_TEST_TARGET): pingo_texture_test.c \
+		$(VDP_ROOT)/video/pingo/render/pixel.c \
 		$(VDP_ROOT)/video/pingo/render/texture.c $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) -Wall -Werror -O2 -g -std=c11 \
 		-I$(VDP_ROOT)/video/pingo/render \
 		-I$(VDP_ROOT)/video/pingo/math \
-		$< $(VDP_ROOT)/video/pingo/render/texture.c -lm -o $@
+		$< \
+		$(VDP_ROOT)/video/pingo/render/pixel.c \
+		$(VDP_ROOT)/video/pingo/render/texture.c -lm -o $@
 
 texture-test: $(TEXTURE_TEST_TARGET)
 	$(TEXTURE_TEST_TARGET)

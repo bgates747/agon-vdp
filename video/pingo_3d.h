@@ -479,9 +479,8 @@ typedef struct tag_Pingo3dControl {
                     object->m_object.mesh = mesh;
                     auto pixel = p3d::texture_read(
                         &object->m_texture, p3d::Vec2i{0, 0});
-                    debug_log("Texture format %u data: %02hX %02hX %02hX %02hX\n",
-                        (uint8_t)texture_format,
-                        pixel.r, pixel.g, pixel.b, pixel.a);
+                    debug_log("Texture format %u data: %02hX\n",
+                        (uint8_t)texture_format, pixel.c);
                 }
             }
         }
@@ -828,18 +827,22 @@ typedef struct tag_Pingo3dControl {
             return;
         }
 
-        p3d::Pixel* dst_pix = NULL;
-        auto old_bitmap = getBitmap(bmid);
-        if (old_bitmap) {
-            auto bitmap = old_bitmap.get();
-            if (bitmap && bitmap->width == m_width && bitmap->height == m_height) {
-                dst_pix = (p3d::Pixel*) bitmap->data;
-            }
-        }
-
-        if (!dst_pix) {
+        auto stored_bitmap = getBitmap(bmid);
+        auto bitmap = stored_bitmap.get();
+        if (!bitmap || !bitmap->data ||
+            bitmap->width != m_width || bitmap->height != m_height ||
+            (bitmap->format != PixelFormat::RGBA2222 &&
+             bitmap->format != PixelFormat::RGBA8888)) {
             debug_log("render_to_bitmap: output bitmap %u not found or invalid\n", bmid);
             return;
+        }
+
+        // Native RGBA2222 targets are Pingo's working format, so render
+        // directly into them. Keep the private frame for RGBA8888 targets,
+        // which require an explicit compatibility expansion after rendering.
+        auto private_frame = m_frame;
+        if (bitmap->format == PixelFormat::RGBA2222) {
+            m_frame = (p3d::Pixel *)bitmap->data;
         }
 
         //auto start = millis();
@@ -889,7 +892,14 @@ typedef struct tag_Pingo3dControl {
         uint32_t render_elapsed_us =
             (uint32_t)(pingo_render_clock_us() - render_start_us);
 
-        memcpy(dst_pix, m_frame, sizeof(p3d::Pixel) * m_width * m_height);
+        if (bitmap->format == PixelFormat::RGBA8888) {
+            auto dst_pix = (uint32_t *)bitmap->data;
+            uint32_t frame_size = (uint32_t)m_width * m_height;
+            for (uint32_t i = 0; i < frame_size; i++) {
+                dst_pix[i] = p3d::pixelToRGBA8888(m_frame[i]);
+            }
+        }
+        m_frame = private_frame;
 
         force_debug_log("PINGO_RENDER seq=%u bmid=%u render_us=%u\n",
             m_render_sequence++, bmid, render_elapsed_us);
