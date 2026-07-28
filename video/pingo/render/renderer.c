@@ -170,9 +170,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         //Compute Screen coordinates
         float halfX = scrSize.x/2;
         float halfY = scrSize.y/2;
-        Vec2i a_s = {a.x * halfX + halfX,  a.y * halfY + halfY};
-        Vec2i b_s = {b.x * halfX + halfX,  b.y * halfY + halfY};
-        Vec2i c_s = {c.x * halfX + halfX,  c.y * halfY + halfY};
+        Vec2i a_s = {a.x * halfX + halfX, -a.y * halfY + halfY};
+        Vec2i b_s = {b.x * halfX + halfX, -b.y * halfY + halfY};
+        Vec2i c_s = {c.x * halfX + halfX, -c.y * halfY + halfY};
 
         int32_t minX = MIN(MIN(a_s.x, b_s.x), c_s.x);
         int32_t minY = MIN(MIN(a_s.y, b_s.y), c_s.y);
@@ -219,7 +219,8 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
             for (int32_t x = minX; x < maxX; x++, w0 += A12, w1 += A20, w2 += A01) {
 
-                if ((w0 | w1 | w2) < 0)
+                if ((area > 0 && (w0 | w1 | w2) < 0)
+                    || (area < 0 && (w0 > 0 || w1 > 0 || w2 > 0)))
                     continue;
 
                 float depth =  -( w0 * a.z + w1 * b.z + w2 * c.z ) * areaInverse;
