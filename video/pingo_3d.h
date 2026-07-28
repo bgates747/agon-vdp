@@ -833,7 +833,9 @@ typedef struct tag_Pingo3dControl {
         }
         //debug_log("Camera:\n");
         //m_camera.dump();
-        renderer.camera_view = m_camera.m_transform;
+        // VDU camera transforms describe its world pose; rendering needs the
+        // inverse world-to-view transform.
+        renderer.camera_view = p3d::mat4Inverse(&m_camera.m_transform);
 
         if (m_scene.m_modified) {
             m_scene.compute_transformation_matrix();
