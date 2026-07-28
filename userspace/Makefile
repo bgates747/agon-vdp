@@ -19,6 +19,7 @@ VDP_GL_SRC := $(FAB_VDP_DIR)/userspace-vdp-gl/src
 BUILD_DIR ?= $(VDP_ROOT)/video/build/userspace
 TARGET ?= $(BUILD_DIR)/vdp_pingo.so
 SMOKE_TARGET ?= $(BUILD_DIR)/pingo_smoke
+TEXTURE_TEST_TARGET ?= $(BUILD_DIR)/pingo_texture_test
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
 ifeq ($(filter clean,$(MAKECMDGOALS)),)
@@ -137,7 +138,7 @@ VDP_OBJECTS := \
 OBJECTS := $(VDP_OBJECTS) $(PINGO_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
-.PHONY: all clean smoke
+.PHONY: all clean smoke texture-test
 
 all: $(TARGET)
 
@@ -171,11 +172,22 @@ $(SMOKE_TARGET): pingo_smoke.cpp $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CXX) -Wall -Werror -O2 -g -std=c++17 $< -ldl -pthread -o $@
 
-smoke: $(TARGET) $(SMOKE_TARGET)
+$(TEXTURE_TEST_TARGET): pingo_texture_test.c \
+		$(VDP_ROOT)/video/pingo/render/texture.c $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) -Wall -Werror -O2 -g -std=c11 \
+		-I$(VDP_ROOT)/video/pingo/render \
+		-I$(VDP_ROOT)/video/pingo/math \
+		$< $(VDP_ROOT)/video/pingo/render/texture.c -lm -o $@
+
+texture-test: $(TEXTURE_TEST_TARGET)
+	$(TEXTURE_TEST_TARGET)
+
+smoke: $(TARGET) $(SMOKE_TARGET) texture-test
 	$(SMOKE_TARGET) $(TARGET)
 
 clean:
-	$(RM) $(TARGET) $(SMOKE_TARGET) $(VDP_GL_LIB) \
+	$(RM) $(TARGET) $(SMOKE_TARGET) $(TEXTURE_TEST_TARGET) $(VDP_GL_LIB) \
 		$(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 
 -include $(DEPS)
