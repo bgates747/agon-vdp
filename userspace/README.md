@@ -31,6 +31,12 @@ The smoke test loads the module with immediate symbol resolution, starts the
 native VDP, creates a 64×64 RGBA8888 bitmap, creates a TurboVega Pingo control,
 renders an empty scene, and verifies that Fab exposes a live framebuffer.
 
+This is an ABI and command-path smoke test, not a visual renderer
+qualification. It does not inspect the Pingo target bitmap. Qualify the module
+in a fresh Fab process with the strict `cube`, `triangle`, and `heavytank`
+fixtures from `pingoasm/apps/turbovega`, beginning with the isolated baseline
+profile documented in `pingoasm/README.md`.
+
 The persistent comparison emulator must snapshot the resulting shared object.
 It must not symlink directly to this build output, because later
 `pingo-codex` builds will replace that file.

@@ -90,6 +90,38 @@ firmware.elf SHA-256:
 The inherited Arduino UART missing-return warning remains. The build otherwise
 completes successfully.
 
+## Native baseline build
+
+The `pingo-codex` branch can build this same baseline as a Fab Agon Emulator
+VDP module:
+
+```bash
+make -C ~/Agon/mystuff/agon-vdp/userspace \
+  FAB_ROOT=~/Agon/mystuff/fab-agon-emulator smoke
+```
+
+The adapter compiles the exact TurboVega bridge and all 16 renderer/math C
+translation units. Three `USERSPACE` guards provide host equivalents for APIs
+that exist only in the ESP32 toolchain; they do not alter Pingo transforms,
+projection, rasterization, protocol dispatch, or embedded behavior. The clean
+ESP32 PlatformIO build and the native smoke test both pass.
+
+The durable comparison instance lives at:
+
+```text
+~/Agon/mystuff/pingoasm/emulators/tv-port-baseline
+```
+
+Its `vdp_pingo.so` is a regular copied snapshot, not a symlink to mutable build
+output. Its independent SD card initially runs the strict cube fixture, while
+`~/Agon/mystuff/pingoasm/emulator` remains the untouched extended-Pingo
+development instance.
+
+The strict cube fixture is visually identical in this profile and on the
+qualified hardware baseline. It runs substantially faster in Fab, which is
+expected for applications that use the VDP video buffer; speed parity is not
+part of this baseline comparison.
+
 ## Hardware qualification
 
 The durable strict fixtures live in:
