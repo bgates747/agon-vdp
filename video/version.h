@@ -4,10 +4,10 @@
 #define		VERSION_MAJOR		2
 #define		VERSION_MINOR		15
 #define		VERSION_PATCH		0
-#define		VERSION_CANDIDATE	0			// Optional
-#define		VERSION_TYPE		"Release"	// RC, Alpha, Beta, etc.
+#define		VERSION_CANDIDATE	1			// Optional
+#define		VERSION_TYPE		"Alpha "	// RC, Alpha, Beta, etc.
 
-#define		VERSION_VARIANT		"Pingo TV Port"
-#define     VERSION_SUBTITLE    "TurboVega-compatible upstream Pingo"
+#define		VERSION_VARIANT		"Pingo"
+#define     VERSION_SUBTITLE    "SEP Field"
 
 #endif // VERSION_H

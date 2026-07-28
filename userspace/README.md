@@ -1,9 +1,9 @@
-# TurboVega-baseline native VDP
+# Pingo native VDP
 
 This directory builds the `pingo-codex` VDP as a native shared object for Fab
-Agon Emulator. It is build plumbing only: the Pingo renderer, math library,
-Agon bridge, and protocol behavior remain the hardware-qualified TurboVega
-baseline.
+Agon Emulator. It is build plumbing only: the embedded and native targets
+compile the same Pingo renderer, math library, Agon bridge, and TurboVega
+command surface.
 
 `FAB_ROOT` must name the owned Fab checkout with initialized
 `userspace-vdp-gl` submodules:
@@ -31,11 +31,11 @@ The smoke test loads the module with immediate symbol resolution, starts the
 native VDP, creates a 64×64 RGBA8888 bitmap, creates a TurboVega Pingo control,
 renders an empty scene, and verifies that Fab exposes a live framebuffer.
 
-This is an ABI and command-path smoke test, not a visual renderer
-qualification. It does not inspect the Pingo target bitmap. Qualify the module
-in a fresh Fab process with the strict `cube`, `triangle`, and `heavytank`
-fixtures from `pingoasm/apps/turbovega`, beginning with the isolated baseline
-profile documented in `pingoasm/README.md`.
+This is an ABI and command-path smoke test, not visual qualification. It does
+not inspect the Pingo target bitmap. After hardware passes, qualify a copied
+module in a fresh Fab process with the strict `cube` and `heavytank` fixtures
+from `pingoasm/apps/turbovega`, using the isolated profile documented in
+`pingoasm/README.md`.
 
 The persistent comparison emulator must snapshot the resulting shared object.
 It must not symlink directly to this build output, because later
