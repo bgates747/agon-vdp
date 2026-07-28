@@ -27,12 +27,12 @@ make -C userspace \
   smoke
 ```
 
-The smoke target first runs `pingo_texture_test`, which exhaustively verifies
-all 256 RGBA2222 packed values, representative RGBA8888 reads, and the
-qualified UV row direction. It then loads the module with immediate symbol
-resolution, starts the native VDP, creates a 64×64 RGBA8888 bitmap, creates a
-TurboVega Pingo control, renders an empty scene, and verifies that Fab exposes
-a live framebuffer.
+The smoke target first runs `pingo_texture_test`, which verifies the one-byte
+Pingo working pixel, all 256 RGBA2222 packed values, RGBA8888-to-RGBA2222
+quantization and stride, and the qualified UV row direction. It then loads the
+module with immediate symbol resolution, starts the native VDP, creates
+64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene to both,
+and verifies that Fab exposes a live framebuffer.
 
 This is an ABI and command-path smoke test, not visual qualification. It does
 not inspect the Pingo target bitmap. After hardware passes, qualify a copied

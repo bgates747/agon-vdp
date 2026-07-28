@@ -33,9 +33,12 @@ math/       vectors, matrices, transforms, and projection
 render/     scene, mesh, object, rasterizer, depth, texture, and renderer
 ```
 
-The Agon bridge borrows VDP bitmap memory for render targets and textures.
-Ownership, validation, and VDU command compatibility therefore remain bridge
-concerns rather than generic renderer APIs.
+Pingo's working pixel is one-byte RGBA2222 (`AABBGGRR`). The Agon bridge
+borrows VDP bitmap memory for render targets and textures. RGBA2222 targets are
+bound directly for rendering; legacy RGBA8888 targets are expanded explicitly
+after rendering. Source textures may be RGBA2222 or RGBA8888, with their real
+stride retained. Ownership, validation, and VDU command compatibility therefore
+remain bridge concerns rather than generic renderer APIs.
 
 ## Verification
 

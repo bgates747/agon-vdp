@@ -122,6 +122,7 @@ class VDUStreamProcessor {
 		void receiveBitmap(uint16_t bufferId, uint16_t width, uint16_t height);
 		void createBitmapFromScreen(uint16_t bufferId);
 		void createEmptyBitmap(uint16_t bufferId, uint16_t width, uint16_t height, uint32_t color);
+		void createEmptyBitmap2222(uint16_t bufferId, uint16_t width, uint16_t height, uint8_t color);
 		void createBitmapFromBuffer(uint16_t bufferId, uint8_t format, uint16_t width, uint16_t height);
 
 		void vdu_sys_hexload(void);
