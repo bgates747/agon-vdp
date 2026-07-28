@@ -5,8 +5,23 @@
 #include <string.h>
 #include <agon.h>
 #include <map>
+#ifdef USERSPACE
+#include <chrono>
+#else
+#include <esp_timer.h>
+#endif
 #include "esp_heap_caps.h"
 #include "sprites.h"
+
+static uint64_t pingo_render_clock_us() {
+#ifdef USERSPACE
+    using clock = std::chrono::steady_clock;
+    return std::chrono::duration_cast<std::chrono::microseconds>(
+        clock::now().time_since_epoch()).count();
+#else
+    return (uint64_t) esp_timer_get_time();
+#endif
+}
 
 namespace p3d {
 
@@ -139,6 +154,7 @@ typedef struct tag_Pingo3dControl {
     Transformable       m_scene;            // Scene transformation settings
     std::map<uint16_t, p3d::Mesh>* m_meshes;    // Map of meshes for use by objects
     std::map<uint16_t, TexObject>* m_objects;   // Map of textured objects that use meshes and have transforms
+    uint32_t            m_render_sequence;  // Diagnostic sequence for render timing records
 
     void show_free_ram() {
         debug_log("Free PSRAM: %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -845,13 +861,17 @@ typedef struct tag_Pingo3dControl {
         //debug_log("Frame data:  %02hX %02hX %02hX %02hX\n", m_frame->r, m_frame->g, m_frame->b, m_frame->a);
         //debug_log("Destination: %02hX %02hX %02hX %02hX\n", dst_pix->r, dst_pix->g, dst_pix->b, dst_pix->a);
 
+        // Time only Pingo's renderer. Bitmap copying and diagnostic output are
+        // intentionally outside the measured interval.
+        uint64_t render_start_us = pingo_render_clock_us();
         rendererRender(&renderer);
+        uint32_t render_elapsed_us =
+            (uint32_t)(pingo_render_clock_us() - render_start_us);
 
         memcpy(dst_pix, m_frame, sizeof(p3d::Pixel) * m_width * m_height);
 
-        //auto stop = millis();
-        //auto diff = stop - start;
-        //debug_log("Render to %ux%u took %u ms\n", m_width, m_height, diff);
+        force_debug_log("PINGO_RENDER seq=%u bmid=%u render_us=%u\n",
+            m_render_sequence++, bmid, render_elapsed_us);
         //debug_log("Frame data:  %02hX %02hX %02hX %02hX\n", m_frame->r, m_frame->g, m_frame->b, m_frame->a);
         //debug_log("Final data:  %02hX %02hX %02hX %02hX\n", dst_pix->r, dst_pix->g, dst_pix->b, dst_pix->a);
     }
