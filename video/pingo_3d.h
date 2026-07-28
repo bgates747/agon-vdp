@@ -455,12 +455,33 @@ typedef struct tag_Pingo3dControl {
             if (stored_bitmap) {
                 auto bitmap = stored_bitmap.get();
                 if (bitmap) {
+                    p3d::TextureFormat texture_format;
+                    switch (bitmap->format) {
+                        case PixelFormat::RGBA8888:
+                            texture_format = p3d::TEXTURE_FORMAT_RGBA8888;
+                            break;
+                        case PixelFormat::RGBA2222:
+                            texture_format = p3d::TEXTURE_FORMAT_RGBA2222;
+                            break;
+                        default:
+                            debug_log("Creating 3D object %u failed: bitmap %u has unsupported format %u\n",
+                                object->m_oid, bmid, (uint8_t)bitmap->format);
+                            return;
+                    }
                     auto size = p3d::Vec2i{(p3d::I_TYPE)bitmap->width, (p3d::I_TYPE)bitmap->height};
-                    auto pix = (p3d::Pixel*) bitmap->data;
                     object->bind();
-                    texture_init(&object->m_texture, size, pix);
+                    if (p3d::texture_init_format(
+                            &object->m_texture, size, bitmap->data, texture_format)) {
+                        debug_log("Creating 3D object %u failed: invalid texture bitmap %u\n",
+                            object->m_oid, bmid);
+                        return;
+                    }
                     object->m_object.mesh = mesh;
-                    debug_log("Texture data:  %02hX %02hX %02hX %02hX\n", pix->r, pix->g, pix->b, pix->a);
+                    auto pixel = p3d::texture_read(
+                        &object->m_texture, p3d::Vec2i{0, 0});
+                    debug_log("Texture format %u data: %02hX %02hX %02hX %02hX\n",
+                        (uint8_t)texture_format,
+                        pixel.r, pixel.g, pixel.b, pixel.a);
                 }
             }
         }
