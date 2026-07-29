@@ -127,7 +127,9 @@ static int triangleOutsideRemainingClipPlanes(
     return 0;
 }
 
-void backendDrawPixel (Renderer * r, Texture * f, Vec2i pos, Pixel color, float illumination) {
+static inline void backendDrawPixel(
+        Renderer * r, Texture * f, Vec2i pos,
+        Pixel color, float illumination) {
     // If backend specifies something..
     if (r->backEnd->drawPixel != 0) {
         // Draw using the backend
