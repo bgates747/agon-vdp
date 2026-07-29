@@ -9,12 +9,20 @@
 #define PINGO_RENDER_TARGET_HASH 0
 #endif
 
+#ifndef PINGO_RENDER_TARGET_DUMP
+#define PINGO_RENDER_TARGET_DUMP 0
+#endif
+
 #include <stdint.h>
 #include <string.h>
 #include <agon.h>
 #include <map>
 #ifdef USERSPACE
 #include <chrono>
+#if PINGO_RENDER_TARGET_DUMP
+#include <stdio.h>
+#include <stdlib.h>
+#endif
 #else
 #include <esp_timer.h>
 #if PINGO_RENDER_DIAGNOSTICS
@@ -43,6 +51,86 @@ static uint64_t pingo_fnv1a64(
         hash *= 1099511628211ULL;
     }
     return hash;
+}
+#endif
+
+#if defined(USERSPACE) && PINGO_RENDER_TARGET_DUMP
+static bool pingo_target_dump_selected(uint16_t bmid, uint32_t sequence) {
+    const char * cursor = getenv("PINGO_RENDER_TARGET_DUMP_FRAMES");
+    if (cursor == nullptr || *cursor == '\0') {
+        return false;
+    }
+
+    while (*cursor != '\0') {
+        char * end = nullptr;
+        unsigned long selected_bmid = strtoul(cursor, &end, 10);
+        if (end == cursor || *end != ':') {
+            return false;
+        }
+
+        cursor = end + 1;
+        unsigned long selected_sequence = strtoul(cursor, &end, 10);
+        if (end == cursor || (*end != ',' && *end != '\0')) {
+            return false;
+        }
+
+        if (selected_bmid == bmid && selected_sequence == sequence) {
+            return true;
+        }
+        cursor = *end == ',' ? end + 1 : end;
+    }
+    return false;
+}
+
+static bool pingo_target_dump_bytes(
+        const char * directory,
+        uint16_t bmid,
+        uint32_t sequence,
+        const char * suffix,
+        const void * data,
+        uint32_t byte_count) {
+    char path[1024];
+    int length = snprintf(
+        path, sizeof(path), "%s/pingo-%u-%u.%s",
+        directory, bmid, sequence, suffix);
+    if (length < 0 || (size_t)length >= sizeof(path)) {
+        return false;
+    }
+
+    FILE * output = fopen(path, "wb");
+    if (output == nullptr) {
+        return false;
+    }
+    bool success =
+        fwrite(data, 1, byte_count, output) == byte_count &&
+        fclose(output) == 0;
+    return success;
+}
+
+static void pingo_dump_render_target(
+        uint16_t bmid,
+        uint32_t sequence,
+        const void * target,
+        uint32_t target_bytes,
+        bool rgba2222,
+        const void * zeta,
+        uint32_t zeta_bytes) {
+    if (!pingo_target_dump_selected(bmid, sequence)) {
+        return;
+    }
+
+    const char * directory = getenv("PINGO_RENDER_TARGET_DUMP_DIR");
+    bool success = directory != nullptr && *directory != '\0' &&
+        pingo_target_dump_bytes(
+            directory, bmid, sequence,
+            rgba2222 ? "rgba2" : "rgba8",
+            target, target_bytes) &&
+        pingo_target_dump_bytes(
+            directory, bmid, sequence, "z32le",
+            zeta, zeta_bytes);
+    force_debug_log(
+        "PINGO_DUMP seq=%u bmid=%u status=%s\n",
+        sequence, bmid, success ? "ok" : "failed");
 }
 #endif
 
@@ -1034,6 +1122,16 @@ typedef struct tag_Pingo3dControl {
 #if PINGO_RENDER_DIAGNOSTICS
         uint64_t output_finished_us = pingo_render_clock_us();
         auto sequence = m_render_sequence++;
+#if defined(USERSPACE) && PINGO_RENDER_TARGET_DUMP
+        pingo_dump_render_target(
+            bmid, sequence,
+            bitmap->data,
+            (uint32_t)m_width * m_height *
+                (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U),
+            bitmap->format == PixelFormat::RGBA2222,
+            m_zeta,
+            (uint32_t)m_width * m_height * sizeof(p3d::PingoDepth));
+#endif
 #if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
         force_debug_log(
             "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx "
@@ -1102,6 +1200,16 @@ typedef struct tag_Pingo3dControl {
             (unsigned long long)renderer.diagnostics.fragments_shaded);
 #else
         auto sequence = m_render_sequence++;
+#if defined(USERSPACE) && PINGO_RENDER_TARGET_DUMP
+        pingo_dump_render_target(
+            bmid, sequence,
+            bitmap->data,
+            (uint32_t)m_width * m_height *
+                (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U),
+            bitmap->format == PixelFormat::RGBA2222,
+            m_zeta,
+            (uint32_t)m_width * m_height * sizeof(p3d::PingoDepth));
+#endif
 #if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
         force_debug_log(
             "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx "
