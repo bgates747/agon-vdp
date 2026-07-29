@@ -129,7 +129,7 @@ static int triangleOutsideRemainingClipPlanes(
 
 static inline void backendDrawPixel(
         Renderer * r, Texture * f, Vec2i pos,
-        Pixel color, float illumination) {
+        int32_t pixelIndex, Pixel color, float illumination) {
     // If backend specifies something..
     if (r->backEnd->drawPixel != 0) {
         // Draw using the backend
@@ -142,9 +142,10 @@ static inline void backendDrawPixel(
     else {
         // By default call this
 #if PINGO_DISABLE_ILLUMINATION
-        texture_draw(f, pos, color);
+        f->frameBuffer[pixelIndex] = color;
 #else
-        texture_draw(f, pos, pixelMulInline(color,illumination));
+        f->frameBuffer[pixelIndex] =
+            pixelMulInline(color,illumination);
 #endif
     }
 }
@@ -382,8 +383,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     continue;
                 }
 
+                int32_t pixelIndex = x + y * scrSize.x;
                 if (!depth_try_write(
-                        zetaBuffer, x + y * scrSize.x, 1-depth )) {
+                        zetaBuffer, pixelIndex, 1-depth )) {
 #if PINGO_RENDER_DIAGNOSTICS
                     fragmentsDepthTestRejected++;
 #endif
@@ -413,10 +415,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     //show_pixel(textCoordx, textCoordy, text.a, text.b, text.g, text.r);
 #endif
 
-                    backendDrawPixel(r, &r->frameBuffer, (Vec2i){x,y}, text, diffuseLight);
+                    backendDrawPixel(
+                        r, &r->frameBuffer, (Vec2i){x,y},
+                        pixelIndex, text, diffuseLight);
                 } else {
                     Pixel pixel = pixelFromRGBA(255, 0, 255, 255);
-                    backendDrawPixel(r, &r->frameBuffer, (Vec2i){x,y}, pixel, diffuseLight);
+                    backendDrawPixel(
+                        r, &r->frameBuffer, (Vec2i){x,y},
+                        pixelIndex, pixel, diffuseLight);
                 }
 
 #if PINGO_RENDER_DIAGNOSTICS
