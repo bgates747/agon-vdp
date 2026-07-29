@@ -34,6 +34,25 @@ module with immediate symbol resolution, starts the native VDP, creates
 64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene to both,
 and verifies that Fab exposes a live framebuffer.
 
+Build the compile-time diagnostic variant and run its deterministic renderer
+counter tests with:
+
+```bash
+make -C userspace \
+  FAB_ROOT=~/Agon/mystuff/fab-agon-emulator \
+  DIAGNOSTICS=1 \
+  diagnostics-smoke
+```
+
+Diagnostic and ordinary objects use separate ignored build directories, so
+switching variants cannot silently reuse objects compiled with the other
+macro. The counter test covers empty and ordinary frames, projected-Z and
+backface rejection, integer-screen degeneracy, bounding-box clamp and
+rejection, overdraw, depth-range and depth-buffer rejection, frame-to-frame
+reset, unsigned clock wrap, and the published counter partitions.
+See `docs/pingo-render-diagnostics.md` for the record schema and hardware
+workflow.
+
 This is an ABI and command-path smoke test, not visual qualification. It does
 not inspect the Pingo target bitmap. After hardware passes, qualify a copied
 module in a fresh Fab process with the strict `cube` and `heavytank` fixtures

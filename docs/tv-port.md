@@ -116,6 +116,11 @@ fresh canonical HeavyTank OBJ is outward-wound; the historical OBJ was
 inward-wound and caused the apparent inside-out rendering. Numbered and
 axis-modified HeavyTank experiments were removed.
 
+The opt-in diagnostic firmware now attributes render time and records
+object, triangle, and fragment outcomes without changing the ordinary build.
+See [Pingo render diagnostics](pingo-render-diagnostics.md) for the schema,
+qualification limits, and capture workflow.
+
 The remaining renderer priorities are robust malformed-input handling,
 near-plane clipping, objective image tests, and measured optimization toward
 the 15 FPS globe target.
