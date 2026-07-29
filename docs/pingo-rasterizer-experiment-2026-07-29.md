@@ -763,7 +763,103 @@ Accept incremental depth as the new rasterizer checkpoint. Begin modular
 object-level frustum culling only after committing this state, so culling
 performance and correctness remain independently attributable.
 
-### 5. Indexed transformed-vertex cache
+### 5. Cached object-AABB frustum rejection — accepted
+
+The current working experiment adds a model-space axis-aligned bounding box
+to each mesh. `define_mesh_vertices()` computes the bounds once, only after a
+complete upload whose coordinates are all finite. A missing, truncated,
+allocation-failed, empty, or nonfinite upload leaves the bounds invalid so the
+renderer fails open to the established per-triangle path.
+
+When frustum culling is enabled and bounds are valid, `renderObject()`
+transforms the eight corners sequentially through the model matrix and then
+the existing view-projection matrix. This deliberately preserves the
+renderer’s established arithmetic instead of precomposing an MVP matrix,
+whose different rounding could falsely reject grazing geometry. Each corner
+receives a clip-plane outcode; the object is rejected only when all eight
+corners share at least one outcode bit. Nonfinite transformed corners also
+fail open, as do cached minima greater than their corresponding maxima. The
+test runs before light normalization and triangle processing,
+and a rejected object contributes its full indexed-triangle count to
+`triangles_avoided`. No backface-culling rule changed in this experiment.
+
+Detailed renderer diagnostics advance to closed schema `d=3` with object
+fields `ob`, `obt`, `ofr`, and `ta`: objects submitted, valid bounds tested,
+objects rejected by a common frustum plane, and triangles avoided. Consumers
+enforce `ofr <= obt <= ob`; `ta > 0` also requires `ofr > 0`.
+
+Native tests cover exact bounds, empty and nonfinite uploads, every common
+clip plane, exact-boundary versus `nextafterf()` positions, crossing objects,
+rotation and parent transforms, nonuniform negative scale, disabled culling,
+and invalid-bounds fail-open behavior. Ordinary and diagnostic native smoke
+builds pass, the diagnostic/parser tests pass, the span suites pass under
+ASan/UBSan with leak detection disabled for the ptrace environment, and the
+TurboVega command-surface check still passes. Ordinary and diagnostic
+PlatformIO builds also pass. Both use 42,520 bytes of RAM; ordinary flash use
+is 1,067,749 bytes and diagnostic flash use is 1,070,201 bytes. The ordinary
+`firmware.bin` has SHA-256:
+
+```text
+9a18c0e4d8a7b5d6d91b134b7fe0550b204c6feb90bacc249c642681f5465299
+```
+
+The complete 1,447-frame headless state gate is byte-for-byte exact against
+the accepted incremental-depth checkpoint for every final color and z-buffer
+hash. Evidence is retained at:
+
+```text
+/tmp/pingo-aabb-state-gate.json
+/tmp/pingo-aabb-state-gate.run-001.log
+/tmp/pingo-incremental-on-subdivided/state-gate.run-001.log
+```
+
+A focused diagnostic run exercised the three queued multi-object scenes:
+
+| Fixture | Frames | `ob` / `obt` | `ofr` | `ta` | Frames rejecting an object |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Earth party camera ellipse | 289 | 1,445 / 1,445 | 547 | 711,998 | 186 |
+| Earth party | 289 | 1,445 / 1,445 | 477 | 653,474 | 289 |
+| Earth party camera dolly | 289 | 1,445 / 1,445 | 104 | 150,528 | 69 |
+
+Its report and raw stream are:
+
+```text
+/tmp/pingo-aabb-three-diagnostic.json
+/tmp/pingo-aabb-three-diagnostic.run-001.log
+```
+
+The far-plane bit matches the existing triangle predicate, but with the
+current production projection algebra it is effectively unreachable for
+finite positions. That pre-existing projection issue is deliberately not
+changed here.
+
+The author visually accepted the final candidate across all three physical
+Olimex scenes. A B/A/B hardware sequence compared two candidate runs with one
+run of the immediately preceding accepted incremental-depth firmware. Every
+capture contained exactly 867 contiguous renderer records, and the two
+candidate weighted means differed by only 0.780 microseconds (`0.000703%`).
+
+| Fixture | Incremental-depth FPS | Object-AABB FPS | FPS gain | Render-time change |
+| --- | ---: | ---: | ---: | ---: |
+| Earth party camera ellipse | 7.963 | 9.140 | +14.78% | -12.88% |
+| Earth party | 7.854 | 8.885 | +13.14% | -11.61% |
+| Earth party camera dolly | 8.827 | 9.034 | +2.34% | -2.28% |
+| **All 867 frames, weighted** | **8.192** | **9.019** | **+10.08%** | **-9.16%** |
+
+These are marginal gains over the accepted incremental-depth checkpoint, not
+gains against the original pre-optimization baseline. The candidate was
+restored after the middle control run and retained as the new accepted
+firmware. Durable raw captures and the immutable comparison live in the
+pingoasm benchmark evidence directory:
+
+```text
+benchmarks/render-spin/results/object-aabb-control-hardware-2026-07-29.log
+benchmarks/render-spin/results/object-aabb-candidate-hardware-2026-07-29.log
+benchmarks/render-spin/results/object-aabb-candidate-b2-hardware-2026-07-29.log
+benchmarks/render-spin/results/incremental-depth-vs-object-aabb-hardware-2026-07-29.json
+```
+
+### 6. Indexed transformed-vertex cache
 
 EarthUV repeatedly transforms indexed source vertices once per triangle
 corner. A cache could transform each used position once per object render, but

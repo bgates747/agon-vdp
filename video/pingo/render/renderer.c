@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "renderer.h"
 
 #ifndef PINGO_DISABLE_ILLUMINATION
@@ -129,6 +130,85 @@ static int triangleOutsideRemainingClipPlanes(
     return 0;
 }
 
+enum {
+    PINGO_CLIP_OUTSIDE_EYE = 1 << 0,
+    PINGO_CLIP_OUTSIDE_NEAR = 1 << 1,
+    PINGO_CLIP_OUTSIDE_FAR = 1 << 2,
+    PINGO_CLIP_OUTSIDE_LEFT = 1 << 3,
+    PINGO_CLIP_OUTSIDE_RIGHT = 1 << 4,
+    PINGO_CLIP_OUTSIDE_BOTTOM = 1 << 5,
+    PINGO_CLIP_OUTSIDE_TOP = 1 << 6,
+    PINGO_CLIP_OUTSIDE_ALL = (1 << 7) - 1
+};
+
+static uint8_t clipOutcode(Vec4f point) {
+    /*
+     * A malformed transform must never make a valid object disappear. A
+     * zero outcode makes the common-plane test fail open for NaN or Inf.
+     */
+    if (!isfinite(point.x) ||
+        !isfinite(point.y) ||
+        !isfinite(point.z) ||
+        !isfinite(point.w)) {
+        return 0;
+    }
+
+    uint8_t outcode = 0;
+    if (point.w <= 0.0f) outcode |= PINGO_CLIP_OUTSIDE_EYE;
+    if (point.z > 0.0f) outcode |= PINGO_CLIP_OUTSIDE_NEAR;
+    if (point.z < -point.w) outcode |= PINGO_CLIP_OUTSIDE_FAR;
+    if (point.x < -point.w) outcode |= PINGO_CLIP_OUTSIDE_LEFT;
+    if (point.x > point.w) outcode |= PINGO_CLIP_OUTSIDE_RIGHT;
+    if (point.y < -point.w) outcode |= PINGO_CLIP_OUTSIDE_BOTTOM;
+    if (point.y > point.w) outcode |= PINGO_CLIP_OUTSIDE_TOP;
+    return outcode;
+}
+
+static int meshBoundsOutsideClipPlanes(
+        const Mesh * mesh, Mat4 * model, Mat4 * viewProjection) {
+    if (!mesh || !mesh->bounds_valid) {
+        return 0;
+    }
+    if (!isfinite(mesh->bounds_min.x) ||
+        !isfinite(mesh->bounds_min.y) ||
+        !isfinite(mesh->bounds_min.z) ||
+        !isfinite(mesh->bounds_max.x) ||
+        !isfinite(mesh->bounds_max.y) ||
+        !isfinite(mesh->bounds_max.z) ||
+        mesh->bounds_min.x > mesh->bounds_max.x ||
+        mesh->bounds_min.y > mesh->bounds_max.y ||
+        mesh->bounds_min.z > mesh->bounds_max.z) {
+        return 0;
+    }
+
+    uint8_t commonOutcode = PINGO_CLIP_OUTSIDE_ALL;
+    for (uint8_t corner = 0; corner < 8; corner++) {
+        Vec4f position = {
+            (corner & 1) ? mesh->bounds_max.x : mesh->bounds_min.x,
+            (corner & 2) ? mesh->bounds_max.y : mesh->bounds_min.y,
+            (corner & 4) ? mesh->bounds_max.z : mesh->bounds_min.z,
+            1.0f
+        };
+        /*
+         * Match the established triangle path's two matrix-vector products
+         * exactly. Precomposing MVP changes floating-point association and
+         * can falsely reject a grazing boundary in rare rounding cases.
+         */
+        Vec4f world = mat4MultiplyVec4(&position, model);
+        Vec4f clip = mat4MultiplyVec4(&world, viewProjection);
+        commonOutcode &= clipOutcode(clip);
+
+        /*
+         * Intersection can only clear bits. Once no common outside plane
+         * remains, the other corners cannot make the box rejectable.
+         */
+        if (commonOutcode == 0) {
+            return 0;
+        }
+    }
+    return 1;
+}
+
 static inline void backendDrawPixel(
         Renderer * r, Texture * f, Vec2i pos,
         int32_t pixelIndex, Pixel color, float illumination,
@@ -155,11 +235,17 @@ static inline void backendDrawPixel(
 
 int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
-    const Vec2i scrSize = r->frameBuffer.size;
-    BackEnd * const backEnd = r->backEnd;
-    PingoDepth * const zetaBuffer =
-        backEnd->getZetaBuffer(r, backEnd);
     Object * o = ren.impl;
+#if PINGO_RENDER_DIAGNOSTICS
+    r->diagnostics.objects++;
+#endif
+    if (!o || !o->mesh ||
+        !o->mesh->positions ||
+        !o->mesh->pos_indices ||
+        o->mesh->indexes_count < 3) {
+        return 0;
+    }
+
     Vec2f * tex_coords = o->textCoord;
     if (!tex_coords) {
         tex_coords = o->mesh->textCoord;
@@ -176,6 +262,33 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     Mat4 vp = mat4MultiplyM(
         &r->camera_view, &r->camera_projection);
 
+    if (r->frustumCulling && o->mesh->bounds_valid) {
+#if PINGO_RENDER_DIAGNOSTICS
+        r->diagnostics.objects_bounds_tested++;
+        uint32_t bounds_started = rendererDiagnosticsNow(r);
+#endif
+        int outside = meshBoundsOutsideClipPlanes(o->mesh, &m, &vp);
+#if PINGO_RENDER_DIAGNOSTICS
+        rendererDiagnosticsFinishPhase(
+            r, bounds_started, &r->diagnostics.transform_ticks);
+#endif
+        if (outside) {
+#if PINGO_RENDER_DIAGNOSTICS
+            r->diagnostics.objects_frustum_rejected++;
+            if (o->mesh->indexes_count > 0) {
+                r->diagnostics.triangles_avoided +=
+                    (uint32_t)o->mesh->indexes_count / 3;
+            }
+#endif
+            return 0;
+        }
+    }
+
+    const Vec2i scrSize = r->frameBuffer.size;
+    BackEnd * const backEnd = r->backEnd;
+    PingoDepth * const zetaBuffer =
+        backEnd->getZetaBuffer(r, backEnd);
+
 #if !PINGO_DISABLE_ILLUMINATION
     // The light direction is constant for the whole object. Normalizing it
     // once preserves the existing value while avoiding a square root and
@@ -183,11 +296,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     const Vec3f light = vec3Normalize((Vec3f){-8,-5,5});
 #endif
 
-#if PINGO_RENDER_DIAGNOSTICS
-    r->diagnostics.objects++;
-#endif
-
-    for (int i = 0; i < o->mesh->indexes_count; i += 3) {
+    for (int i = 0; i + 2 < o->mesh->indexes_count; i += 3) {
 #if PINGO_RENDER_DIAGNOSTICS
         r->diagnostics.triangles_submitted++;
         uint32_t phase_started = rendererDiagnosticsNow(r);

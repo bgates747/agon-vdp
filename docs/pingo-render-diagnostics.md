@@ -13,8 +13,9 @@ output expansion. Hardware remains the performance ground truth.
 1. `PINGO_RENDER_DIAGNOSTICS=0` is the default. The detailed fields, counters,
    phase clocks, and their runtime overhead are compiled out.
 2. `PINGO_RENDER_DIAGNOSTICS=1` enables the diagnostic schema implemented by
-   that source revision. The pre-optimization tag emits version 1; the
-   frustum-culling experiment emits version 2.
+   that source revision. The pre-optimization tag emits version 1, the
+   whole-triangle frustum-culling experiment emits version 2, and the current
+   cached object-bounds experiment emits version 3.
    There is no runtime VDU toggle: every successful command-38 render made by
    that firmware build emits the detailed record.
 3. Native diagnostic objects live under
@@ -31,32 +32,36 @@ output expansion. Hardware remains the performance ground truth.
 
 The implementation is concentrated in:
 
-1. `video/pingo/render/renderer.h` — diagnostic structure, clock contract, and
+1. `video/pingo/render/mesh.h` and `mesh.c` — cached mesh bounds and their
+   validity lifecycle;
+2. `video/pingo/render/renderer.h` — diagnostic structure, clock contract, and
    renderer-owned per-frame state;
-2. `video/pingo/render/renderer.c` — phase timing and geometry/fragment
+3. `video/pingo/render/renderer.c` — phase timing and geometry/fragment
    counters;
-3. `video/pingo_3d.h` — platform clock, command-level phases, schema
-   serialization, and debug output;
-4. `userspace/pingo_renderer_diagnostics_test.c` — deterministic native
+4. `video/pingo_3d.h` — bounds creation after a complete vertex upload,
+   platform clock, command-level phases, schema serialization, and debug
+   output;
+5. `userspace/pingo_renderer_diagnostics_test.c` — deterministic native
    counter and reset tests;
-5. `userspace/Makefile` — isolated native build mode; and
-6. `platformio.ini` — isolated embedded build environment.
+6. `userspace/Makefile` — isolated native build mode; and
+7. `platformio.ini` — isolated embedded build environment.
 
-## Version-2 record
+## Version-3 record
 
-The frustum-culling diagnostic build preserves the established first three
-fields and appends a closed, versioned schema:
+The object-frustum-culling diagnostic build preserves the established first
+three fields and appends a closed, versioned schema:
 
 ```text
-PINGO_RENDER seq=<u32> bmid=<u16> render_us=<u32> d=2 w=<u16> h=<u16> fmt=<2|8> cmd=<u32> pre=<u32> clr=<u32> xf=<u32> ts=<u32> ras=<u32> out=<u32> ob=<u32> ti=<u32> tz=<u32> tfr=<u32> tf=<u32> td=<u32> to=<u32> tr=<u32> tv=<u32> pt=<u64> pc=<u64> pz=<u64> pd=<u64> pu=<u64> ps=<u64>
+PINGO_RENDER seq=<u32> bmid=<u16> render_us=<u32> d=3 w=<u16> h=<u16> fmt=<2|8> cmd=<u32> pre=<u32> clr=<u32> xf=<u32> ts=<u32> ras=<u32> out=<u32> ob=<u32> obt=<u32> ofr=<u32> ta=<u32> ti=<u32> tz=<u32> tfr=<u32> tf=<u32> td=<u32> to=<u32> tr=<u32> tv=<u32> pt=<u64> pc=<u64> pz=<u64> pd=<u64> pu=<u64> ps=<u64>
 ```
 
 All values are unsigned decimal integers. Time fields are microseconds. The
 abbreviations keep the one-record-per-frame serial cost manageable.
 
 Version 2 differs from closed version 1 only by adding `tfr` between `tz` and
-`tf`. The pingoasm summarizer accepts both complete schemas and rejects a
-record that mixes their fields.
+`tf`. Version 3 adds `obt`, `ofr`, and `ta` after `ob` without redefining the
+version-2 fields. The pingoasm summarizer accepts all three complete schemas
+and rejects a record that mixes their fields.
 
 ### Identity and timing fields
 
@@ -65,13 +70,13 @@ record that mixes their fields.
 | `seq` | Full control-local render sequence. The callback protocol carries only its low 16 bits. |
 | `bmid` | Command-38 output bitmap ID. |
 | `render_us` | Existing independent monotonic measurement around `rendererRender()` only. In a diagnostic build it necessarily includes instrumentation overhead inside that call. |
-| `d` | Diagnostic schema version; exactly `2` for the current experimental schema. |
+| `d` | Diagnostic schema version; exactly `3` for the current experimental schema. |
 | `w`, `h` | Pingo render width and height. |
 | `fmt` | Target bitmap bits per RGBA channel: `2` for RGBA2222 or `8` for RGBA8888. |
 | `cmd` | Valid command-38 handler entry, before reading `bmid`, through target-bitmap finalization and restoration of Pingo's private frame pointer. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
 | `pre` | After output-bitmap validation through the instant before `rendererRender()`: target selection, renderer/scene construction, object binding and modified transforms, projection, camera-view inversion, and scene transform. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
 | `clr` | Renderer entry through both buffer clears: depth clear, backend `beforeRender`, framebuffer-pointer refresh, and optional color clear. |
-| `xf` | Per-triangle source lookup, model transformation, normal and diffuse-light calculation, view transformation, and projection. |
+| `xf` | Cached object-bounds transformation and common-plane testing, plus per-triangle source lookup, model transformation, normal and diffuse-light calculation, view transformation, and projection. Bounds work is present only for eligible objects while object frustum culling is enabled. |
 | `ts` | Per-triangle rejection and setup after projection: exact projected-Z test, perspective division, projected-winding test, screen coordinates, bounding-box clamp, integer-area test, barycentric setup, and perspective-UV preparation. |
 | `ras` | Per-triangle fragment loops: edge tests, depth work, texture interpolation and sampling, illumination, pixel writes, and diagnostic counter maintenance. An empty clamped bounding box returns before this phase and contributes no raster time. |
 | `out` | Output finalization after `rendererRender()` through target readiness. RGBA8888 targets include full one-byte-to-four-byte expansion; RGBA2222 targets require only final bookkeeping and frame-pointer restoration. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
@@ -92,6 +97,9 @@ The timed phases do not form a perfect sum:
 | Field | Meaning |
 | --- | --- |
 | `ob` | Object render calls reached. Scenes and sprites are not included. |
+| `obt` | Objects whose valid cached mesh AABB was transformed and tested against the common clip planes. Objects without valid bounds, and all objects when frustum culling is disabled, fail open without incrementing this counter. |
+| `ofr` | Bounds-tested objects rejected because all eight transformed AABB corners lie beyond at least one common eye, near, far, left, right, top, or bottom plane. No triangle in that object is submitted. |
+| `ta` | Indexed triangle triplets bypassed by object rejection, calculated as `indexes_count / 3` for each rejected object. These are potential submissions avoided before the ordinary triangle pipeline and are therefore not included in `ti`. |
 | `ti` | Indexed triangle triplets submitted by those objects. |
 | `tz` | Triangles rejected by the renderer's exact projected-Z predicate: all three post-projection, pre-division Z values are greater than zero. This counter must not be interpreted as near-plane clipping. |
 | `tfr` | Triangles rejected before perspective division because all three clip-space vertices lie beyond the same far, left, right, top, or bottom plane. Near/camera-side rejection remains `tz`. This is conservative whole-triangle rejection, not geometric clipping. |
@@ -111,6 +119,23 @@ ti = tz + tfr + tf + td + to + tr
 
 For a version-1 record, `tfr` is absent and the original partition remains
 `ti = tz + tf + td + to + tr`.
+
+The version-3 object counters obey:
+
+```text
+ofr <= obt <= ob
+ta > 0 implies ofr > 0
+```
+
+The host summarizer derives:
+
+1. object bounds-test ratio as `obt / ob`;
+2. tested-object rejection ratio as `ofr / obt`; and
+3. potential triangle-avoidance ratio as `ta / (ti + ta)`.
+
+A zero denominator produces a zero ratio. The triangle partition continues to
+describe only submitted triangles; adding `ta` to that partition would count
+work the triangle pipeline never received.
 
 ### Fragment fields
 
@@ -160,10 +185,11 @@ These definitions make several comparisons direct:
    PINGO_RENDER seq=<u32> bmid=<u16> render_us=<u32>
    ```
 
-8. Schema versions 1 and 2 are closed. A record must contain every field for
-   its declared version exactly once and no unknown fields. Version 1 has no
-   `tfr`; version 2 requires it. Adding, removing, or redefining fields requires
-   another schema version and parser support.
+8. Schema versions 1, 2, and 3 are closed. A record must contain every field
+   for its declared version exactly once and no unknown fields. Version 1 has
+   no `tfr`; version 2 requires it but has no object-bounds fields; version 3
+   additionally requires `obt`, `ofr`, and `ta`. Adding, removing, or
+   redefining fields requires another schema version and parser support.
 
 The callback wire ABI and application-side interrupt contract are separate
 from this debug schema; see `docs/pingo-render-completion.md`.
@@ -243,29 +269,40 @@ The isolated diagnostic module is:
 
 The direct renderer test covers:
 
-1. an empty scene and nonzero clear timing;
-2. a front-facing triangle and nonzero transform, setup, raster, coverage, and
+1. exact cached mesh AABB minima and maxima, plus fail-open invalidation for
+   NaN, infinity, empty, and null vertex inputs;
+2. an empty scene and nonzero clear timing;
+3. a front-facing triangle and nonzero transform, setup, raster, coverage, and
    shade results;
-3. a second render proving per-frame counters reset rather than accumulate;
-4. reversed winding and back-face rejection;
-5. two overlapping triangles and a nonzero depth-test rejection count;
-6. exact projected-Z rejection;
-7. far, left, right, top, and bottom common-plane frustum rejection;
-8. strict clip-boundary retention, plane-crossing retention, and mixed
-   outcodes with no common rejected plane;
-9. the qualified projection's `z > 0` near predicate;
-10. triangles with all three W values zero or negative rejected before
+4. a second render proving per-frame counters reset rather than accumulate;
+5. reversed winding and back-face rejection;
+6. two overlapping triangles and a nonzero depth-test rejection count;
+7. exact projected-Z rejection;
+8. far, left, right, top, and bottom common-plane triangle rejection;
+9. object-AABB rejection at the eye, near, far, left, right, top, and bottom
+   planes, with all of the object's triangles bypassed before submission;
+10. exact object-boundary retention, `nextafterf()` just-outside rejection,
+    and retention of bounds that cross a plane;
+11. object rotation and parent-scene translation, including byte-identical
+    framebuffer and depth output versus the triangle-level fallback;
+12. nonuniform negative object scale at and just outside a clip boundary;
+13. fail-open behavior for nonfinite or unordered cached bounds and disabled
+    object frustum culling;
+14. strict triangle clip-boundary retention, plane-crossing retention, and
+    mixed outcodes with no common rejected plane;
+15. the qualified projection's `z > 0` near predicate;
+16. triangles with all three W values zero or negative rejected before
     perspective division, including mixed canonical outcodes;
-11. byte-identical framebuffer and depth results with frustum testing enabled
+17. byte-identical framebuffer and depth results with frustum testing enabled
     and disabled across retained, plane-crossing, far-rejected, and
     side-rejected triangles;
-12. integer-screen degeneracy independently of back-face rejection;
-13. an offscreen frustum rejection and a separately rasterized,
+18. integer-screen degeneracy independently of back-face rejection;
+19. an offscreen triangle rejection and a separately rasterized,
     viewport-clamped triangle;
-14. legacy covered-fragment depth-range rejection with frustum testing
+20. legacy covered-fragment depth-range rejection with frustum testing
     disabled;
-15. unsigned elapsed-tick arithmetic across a 32-bit clock wrap; and
-16. both triangle and fragment partition invariants.
+21. unsigned elapsed-tick arithmetic across a 32-bit clock wrap; and
+22. object bounds, triangle, and fragment invariants.
 
 Run the ordinary, non-instrumented native smoke independently when required:
 
@@ -408,7 +445,8 @@ The summarizer:
 6. reports existing render statistics;
 7. reports phase totals, means, and shares plus unattributed time;
 8. aggregates object, triangle, and fragment counters; and
-9. derives coverage, depth-rejection, and shading ratios.
+9. derives object bounds-test, object rejection, potential triangle-avoidance,
+   coverage, depth-rejection, and shading ratios.
 
 Use `--require-diagnostics` for an attribution run so accidentally flashed
 ordinary firmware fails loudly rather than yielding a conventional timing

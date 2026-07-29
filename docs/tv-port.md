@@ -121,10 +121,12 @@ object, triangle, and fragment outcomes without changing the ordinary build.
 See [Pingo render diagnostics](pingo-render-diagnostics.md) for the schema,
 qualification limits, and capture workflow.
 
-The `experiment/frustum-culling` branch advances the diagnostic wire record
-from closed schema 1 to schema 2 by adding a distinct whole-triangle frustum
-rejection counter. The `working-pre-optimization` tag remains the schema-1
-control; the pingoasm parser accepts both versions.
+The current cached object-bounds experiment advances the diagnostic wire
+record to closed schema 3. The `working-pre-optimization` tag remains the
+schema-1 control; schema 2 adds the distinct whole-triangle frustum rejection
+counter, and schema 3 adds object bounds-test, object-frustum-rejection, and
+avoided-triangle counters. The pingoasm parser accepts all three complete
+schemas and rejects mixed or incomplete records.
 
 The same experimental branch has now screened modern upstream Pingo without
 adopting its incompatible `Entity` object model. The emulator-qualified

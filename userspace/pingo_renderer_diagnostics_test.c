@@ -1,4 +1,5 @@
 #include <assert.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
@@ -110,8 +111,28 @@ static void add_mesh_object(
     assert(sceneAddRenderable(scene, object_as_renderable(object)) == 0);
 }
 
+static void add_bounded_mesh_object(
+        Scene * scene,
+        Object * object,
+        Mesh * mesh,
+        Vec3f * positions,
+        uint32_t position_count,
+        uint16_t * indices,
+        int index_count) {
+    add_mesh_object(
+        scene, object, mesh, positions, indices, index_count);
+    mesh->positions_count = position_count;
+    assert(meshUpdateBounds(mesh) == 1);
+}
+
 static void assert_diagnostic_invariants(
         const RendererDiagnostics * diagnostics) {
+    assert(
+        diagnostics->objects_frustum_rejected <=
+        diagnostics->objects_bounds_tested);
+    assert(
+        diagnostics->objects_bounds_tested <=
+        diagnostics->objects);
     assert(
         diagnostics->triangles_submitted ==
         diagnostics->triangles_z_rejected +
@@ -129,6 +150,48 @@ static void assert_diagnostic_invariants(
     assert(
         diagnostics->fragments_covered <=
         diagnostics->fragments_bbox);
+}
+
+static void test_mesh_bounds_cache(void) {
+    Vec3f positions[] = {
+        { 2.0f, -3.0f,  4.0f},
+        {-5.0f,  6.0f, -7.0f},
+        { 1.0f, -0.0f,  3.0f},
+        { 0.0f,  2.0f, -1.0f}
+    };
+    Mesh mesh = {
+        .positions = positions,
+        .positions_count = 4
+    };
+
+    assert(meshUpdateBounds(&mesh) == 1);
+    assert(mesh.bounds_valid == 1);
+    assert(mesh.bounds_min.x == -5.0f);
+    assert(mesh.bounds_min.y == -3.0f);
+    assert(mesh.bounds_min.z == -7.0f);
+    assert(mesh.bounds_max.x == 2.0f);
+    assert(mesh.bounds_max.y == 6.0f);
+    assert(mesh.bounds_max.z == 4.0f);
+
+    positions[3].x = NAN;
+    assert(meshUpdateBounds(&mesh) == 0);
+    assert(mesh.bounds_valid == 0);
+    positions[3].x = 0.0f;
+
+    positions[3].y = INFINITY;
+    assert(meshUpdateBounds(&mesh) == 0);
+    assert(mesh.bounds_valid == 0);
+    positions[3].y = 2.0f;
+
+    mesh.positions_count = 0;
+    assert(meshUpdateBounds(&mesh) == 0);
+    assert(mesh.bounds_valid == 0);
+    mesh.positions_count = 4;
+
+    mesh.positions = 0;
+    assert(meshUpdateBounds(&mesh) == 0);
+    assert(mesh.bounds_valid == 0);
+    assert(meshUpdateBounds(0) == 0);
 }
 
 static void test_empty_scene(void) {
@@ -320,6 +383,304 @@ static void test_remaining_frustum_planes_are_rejected(void) {
     assert(renderer.diagnostics.fragments_bbox == 0);
     assert(renderer.diagnostics.fragments_shaded == 0);
     assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_object_bounds_common_planes_are_rejected(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh meshes[6];
+    Object objects[6];
+    Vec3f positions[6][3] = {
+        {
+            {-0.25f, -0.25f,  0.25f},
+            { 0.25f, -0.25f,  0.25f},
+            {-0.25f,  0.25f,  0.25f}
+        },
+        {
+            {-0.25f, -0.25f, -2.00f},
+            { 0.25f, -0.25f, -2.00f},
+            {-0.25f,  0.25f, -2.00f}
+        },
+        {
+            {-2.00f, -0.25f, -0.50f},
+            {-1.25f, -0.25f, -0.50f},
+            {-2.00f,  0.25f, -0.50f}
+        },
+        {
+            { 1.25f, -0.25f, -0.50f},
+            { 2.00f, -0.25f, -0.50f},
+            { 1.25f,  0.25f, -0.50f}
+        },
+        {
+            {-0.25f, -2.00f, -0.50f},
+            { 0.25f, -2.00f, -0.50f},
+            {-0.25f, -1.25f, -0.50f}
+        },
+        {
+            {-0.25f,  1.25f, -0.50f},
+            { 0.25f,  1.25f, -0.50f},
+            {-0.25f,  2.00f, -0.50f}
+        }
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    for (uint32_t i = 0; i < 6; i++) {
+        add_bounded_mesh_object(
+            &scene, &objects[i], &meshes[i],
+            positions[i], 3, indices, 3);
+    }
+
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.objects == 6);
+    assert(renderer.diagnostics.objects_bounds_tested == 6);
+    assert(renderer.diagnostics.objects_frustum_rejected == 6);
+    assert(renderer.diagnostics.triangles_avoided == 6);
+    assert(renderer.diagnostics.triangles_submitted == 0);
+    assert(renderer.diagnostics.fragments_bbox == 0);
+    assert(renderer.diagnostics.fragments_shaded == 0);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_object_bounds_eye_plane_is_rejected(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh mesh;
+    Object object;
+    Vec3f positions[] = {
+        {-0.25f, -0.25f, -0.50f},
+        { 0.25f, -0.25f, -0.50f},
+        {-0.25f,  0.25f, -0.50f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    renderer.camera_projection.elements[15] = 0.0f;
+    add_bounded_mesh_object(
+        &scene, &object, &mesh, positions, 3, indices, 3);
+
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.objects_bounds_tested == 1);
+    assert(renderer.diagnostics.objects_frustum_rejected == 1);
+    assert(renderer.diagnostics.triangles_avoided == 1);
+    assert(renderer.diagnostics.triangles_submitted == 0);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_object_bounds_boundaries_and_crossings_are_retained(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh meshes[7];
+    Object objects[7];
+    const float right_outside = nextafterf(1.0f, INFINITY);
+    const float near_outside = nextafterf(0.0f, INFINITY);
+    const float far_outside = nextafterf(-1.0f, -INFINITY);
+    Vec3f positions[7][3] = {
+        {
+            { 1.00f, -0.25f, -0.50f},
+            { 1.00f,  0.25f, -0.50f},
+            { 1.00f,  0.00f, -0.50f}
+        },
+        {
+            { right_outside, -0.25f, -0.50f},
+            { right_outside + 0.25f, -0.25f, -0.50f},
+            { right_outside,  0.25f, -0.50f}
+        },
+        {
+            {-0.25f, -0.25f,  0.00f},
+            { 0.25f, -0.25f,  0.00f},
+            {-0.25f,  0.25f,  0.00f}
+        },
+        {
+            {-0.25f, -0.25f, near_outside},
+            { 0.25f, -0.25f, near_outside},
+            {-0.25f,  0.25f, near_outside}
+        },
+        {
+            {-0.25f, -0.25f, -1.00f},
+            { 0.25f, -0.25f, -1.00f},
+            {-0.25f,  0.25f, -1.00f}
+        },
+        {
+            {-0.25f, -0.25f, far_outside},
+            { 0.25f, -0.25f, far_outside},
+            {-0.25f,  0.25f, far_outside}
+        },
+        {
+            { 0.75f, -0.25f, -0.50f},
+            { 1.25f, -0.25f, -0.50f},
+            { 0.75f,  0.25f, -0.50f}
+        }
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    for (uint32_t i = 0; i < 7; i++) {
+        add_bounded_mesh_object(
+            &scene, &objects[i], &meshes[i],
+            positions[i], 3, indices, 3);
+    }
+
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.objects_bounds_tested == 7);
+    assert(renderer.diagnostics.objects_frustum_rejected == 3);
+    assert(renderer.diagnostics.triangles_avoided == 3);
+    assert(renderer.diagnostics.triangles_submitted == 4);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_object_bounds_transform_and_reference_outputs_match(void) {
+    Renderer enabled;
+    Renderer reference;
+    Scene enabled_scene;
+    Scene reference_scene;
+    BackEnd enabled_backend;
+    BackEnd reference_backend;
+    TestBuffers enabled_buffers;
+    TestBuffers reference_buffers;
+    Mesh enabled_mesh;
+    Mesh reference_mesh;
+    Object enabled_object;
+    Object reference_object;
+    Vec3f positions[] = {
+        {-2.0f, -0.1f, -0.5f},
+        { 2.0f, -0.1f, -0.5f},
+        {-2.0f,  0.1f, -0.5f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(
+        &enabled, &enabled_scene, &enabled_backend, &enabled_buffers);
+    initialize_renderer(
+        &reference, &reference_scene, &reference_backend, &reference_buffers);
+    add_bounded_mesh_object(
+        &enabled_scene, &enabled_object, &enabled_mesh,
+        positions, 3, indices, 3);
+    add_mesh_object(
+        &reference_scene, &reference_object, &reference_mesh,
+        positions, indices, 3);
+
+    enabled_object.transform = mat4RotateZ(1.57079632679f);
+    reference_object.transform = enabled_object.transform;
+    enabled_scene.transform = mat4Translate((Vec3f){1.5f, 0.0f, 0.0f});
+    reference_scene.transform = enabled_scene.transform;
+
+    assert(rendererRender(&enabled) == 0);
+    assert(rendererRender(&reference) == 0);
+    assert(enabled.diagnostics.objects_frustum_rejected == 1);
+    assert(enabled.diagnostics.triangles_avoided == 1);
+    assert(enabled.diagnostics.triangles_submitted == 0);
+    assert(reference.diagnostics.objects_bounds_tested == 0);
+    assert(reference.diagnostics.triangles_submitted == 1);
+    assert(reference.diagnostics.triangles_frustum_rejected == 1);
+    assert(
+        memcmp(
+            enabled_buffers.frame,
+            reference_buffers.frame,
+            sizeof(enabled_buffers.frame)) == 0);
+    assert(
+        memcmp(
+            enabled_buffers.depth,
+            reference_buffers.depth,
+            sizeof(enabled_buffers.depth)) == 0);
+    assert_diagnostic_invariants(&enabled.diagnostics);
+    assert_diagnostic_invariants(&reference.diagnostics);
+}
+
+static void test_object_bounds_nonuniform_negative_scale_boundary(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh meshes[2];
+    Object objects[2];
+    Vec3f positions[] = {
+        {-0.25f, -0.25f, -0.50f},
+        { 0.50f, -0.25f, -0.50f},
+        {-0.25f,  0.25f, -0.50f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+    Mat4 scale = mat4Scale((Vec3f){-2.0f, 0.5f, 1.0f});
+    Mat4 boundary_translation =
+        mat4Translate((Vec3f){2.0f, 0.0f, 0.0f});
+    Mat4 outside_translation = mat4Translate(
+        (Vec3f){nextafterf(2.0f, INFINITY), 0.0f, 0.0f});
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    add_bounded_mesh_object(
+        &scene, &objects[0], &meshes[0], positions, 3, indices, 3);
+    add_bounded_mesh_object(
+        &scene, &objects[1], &meshes[1], positions, 3, indices, 3);
+    objects[0].transform =
+        mat4MultiplyM(&scale, &boundary_translation);
+    objects[1].transform =
+        mat4MultiplyM(&scale, &outside_translation);
+
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.objects_bounds_tested == 2);
+    assert(renderer.diagnostics.objects_frustum_rejected == 1);
+    assert(renderer.diagnostics.triangles_avoided == 1);
+    assert(renderer.diagnostics.triangles_submitted == 1);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_object_bounds_invalid_and_disabled_fail_open(void) {
+    Renderer invalid;
+    Renderer disabled;
+    Scene invalid_scene;
+    Scene disabled_scene;
+    BackEnd invalid_backend;
+    BackEnd disabled_backend;
+    TestBuffers invalid_buffers;
+    TestBuffers disabled_buffers;
+    Mesh invalid_meshes[2];
+    Mesh disabled_mesh;
+    Object invalid_objects[2];
+    Object disabled_object;
+    Vec3f positions[] = {
+        {1.25f, -0.25f, -0.50f},
+        {2.00f, -0.25f, -0.50f},
+        {1.25f,  0.25f, -0.50f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(
+        &invalid, &invalid_scene, &invalid_backend, &invalid_buffers);
+    initialize_renderer(
+        &disabled, &disabled_scene, &disabled_backend, &disabled_buffers);
+    for (uint32_t i = 0; i < 2; i++) {
+        add_bounded_mesh_object(
+            &invalid_scene, &invalid_objects[i], &invalid_meshes[i],
+            positions, 3, indices, 3);
+    }
+    add_bounded_mesh_object(
+        &disabled_scene, &disabled_object, &disabled_mesh,
+        positions, 3, indices, 3);
+
+    invalid_meshes[0].bounds_min.x = NAN;
+    invalid_meshes[1].bounds_min.x = 2.0f;
+    invalid_meshes[1].bounds_max.x = 1.0f;
+    rendererSetFrustumCulling(&disabled, 0);
+
+    assert(rendererRender(&invalid) == 0);
+    assert(rendererRender(&disabled) == 0);
+    assert(invalid.diagnostics.objects_bounds_tested == 2);
+    assert(invalid.diagnostics.objects_frustum_rejected == 0);
+    assert(invalid.diagnostics.triangles_avoided == 0);
+    assert(invalid.diagnostics.triangles_submitted == 2);
+    assert(invalid.diagnostics.triangles_frustum_rejected == 2);
+    assert(disabled.diagnostics.objects_bounds_tested == 0);
+    assert(disabled.diagnostics.objects_frustum_rejected == 0);
+    assert(disabled.diagnostics.triangles_avoided == 0);
+    assert(disabled.diagnostics.triangles_submitted == 1);
+    assert_diagnostic_invariants(&invalid.diagnostics);
+    assert_diagnostic_invariants(&disabled.diagnostics);
 }
 
 static void test_clip_boundaries_and_crossings_are_retained(void) {
@@ -616,12 +977,19 @@ static void test_wrapping_clock(void) {
 }
 
 int main(void) {
+    test_mesh_bounds_cache();
     test_empty_scene();
     test_front_triangle_and_reset();
     test_reversed_winding_is_rejected();
     test_overdraw_is_counted();
     test_z_rejection();
     test_remaining_frustum_planes_are_rejected();
+    test_object_bounds_common_planes_are_rejected();
+    test_object_bounds_eye_plane_is_rejected();
+    test_object_bounds_boundaries_and_crossings_are_retained();
+    test_object_bounds_transform_and_reference_outputs_match();
+    test_object_bounds_nonuniform_negative_scale_boundary();
+    test_object_bounds_invalid_and_disabled_fail_open();
     test_clip_boundaries_and_crossings_are_retained();
     test_actual_projection_uses_zero_as_near_clip_boundary();
     test_all_nonpositive_w_is_rejected_before_division();
