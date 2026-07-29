@@ -1041,8 +1041,8 @@ typedef struct tag_Pingo3dControl {
 
         force_debug_log(
             "PINGO_RENDER seq=%u bmid=%u render_us=%u "
-            "d=1 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
-            "ras=%u out=%u ob=%u ti=%u tz=%u tf=%u td=%u to=%u tr=%u tv=%u "
+            "d=2 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
+            "ras=%u out=%u ob=%u ti=%u tz=%u tfr=%u tf=%u td=%u to=%u tr=%u tv=%u "
             "pt=%llu pc=%llu pz=%llu pd=%llu pu=%llu ps=%llu\n",
             sequence, bmid, render_elapsed_us,
             m_width, m_height,
@@ -1052,6 +1052,7 @@ typedef struct tag_Pingo3dControl {
             renderer.diagnostics.objects,
             renderer.diagnostics.triangles_submitted,
             renderer.diagnostics.triangles_z_rejected,
+            renderer.diagnostics.triangles_frustum_rejected,
             renderer.diagnostics.triangles_backface_rejected,
             renderer.diagnostics.triangles_degenerate,
             renderer.diagnostics.triangles_bbox_rejected,

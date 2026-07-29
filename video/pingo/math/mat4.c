@@ -155,6 +155,25 @@ F_TYPE mat4Determinant(Mat4 * mat)
 Mat4 mat4Inverse(Mat4 * mat)
 {
     F_TYPE * m = mat->elements;
+
+    // Adapted from upstream Pingo fb67d951. Camera transforms are commonly
+    // translation-only (including identity), so avoid the full 4x4 inverse
+    // in that exact case. Upstream checks identity separately, but this
+    // predicate already includes it. Do not use upstream's scale-only path:
+    // it does not guard zero scale before taking reciprocals.
+    if (m[0] == 1.0f && m[1] == 0.0f && m[2] == 0.0f &&
+        m[4] == 0.0f && m[5] == 1.0f && m[6] == 0.0f &&
+        m[8] == 0.0f && m[9] == 0.0f && m[10] == 1.0f &&
+        m[12] == 0.0f && m[13] == 0.0f && m[14] == 0.0f &&
+        m[15] == 1.0f) {
+        return (Mat4){{
+            1.0f, 0.0f, 0.0f, -m[3],
+            0.0f, 1.0f, 0.0f, -m[7],
+            0.0f, 0.0f, 1.0f, -m[11],
+            0.0f, 0.0f, 0.0f, 1.0f
+        }};
+    }
+
     float inv[16], det;
 
     inv[0] = m[5]  * m[10] * m[15] -
@@ -313,6 +332,4 @@ float mat4FarFromProjection(Mat4 mat)
 
     return D / (C + 1.0);
 }
-
-
 

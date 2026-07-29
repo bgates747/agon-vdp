@@ -121,6 +121,30 @@ object, triangle, and fragment outcomes without changing the ordinary build.
 See [Pingo render diagnostics](pingo-render-diagnostics.md) for the schema,
 qualification limits, and capture workflow.
 
+The `experiment/frustum-culling` branch advances the diagnostic wire record
+from closed schema 1 to schema 2 by adding a distinct whole-triangle frustum
+rejection counter. The `working-pre-optimization` tag remains the schema-1
+control; the pingoasm parser accepts both versions.
+
+The same experimental branch has now screened modern upstream Pingo without
+adopting its incompatible `Entity` object model. The emulator-qualified
+candidate retains only:
+
+1. the guarded normalization and translation-only inverse ideas from upstream
+   `fb67d951c4f05ca5fa04c45dcb3cb3b02f861163`; and
+2. a locally derived, once-per-object view/projection composition inspired by
+   upstream transform-composition lineage (`a0ed0cb`), while preserving this
+   port's model-space lighting and camera-pose contract.
+
+Native math tests cover the new invariants. A temporary Cube probe found the
+final 76,800-byte RGBA2222 Pingo target byte-identical before and after the
+upstream sweep. The exact candidate subsequently completed the 1,447-record
+hardware regression chain with no panic, reboot, sequence gap, or duplicate.
+All fifteen fixtures improved, from 0.42% on HeavyTank to 8.41% on the
+multi-object camera-dolly scene. The ordinary build uses 42,520 bytes of RAM
+and 1,065,125 bytes of flash; its flashed `firmware.bin` has SHA-256
+`c65e4ec31272ddecb0f04a2cb9f097c97e62789215bce392d1fa9cbba0ec6fd7`.
+
 The remaining renderer priorities are robust malformed-input handling,
 near-plane clipping, objective image tests, and measured optimization toward
 the 15 FPS globe target.

@@ -27,12 +27,18 @@ make -C userspace \
   smoke
 ```
 
-The smoke target first runs `pingo_texture_test`, which verifies the one-byte
-Pingo working pixel, all 256 RGBA2222 packed values, RGBA8888-to-RGBA2222
-quantization and stride, and the qualified UV row direction. It then loads the
-module with immediate symbol resolution, starts the native VDP, creates
-64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene to both,
-and verifies that Fab exposes a live framebuffer.
+The smoke target first runs:
+
+1. `pingo_texture_test`, which verifies the one-byte Pingo working pixel, all
+   256 RGBA2222 packed values, RGBA8888-to-RGBA2222 quantization and stride,
+   and the qualified UV row direction; and
+2. `pingo_math_test`, which covers guarded vector normalization, identity,
+   translation-only and general matrix inversion, and sequential versus
+   composed view/projection transforms.
+
+It then loads the module with immediate symbol resolution, starts the native
+VDP, creates 64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene
+to both, and verifies that Fab exposes a live framebuffer.
 
 Build the compile-time diagnostic variant and run its deterministic renderer
 counter tests with:
@@ -46,10 +52,12 @@ make -C userspace \
 
 Diagnostic and ordinary objects use separate ignored build directories, so
 switching variants cannot silently reuse objects compiled with the other
-macro. The counter test covers empty and ordinary frames, projected-Z and
-backface rejection, integer-screen degeneracy, bounding-box clamp and
-rejection, overdraw, depth-range and depth-buffer rejection, frame-to-frame
-reset, unsigned clock wrap, and the published counter partitions.
+macro. The counter test covers empty and ordinary frames, projected-Z,
+whole-frustum, and backface rejection; strict clip boundaries and crossing
+triangles; all-nonpositive W; enabled/disabled output equivalence; integer-screen
+degeneracy; bounding-box clamp; overdraw; depth-range and depth-buffer
+rejection; frame-to-frame reset; unsigned clock wrap; and the published
+counter partitions.
 See `docs/pingo-render-diagnostics.md` for the record schema and hardware
 workflow.
 
