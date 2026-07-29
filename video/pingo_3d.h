@@ -5,6 +5,10 @@
 #define PINGO_RENDER_DIAGNOSTICS 0
 #endif
 
+#ifndef PINGO_RENDER_TARGET_HASH
+#define PINGO_RENDER_TARGET_HASH 0
+#endif
+
 #include <stdint.h>
 #include <string.h>
 #include <agon.h>
@@ -29,6 +33,18 @@ static uint64_t pingo_render_clock_us() {
     return (uint64_t) esp_timer_get_time();
 #endif
 }
+
+#if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
+static uint64_t pingo_render_target_hash(
+        const uint8_t * data, uint32_t byte_count) {
+    uint64_t hash = 14695981039346656037ULL;
+    for (uint32_t i = 0; i < byte_count; i++) {
+        hash ^= data[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+#endif
 
 #if PINGO_RENDER_DIAGNOSTICS
 /*
@@ -1018,6 +1034,17 @@ typedef struct tag_Pingo3dControl {
 #if PINGO_RENDER_DIAGNOSTICS
         uint64_t output_finished_us = pingo_render_clock_us();
         auto sequence = m_render_sequence++;
+#if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
+        force_debug_log(
+            "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx\n",
+            sequence, bmid,
+            (uint32_t)m_width * m_height *
+                (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U),
+            (unsigned long long)pingo_render_target_hash(
+                (const uint8_t *)bitmap->data,
+                (uint32_t)m_width * m_height *
+                    (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U)));
+#endif
         // Do not hold the completion callback behind timing conversion or a
         // long diagnostic line.
         send_render_complete(sequence);
@@ -1069,6 +1096,17 @@ typedef struct tag_Pingo3dControl {
             (unsigned long long)renderer.diagnostics.fragments_shaded);
 #else
         auto sequence = m_render_sequence++;
+#if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
+        force_debug_log(
+            "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx\n",
+            sequence, bmid,
+            (uint32_t)m_width * m_height *
+                (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U),
+            (unsigned long long)pingo_render_target_hash(
+                (const uint8_t *)bitmap->data,
+                (uint32_t)m_width * m_height *
+                    (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U)));
+#endif
         force_debug_log("PINGO_RENDER seq=%u bmid=%u render_us=%u\n",
             sequence, bmid, render_elapsed_us);
         // Completion is deliberately last: RGBA8888 compatibility expansion
