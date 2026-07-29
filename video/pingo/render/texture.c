@@ -1,5 +1,4 @@
 #include "texture.h"
-#include "math.h"
 
 int texture_init_format(Texture *f, Vec2i size, void *buf, TextureFormat format)
 {
@@ -46,10 +45,20 @@ Pixel texture_read(Texture *f, Vec2i pos)
     return texture_read_index(f, pos.x + pos.y * f->size.x);
 }
 
+static inline float texture_clamp_coordinate(float value)
+{
+    // Match fminf(fmaxf(value, 0), 1), including its NaN-to-zero result.
+    if (!(value >= 0.0f))
+        return 0.0f;
+    if (value > 1.0f)
+        return 1.0f;
+    return value;
+}
+
 Pixel texture_readF(Texture *f, Vec2f pos)
 {
-    float u = fminf(fmaxf(pos.x, 0.0f), 1.0f);
-    float v = fminf(fmaxf(pos.y, 0.0f), 1.0f);
+    float u = texture_clamp_coordinate(pos.x);
+    float v = texture_clamp_coordinate(pos.y);
     uint16_t x = (uint16_t)(u * (f->size.x - 1));
     // UV V grows upward; texture memory begins with the top image row.
     uint16_t y = (uint16_t)((1.0f - v) * (f->size.y - 1));
