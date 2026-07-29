@@ -35,6 +35,32 @@ static inline Pixel pixelMulInline(Pixel p, float f)
             (r >> 6))
     };
 }
+
+typedef struct tag_PixelShadeLut {
+    uint8_t level[4];
+} PixelShadeLut;
+
+static inline PixelShadeLut pixelShadeLut(float f)
+{
+    PixelShadeLut lut;
+    for (uint8_t level = 0; level < 4; level++) {
+        lut.level[level] =
+            (uint8_t)((uint8_t)(level * 85 * f) >> 6);
+    }
+    return lut;
+}
+
+static inline Pixel pixelMulLut(
+        Pixel p, const PixelShadeLut * lut)
+{
+    return (Pixel){
+        (uint8_t)(
+            (p.c & 0xC0) |
+            (lut->level[(p.c >> 4) & 0x03] << 4) |
+            (lut->level[(p.c >> 2) & 0x03] << 2) |
+            lut->level[p.c & 0x03])
+    };
+}
 #endif
 
 #ifdef UINT8
