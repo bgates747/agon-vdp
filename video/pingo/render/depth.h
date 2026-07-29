@@ -25,4 +25,4 @@ typedef struct Depth {
 
 void depth_write(PingoDepth * d, int idx, float value);
 bool depth_check(PingoDepth * d, int idx, float value);
-
+bool depth_try_write(PingoDepth * d, int idx, float value);
