@@ -150,6 +150,9 @@ void backendDrawPixel (Renderer * r, Texture * f, Vec2i pos, Pixel color, float 
 int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     const Vec2i scrSize = r->frameBuffer.size;
+    BackEnd * const backEnd = r->backEnd;
+    PingoDepth * const zetaBuffer =
+        backEnd->getZetaBuffer(r, backEnd);
     Object * o = ren.impl;
     Vec2f * tex_coords = o->textCoord;
     if (!tex_coords) {
@@ -377,14 +380,16 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     continue;
                 }
 
-                if (depth_check(r->backEnd->getZetaBuffer(r,r->backEnd), x + y * scrSize.x, 1-depth )) {
+                if (depth_check(
+                        zetaBuffer, x + y * scrSize.x, 1-depth )) {
 #if PINGO_RENDER_DIAGNOSTICS
                     fragmentsDepthTestRejected++;
 #endif
                     continue;
                 }
 
-                depth_write(r->backEnd->getZetaBuffer(r,r->backEnd), x + y * scrSize.x, 1- depth );
+                depth_write(
+                    zetaBuffer, x + y * scrSize.x, 1- depth );
 
                 if (o->material != 0) {
                     //Texture lookup
