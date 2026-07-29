@@ -30,6 +30,7 @@ TARGET ?= $(BUILD_DIR)/vdp_pingo.so
 SMOKE_TARGET ?= $(BUILD_DIR)/pingo_smoke
 TEXTURE_TEST_TARGET ?= $(BUILD_DIR)/pingo_texture_test
 MATH_TEST_TARGET ?= $(BUILD_DIR)/pingo_math_test
+SPAN_TEST_TARGET ?= $(BUILD_DIR)/pingo_triangle_span_test
 DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
@@ -151,7 +152,7 @@ VDP_OBJECTS := \
 OBJECTS := $(VDP_OBJECTS) $(PINGO_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
-.PHONY: all clean smoke texture-test math-test diagnostics-test diagnostics-smoke
+.PHONY: all clean smoke texture-test math-test span-test diagnostics-test diagnostics-smoke
 
 all: $(TARGET)
 
@@ -206,6 +207,13 @@ $(MATH_TEST_TARGET): pingo_math_test.c \
 		$(VDP_ROOT)/video/pingo/math/mat4.c \
 		$(VDP_ROOT)/video/pingo/math/vec3.c -lm -o $@
 
+$(SPAN_TEST_TARGET): pingo_triangle_span_test.c \
+		$(VDP_ROOT)/video/pingo/render/triangle_span.h $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) -Wall -Werror -O2 -g -std=c11 \
+		-I$(VDP_ROOT)/video/pingo \
+		$< -o $@
+
 $(DIAGNOSTICS_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 		$(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
@@ -218,7 +226,10 @@ texture-test: $(TEXTURE_TEST_TARGET)
 math-test: $(MATH_TEST_TARGET)
 	$(MATH_TEST_TARGET)
 
-smoke: $(TARGET) $(SMOKE_TARGET) texture-test math-test
+span-test: $(SPAN_TEST_TARGET)
+	$(SPAN_TEST_TARGET)
+
+smoke: $(TARGET) $(SMOKE_TARGET) texture-test math-test span-test
 	$(SMOKE_TARGET) $(TARGET)
 
 ifeq ($(DIAGNOSTICS),0)
@@ -234,6 +245,7 @@ diagnostics-smoke: smoke diagnostics-test
 
 clean:
 	$(RM) $(TARGET) $(SMOKE_TARGET) $(TEXTURE_TEST_TARGET) $(MATH_TEST_TARGET) \
+		$(SPAN_TEST_TARGET) \
 		$(DIAGNOSTICS_TEST_TARGET) $(VDP_GL_LIB) \
 		$(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 

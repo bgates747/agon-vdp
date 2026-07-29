@@ -34,7 +34,10 @@ The smoke target first runs:
    and the qualified UV row direction; and
 2. `pingo_math_test`, which covers guarded vector normalization, identity,
    translation-only and general matrix inversion, and sequential versus
-   composed view/projection transforms.
+   composed view/projection transforms; and
+3. `pingo_triangle_span_test`, which exhaustively compares the row-span
+   primitive with the renderer's current inclusive edge equations across both
+   windings, clipped viewports, randomized rows, and integer-limit cases.
 
 It then loads the module with immediate symbol resolution, starts the native
 VDP, creates 64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene
