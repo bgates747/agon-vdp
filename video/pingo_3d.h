@@ -35,7 +35,7 @@ static uint64_t pingo_render_clock_us() {
 }
 
 #if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
-static uint64_t pingo_render_target_hash(
+static uint64_t pingo_fnv1a64(
         const uint8_t * data, uint32_t byte_count) {
     uint64_t hash = 14695981039346656037ULL;
     for (uint32_t i = 0; i < byte_count; i++) {
@@ -1036,14 +1036,20 @@ typedef struct tag_Pingo3dControl {
         auto sequence = m_render_sequence++;
 #if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
         force_debug_log(
-            "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx\n",
+            "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx "
+            "zbytes=%u zfnv1a64=%016llx\n",
             sequence, bmid,
             (uint32_t)m_width * m_height *
                 (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U),
-            (unsigned long long)pingo_render_target_hash(
+            (unsigned long long)pingo_fnv1a64(
                 (const uint8_t *)bitmap->data,
                 (uint32_t)m_width * m_height *
-                    (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U)));
+                    (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U)),
+            (uint32_t)m_width * m_height * sizeof(p3d::PingoDepth),
+            (unsigned long long)pingo_fnv1a64(
+                (const uint8_t *)m_zeta,
+                (uint32_t)m_width * m_height *
+                    sizeof(p3d::PingoDepth)));
 #endif
         // Do not hold the completion callback behind timing conversion or a
         // long diagnostic line.
@@ -1098,14 +1104,20 @@ typedef struct tag_Pingo3dControl {
         auto sequence = m_render_sequence++;
 #if defined(USERSPACE) && PINGO_RENDER_TARGET_HASH
         force_debug_log(
-            "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx\n",
+            "PINGO_TARGET seq=%u bmid=%u bytes=%u fnv1a64=%016llx "
+            "zbytes=%u zfnv1a64=%016llx\n",
             sequence, bmid,
             (uint32_t)m_width * m_height *
                 (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U),
-            (unsigned long long)pingo_render_target_hash(
+            (unsigned long long)pingo_fnv1a64(
                 (const uint8_t *)bitmap->data,
                 (uint32_t)m_width * m_height *
-                    (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U)));
+                    (bitmap->format == PixelFormat::RGBA2222 ? 1U : 4U)),
+            (uint32_t)m_width * m_height * sizeof(p3d::PingoDepth),
+            (unsigned long long)pingo_fnv1a64(
+                (const uint8_t *)m_zeta,
+                (uint32_t)m_width * m_height *
+                    sizeof(p3d::PingoDepth)));
 #endif
         force_debug_log("PINGO_RENDER seq=%u bmid=%u render_us=%u\n",
             sequence, bmid, render_elapsed_us);
