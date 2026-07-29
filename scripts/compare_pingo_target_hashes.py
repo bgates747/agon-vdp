@@ -15,7 +15,9 @@ TARGET_RE = re.compile(
     r"seq=(?P<seq>\d+) "
     r"bmid=(?P<bmid>\d+) "
     r"bytes=(?P<byte_count>\d+) "
-    r"fnv1a64=(?P<hash>[0-9a-fA-F]{16})"
+    r"fnv1a64=(?P<hash>[0-9a-fA-F]{16}) "
+    r"zbytes=(?P<zeta_byte_count>\d+) "
+    r"zfnv1a64=(?P<zeta_hash>[0-9a-fA-F]{16})"
 )
 
 
@@ -25,6 +27,8 @@ class TargetHash:
     bitmap_id: int
     byte_count: int
     fnv1a64: str
+    zeta_byte_count: int
+    zeta_fnv1a64: str
 
     @property
     def key(self) -> tuple[int, int]:
@@ -33,7 +37,9 @@ class TargetHash:
     def canonical_line(self) -> str:
         return (
             f"PINGO_TARGET seq={self.sequence} bmid={self.bitmap_id} "
-            f"bytes={self.byte_count} fnv1a64={self.fnv1a64}"
+            f"bytes={self.byte_count} fnv1a64={self.fnv1a64} "
+            f"zbytes={self.zeta_byte_count} "
+            f"zfnv1a64={self.zeta_fnv1a64}"
         )
 
 
@@ -49,6 +55,8 @@ def parse_log(path: Path) -> list[TargetHash]:
                 bitmap_id=int(match.group("bmid")),
                 byte_count=int(match.group("byte_count")),
                 fnv1a64=match.group("hash").lower(),
+                zeta_byte_count=int(match.group("zeta_byte_count")),
+                zeta_fnv1a64=match.group("zeta_hash").lower(),
             )
         )
     if not records:

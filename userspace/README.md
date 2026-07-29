@@ -83,11 +83,11 @@ make -C userspace \
   CPPFLAGS=-DPINGO_RENDER_TARGET_HASH=1
 ```
 
-`PINGO_TARGET` records contain the render sequence, bitmap ID, byte count, and
-64-bit FNV-1a hash of the final target bitmap. Hashing occurs after the timed
-renderer interval. It is compiled out unless both `USERSPACE` and
-`PINGO_RENDER_TARGET_HASH=1` are defined, so embedded and ordinary emulator
-builds pay no cost.
+`PINGO_TARGET` records contain the render sequence, bitmap ID, byte counts, and
+64-bit FNV-1a hashes of both the final target bitmap and z-buffer. Hashing
+occurs after the timed renderer interval. It is compiled out unless both
+`USERSPACE` and `PINGO_RENDER_TARGET_HASH=1` are defined, so embedded and
+ordinary emulator builds pay no cost.
 
 Validate one log or require a candidate to match a baseline exactly:
 
@@ -100,5 +100,5 @@ scripts/compare_pingo_target_hashes.py \
 
 Use `--extract oracle.txt` to retain only the canonical `PINGO_TARGET` records.
 The comparator also rejects missing, duplicate, reordered, or non-contiguous
-records. A passing hash comparison is an automated image-equivalence gate; it
-does not replace final visual and hardware qualification.
+records. A passing comparison establishes exact color and depth-buffer
+equivalence; it does not replace final visual and hardware qualification.
