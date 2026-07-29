@@ -16,6 +16,14 @@ capture first proved that the benchmark is stable enough to distinguish real
 changes: three baseline runs differed by only 0.003 ms in their all-frame
 means.
 
+The working tree after `7a1f9ba` also contains a completed signed 16.16
+texture-span experiment. It passed automated qualification and physical
+visual review, but two matched Olimex Agon Light 2 runs measured a 10.01%
+weighted FPS regression. It is committed only as a discrete negative test
+case and potential rollback/reference point; it is not the selected renderer.
+The next development state must restore `7a1f9ba` before stacking further
+optimizations.
+
 ## Baseline and correctness oracle
 
 The stepping-off point is `cb91c12`, tagged `working-pre-hecker`. The fixed
@@ -654,6 +662,161 @@ HTML dashboard live under
 integrated in the working tree. Ordinary and diagnostic native smoke suites,
 the Pingo command-surface check, and both embedded PlatformIO builds pass.
 This is the commit checkpoint; no subsequent optimization is included.
+
+#### Signed 16.16 texture-span completion
+
+The remaining portable-C portion of Hecker's subdividing-affine mapper is now
+implemented on top of commit `7a1f9ba`, pending visual and physical-hardware
+acceptance. Recovered U and V are converted from normalized coordinates into
+texture-texel space and then into signed 16.16 fixed point. V is converted
+directly into Pingo's top-down texture-memory row coordinate. Each triangle
+chooses Hecker's direction-dependent `0x8000` or `0x7fff` modifier from the
+sign of the perspective-correct coordinate gradient; the V modifier is
+reversed to account for the memory-row transform.
+
+Each eight-pixel block now performs these operations:
+
+1. recover the exact floating U/V values at the block boundaries;
+2. independently truncate the starting coordinates and total deltas to
+   signed 16.16;
+3. divide each fixed delta by the endpoint distance; and
+4. sample and advance U/V inside the block with integer clamps, shifts, and
+   additions only.
+
+The fixed sampler preserves both RGBA2222 direct loads and RGBA8888
+conversion. A final block uses its last covered pixel as the endpoint and an
+`N-1` divisor. A one-pixel block has a zero delta and performs no unused
+post-sample addition. Depth rejection still advances both texture
+accumulators. Exact floating block boundaries continue to carry between
+blocks; fixed-point rounding error does not.
+
+The projective-pole policy remains conservative. NaN, infinity,
+unrepresentable signed 16.16 coordinates, modifier overflow, or a potentially
+overflowing final accumulator selects the defined floating fallback for that
+block. It does not clamp a projective pole or alter coverage/depth behavior.
+
+Qualification completed before visual review:
+
+1. focused span and dual-format texture tests pass;
+2. exhaustive final-block lengths `1..8` pass in both coordinate directions,
+   including negative U and V deltas;
+3. UBSan, floating divide-by-zero, and float-to-integer-overflow checks pass;
+4. ordinary and diagnostic native smoke suites pass;
+5. the VDU scope guard still reports TurboVega commands `0..40` plus render
+   notification `41`;
+6. ordinary and diagnostic PlatformIO builds pass;
+7. all 1,447 emulator frames and both expected bitmap streams are present;
+   every 32-bit z-buffer is bit-exact against `7a1f9ba`; and
+8. every raw target and z-buffer dump has the expected byte count, with no
+   failed dump record.
+
+Hecker's half-texel rule is intentionally not color-exact with Pingo's
+previous floor sampler. It changes 1,411 of 1,447 color targets and
+3,082,242 of 111,129,600 pixels (`2.773556%`). The worst target is Cube
+near-plane bitmap `1257`, sequence `133`: 37,937 pixels
+(`49.397135%`). Coverage and depth remain exact, so these differences isolate
+texture sampling and require the author's visual acceptance.
+
+Embedded RAM remains 42,520 bytes. Ordinary flash is 1,067,781 bytes,
+1,644 bytes above the subdivided-affine checkpoint; diagnostic flash is
+1,070,109 bytes. `renderObject` grows by 1,544 bytes and its ordinary stack
+frame grows by 48 bytes, from `0x220` to `0x250`; the diagnostic stack frame
+also grows by 48 bytes, from `0x240` to `0x270`.
+
+Xtensa disassembly confirms that the ordinary per-pixel U/V path contains
+only integer clamps, shifts, indexing, and two fixed-coordinate additions.
+Perspective boundary recovery retains one `__divsf3` per block. Fixed U/V
+delta setup uses two native signed `quos` instructions per block; a
+one-pixel tail uses neither. The exceptional floating fallback retains its
+old operations. There is no architecture-specific assembly, pragma, or
+unrolled fragment body: the ESP32-specific final optimization remains
+deliberately separate.
+
+A one-run-per-phase native A/B/A screening bracket measured 379.886,
+413.008, and 375.367 microseconds per frame for floating A1, fixed B, and
+floating A2 respectively. Relative to the A midpoint, the fixed candidate is
+9.370% slower by render time (`-8.567%` equivalent FPS). This is a real host
+regression, but not a hardware conclusion: the host has hardware floating
+point while the ESP32 calls software `__divsf3`. Preserve the result and
+decide the tranche on visual correctness and physical ESP32 measurements.
+The immutable local qualification artifacts are under
+`/tmp/pingo-fixed16-20260729`.
+
+Physical ESP32 testing on the Olimex Agon Light 2 resolves that question
+against this implementation. Two visually accepted runs used the same board,
+fixture binaries, shortened 507-frame chain, and capture protocol as two
+subdivided-affine floating-point baseline runs. Every fixture regressed:
+Cube by 13.19% FPS, EarthUV by 10.96%, Earth party ellipse by 7.82%, Cube
+near-plane by 14.86%, and EarthUV near-plane by 12.96%. Across all 1,014
+matched samples per firmware, weighted equivalent FPS fell from 8.59 to 7.73
+(`-10.01%`), corresponding to an 11.13% increase in render time. Reject and
+revert the signed 16.16 texture-span candidate as an optimization. Preserve
+its implementation and evidence as a completed negative experiment.
+
+This rejection is deliberately narrow. The author remains interested in
+16.16 fixed-point arithmetic elsewhere in the rendering pipeline, where
+different operation counts, value ranges, conversion boundaries, or
+opportunities to keep data fixed for longer may produce a different result.
+No such conversion should be assumed beneficial: this experiment placed
+fixed-point work directly in the fragment hot loop—the portion most exposed
+to per-pixel CPU cost—and still made every tested workload slower. Any later
+proposal must identify which floating operations it removes, include all
+conversion and setup costs, remain independently selectable, and earn its
+place with the same hardware A/B measurements.
+
+The raw fixed-point capture and immutable comparison are:
+
+```text
+~/Agon/mystuff/pingoasm/benchmarks/render-spin/results/olimex-fixed16-two-run-hardware-2026-07-29.log
+~/Agon/mystuff/pingoasm/benchmarks/render-spin/results/olimex-subdivided-affine-vs-fixed16-hardware-2026-07-29.json
+```
+
+## Decision after completing the portable Hecker path
+
+The portable-C portion of the Hecker-style subdividing-affine investigation
+is complete. The only unchecked historical checklist item is a bespoke
+unrolled x86 inner loop. That code cannot run on the ESP32's Xtensa core, and
+its structural purpose is to accelerate the signed fixed-point fragment loop
+that lost 10.01% on the target. An Xtensa-specific unroll would first have to
+recover that entire deficit merely to equal the simpler floating-point
+implementation. Do not pursue it in the next tranche.
+
+Several independently tested experiments are not active in `7a1f9ba`:
+
+1. incremental depth produced a repeatable 1.516% weighted hardware FPS gain
+   and was visually correct; its stable difference form is the selected
+   formulation for a future integration trial;
+2. sharing one perspective reciprocal produced a 6.195% gain in the older
+   exact-per-fragment mapper, but its principle is already subsumed by
+   `7a1f9ba`, whose boundary recovery computes one reciprocal for both U and
+   V;
+3. a single-precision area reciprocal gained 0.972% but changed one color
+   pixel and many low-order depth values, so it remains shelved;
+4. the rational row walker was exact but slower on ESP32;
+5. the texture-metadata snapshot had no persuasive timing signal; and
+6. the signed 16.16 texture-span implementation was visually correct but
+   slower on every hardware fixture.
+
+### Proposed next sequence
+
+1. Commit the complete fixed-point implementation, tests, documentation, and
+   rejection evidence as an explicitly rejected experiment.
+2. Restore the selected `7a1f9ba` source state in a new commit rather than
+   rewriting history, leaving the negative experiment directly recoverable.
+3. Reapply only the stable difference-form incremental-depth candidate.
+4. Run native, sanitizer, command-surface, ordinary/diagnostic embedded,
+   emulator correctness, Olimex visual, and two-run hardware performance
+   gates.
+5. Retain incremental depth only if the stacked result remains visually
+   acceptable and measurably faster than `7a1f9ba`.
+6. Establish that result as the new rasterizer checkpoint.
+7. Begin modular object-level frustum culling as a separate optimization
+   tranche. Use conservative model bounds and reject an object only when its
+   complete bound lies outside one frustum plane.
+
+This sequence deliberately separates fragment arithmetic from culling. It
+preserves a clean attribution for every measured gain and a straightforward
+rollback point before the renderer begins skipping complete objects.
 
 ### 5. Indexed transformed-vertex cache
 

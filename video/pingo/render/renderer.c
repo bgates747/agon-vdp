@@ -331,6 +331,13 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         int32_t w2_row = orient2d( a_s, b_s, minTriangle);
 
         PingoPerspectiveAttributes textureStepX = {0.0f, 0.0f, 0.0f};
+        PingoPerspectiveAttributes textureStepY = {0.0f, 0.0f, 0.0f};
+        PingoPerspectiveFixedMapping textureFixedMapping = {
+            .uScale = 0.0f,
+            .vScale = 0.0f,
+            .uModifier = PINGO_FIXED16_16_POSITIVE_MODIFIER,
+            .vModifier = PINGO_FIXED16_16_POSITIVE_MODIFIER
+        };
         if (o->material != 0) {
             // a.w/b.w/c.w retain reciprocal clip-space W.
             tca.x *= a.w;
@@ -356,6 +363,43 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                 (A12 * (tca.y - tcc.y) +
                  A20 * (tcb.y - tcc.y)) *
                 areaInverse;
+
+            textureStepY.reciprocalW =
+                (B12 * (a.w - c.w) + B20 * (b.w - c.w)) *
+                areaInverse;
+            textureStepY.uOverW =
+                (B12 * (tca.x - tcc.x) +
+                 B20 * (tcb.x - tcc.x)) *
+                areaInverse;
+            textureStepY.vOverW =
+                (B12 * (tca.y - tcc.y) +
+                 B20 * (tcb.y - tcc.y)) *
+                areaInverse;
+
+            Texture * const texture = o->material->texture;
+            textureFixedMapping.uScale =
+                texture->size.x > 1
+                    ? (float)(texture->size.x - 1)
+                    : 0.0f;
+            textureFixedMapping.vScale =
+                texture->size.y > 1
+                    ? (float)(texture->size.y - 1)
+                    : 0.0f;
+            textureFixedMapping.uModifier =
+                pingoPerspectiveRoundingModifier(
+                    a.w, tca.x,
+                    textureStepX.reciprocalW,
+                    textureStepX.uOverW,
+                    textureStepY.reciprocalW,
+                    textureStepY.uOverW);
+
+            textureFixedMapping.vModifier =
+                pingoPerspectiveReversedRoundingModifier(
+                    a.w, tca.y,
+                    textureStepX.reciprocalW,
+                    textureStepX.vOverW,
+                    textureStepY.reciprocalW,
+                    textureStepY.vOverW);
         }
 
 #if PINGO_RENDER_DIAGNOSTICS
@@ -422,9 +466,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             float textCoordy = 0.0f;
             float textCoordStepX = 0.0f;
             float textCoordStepY = 0.0f;
+            int32_t fixedTextCoordX = 0;
+            int32_t fixedTextCoordY = 0;
+            int32_t fixedTextCoordStepX = 0;
+            int32_t fixedTextCoordStepY = 0;
             uint32_t textureSpanRemaining = 0u;
             uint32_t textureBlockRemaining = 0u;
             bool textureBlockValid = false;
+            bool textureBlockFixed = false;
 
             if (o->material != 0) {
                 PingoPerspectiveAttributes textureAttributes;
@@ -453,6 +502,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                             textureBoundary,
                             textureStepX,
                             textureSpanRemaining,
+                            &textureFixedMapping,
                             &block);
                     textureBlockRemaining = block.length;
                     textureSpanRemaining -= block.length;
@@ -461,6 +511,11 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     textCoordy = block.v;
                     textCoordStepX = block.uStep;
                     textCoordStepY = block.vStep;
+                    fixedTextCoordX = block.fixedU;
+                    fixedTextCoordY = block.fixedV;
+                    fixedTextCoordStepX = block.fixedUStep;
+                    fixedTextCoordStepY = block.fixedVStep;
+                    textureBlockFixed = block.fixedValid;
                 }
 
 #if PINGO_RENDER_DIAGNOSTICS
@@ -501,9 +556,22 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                             fragmentsReciprocalWRejected++;
 #endif
                         } else {
-                            Pixel text = texture_readFInline(
-                                o->material->texture,
-                                (Vec2f){textCoordx,textCoordy});
+                            Pixel text;
+                            if (textureBlockFixed) {
+                                text = texture_read_fixed16_16_inline(
+                                    o->material->texture,
+                                    fixedTextCoordX,
+                                    fixedTextCoordY);
+                            } else {
+                                /*
+                                 * Preserve defined sampling for a finite but
+                                 * unrepresentable projective-pole block.
+                                 * Qualified ordinary spans use fixed point.
+                                 */
+                                text = texture_readFInline(
+                                    o->material->texture,
+                                    (Vec2f){textCoordx,textCoordy});
+                            }
 #if DEBUG
                             //show_pixel(textCoordx, textCoordy, text.a, text.b, text.g, text.r);
 #endif
@@ -533,9 +601,16 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                  * Depth rejection must not freeze the texture mapper.
                  */
                 if (o->material != 0) {
-                    textCoordx += textCoordStepX;
-                    textCoordy += textCoordStepY;
                     textureBlockRemaining--;
+                    if (textureBlockRemaining != 0u) {
+                        if (textureBlockFixed) {
+                            fixedTextCoordX += fixedTextCoordStepX;
+                            fixedTextCoordY += fixedTextCoordStepY;
+                        } else {
+                            textCoordx += textCoordStepX;
+                            textCoordy += textCoordStepY;
+                        }
+                    }
                 }
             }
 
