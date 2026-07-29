@@ -1,0 +1,8 @@
+diff --git a/video/pingo/render/renderer.c b/video/pingo/render/renderer.c
+--- a/video/pingo/render/renderer.c
++++ b/video/pingo/render/renderer.c
+@@ -318,3 +318,3 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
+         }
+-        float areaInverse = 1.0/area;
++        float areaInverse = 1.0f / (float)area;
+ 
