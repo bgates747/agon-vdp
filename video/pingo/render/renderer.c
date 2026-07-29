@@ -164,9 +164,8 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     // but compose view and projection once per object instead of performing
     // both matrix-vector products for every triangle vertex. Despite its
     // argument order, mat4MultiplyM(&v, &p) returns p * v.
-    Mat4 v = r->camera_view;
-    Mat4 p = r->camera_projection;
-    Mat4 vp = mat4MultiplyM(&v, &p);
+    Mat4 vp = mat4MultiplyM(
+        &r->camera_view, &r->camera_projection);
 
 #if !PINGO_DISABLE_ILLUMINATION
     // The light direction is constant for the whole object. Normalizing it
