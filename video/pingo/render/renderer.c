@@ -380,16 +380,13 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     continue;
                 }
 
-                if (depth_check(
+                if (!depth_try_write(
                         zetaBuffer, x + y * scrSize.x, 1-depth )) {
 #if PINGO_RENDER_DIAGNOSTICS
                     fragmentsDepthTestRejected++;
 #endif
                     continue;
                 }
-
-                depth_write(
-                    zetaBuffer, x + y * scrSize.x, 1- depth );
 
                 if (o->material != 0) {
                     //Texture lookup

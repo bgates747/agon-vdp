@@ -8,6 +8,15 @@ void depth_write (PingoDepth * d, int idx, float value) {
 bool depth_check(PingoDepth * d, int idx, float value){
     return (uint32_t)(value * (float)UINT32_MAX) < d[idx].d;
 }
+
+bool depth_try_write(PingoDepth * d, int idx, float value) {
+    uint32_t candidate = (uint32_t)(value * (float)UINT32_MAX);
+    if (candidate < d[idx].d) {
+        return false;
+    }
+    d[idx].d = candidate;
+    return true;
+}
 #endif
 
 #ifdef ZBUFFER16
@@ -29,4 +38,3 @@ bool depth_check(PingoDepth * d, int idx, float value){
     return (uint8_t)(value * UINT8_MAX) > d[idx].d;
 }
 #endif
-
