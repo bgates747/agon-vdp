@@ -8,6 +8,7 @@
 #include "sprite.h"
 #include "pixel.h"
 #include "depth.h"
+#include "triangle_span.h"
 #include "backend.h"
 #include "scene.h"
 #include "rasterizer.h"
@@ -361,6 +362,8 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         uint32_t fragmentsShaded = 0;
 #endif
 
+        const uint32_t rowWidth = (uint32_t)(maxX - minX);
+
 #if PINGO_DISABLE_ILLUMINATION
         const PixelShadeLut * shadeLut = 0;
 #else
@@ -370,11 +373,28 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #endif
 
         for (int16_t y = minY; y < maxY; y++, w0_row += B12,w1_row += B20,w2_row += B01) {
-            int32_t w0 = w0_row;
-            int32_t w1 = w1_row;
-            int32_t w2 = w2_row;
+            TriangleRowSpan span;
+            if (!triangleRowSpanFind(
+                    area,
+                    w0_row, w1_row, w2_row,
+                    A12, A20, A01,
+                    rowWidth, &span)) {
+                continue;
+            }
 
-            for (int32_t x = minX; x < maxX; x++, w0 += A12, w1 += A20, w2 += A01) {
+            const int32_t offset = (int32_t)span.begin;
+            const int32_t spanMinX = minX + offset;
+            const int32_t spanMaxX =
+                minX + (int32_t)span.end;
+            int32_t w0 = (int32_t)(
+                (int64_t)w0_row + (int64_t)A12 * offset);
+            int32_t w1 = (int32_t)(
+                (int64_t)w1_row + (int64_t)A20 * offset);
+            int32_t w2 = (int32_t)(
+                (int64_t)w2_row + (int64_t)A01 * offset);
+
+            for (int32_t x = spanMinX; x < spanMaxX;
+                 x++, w0 += A12, w1 += A20, w2 += A01) {
 
                 if ((area > 0 && (w0 | w1 | w2) < 0)
                     || (area < 0 && (w0 > 0 || w1 > 0 || w2 > 0)))
