@@ -382,6 +382,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #endif
 
         const uint32_t rowWidth = (uint32_t)(maxX - minX);
+        /*
+         * A12 + A20 + A01 == 0. Calculate the exact first fragment in each
+         * accepted span below, then advance depth with the stable difference
+         * form instead of repeating the barycentric products per fragment.
+         */
+        const float depthStepX =
+            -(A12 * (a.z - c.z) + A20 * (b.z - c.z)) *
+            areaInverse;
 
 #if PINGO_DISABLE_ILLUMINATION
         const PixelShadeLut * shadeLut = 0;
@@ -411,6 +419,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                 (int64_t)w1_row + (int64_t)A20 * offset);
             int32_t w2 = (int32_t)(
                 (int64_t)w2_row + (int64_t)A01 * offset);
+            float depth =
+                -(w0 * a.z + w1 * b.z + w2 * c.z) *
+                areaInverse;
 
             PingoPerspectiveBoundary textureBoundary = {
                 .attributes = {0.0f, 0.0f, 0.0f},
@@ -444,7 +455,8 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             }
 
             for (int32_t x = spanMinX; x < spanMaxX;
-                 x++, w0 += A12, w1 += A20, w2 += A01) {
+                 x++, w0 += A12, w1 += A20, w2 += A01,
+                 depth += depthStepX) {
                 if (o->material != 0 &&
                     textureBlockRemaining == 0u) {
                     PingoPerspectiveSpanBlock block;
@@ -467,7 +479,6 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                 fragmentsCovered++;
 #endif
 
-                float depth =  -( w0 * a.z + w1 * b.z + w2 * c.z ) * areaInverse;
                 if (depth < 0.0 || depth > 1.0) {
 #if PINGO_RENDER_DIAGNOSTICS
                     fragmentsDepthRangeRejected++;

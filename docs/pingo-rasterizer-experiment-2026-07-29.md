@@ -16,6 +16,12 @@ capture first proved that the benchmark is stable enough to distinguish real
 changes: three baseline runs differed by only 0.003 ms in their all-frame
 means.
 
+Commit `6d540d7` preserves the subsequently rejected signed 16.16
+texture-span experiment. Commit `953ec2b` restores the selected floating
+subdivided-affine source without rewriting that history. The stable
+incremental-depth recurrence is now qualified on top of the restored renderer
+and selected as the next rasterizer checkpoint.
+
 ## Baseline and correctness oracle
 
 The stepping-off point is `cb91c12`, tagged `working-pre-hecker`. The fixed
@@ -654,6 +660,108 @@ HTML dashboard live under
 integrated in the working tree. Ordinary and diagnostic native smoke suites,
 the Pingo command-surface check, and both embedded PlatformIO builds pass.
 This is the commit checkpoint; no subsequent optimization is included.
+
+#### Rejected signed 16.16 texture-span experiment
+
+Commit `6d540d7` completes Hecker's portable signed 16.16 inner-span path,
+including directional half-texel modifiers, integer U/V stepping, dual-format
+texture sampling, final partial blocks, safety fallbacks, and expanded unit
+tests. It passed native, sanitizer, scope, embedded-build, complete emulator
+stream, and physical visual gates. On the Olimex Agon Light 2, however, two
+matched 507-frame runs were slower than the floating subdivided-affine
+baseline in every fixture:
+
+| Fixture | Floating FPS | Fixed 16.16 FPS | FPS change |
+| --- | ---: | ---: | ---: |
+| Cube | 11.03 | 9.57 | -13.19% |
+| EarthUV | 11.25 | 10.01 | -10.96% |
+| Earth party ellipse | 7.89 | 7.27 | -7.82% |
+| Cube near-plane | 9.28 | 7.90 | -14.86% |
+| EarthUV near-plane | 9.07 | 7.90 | -12.96% |
+| **All 507 frames, weighted** | **8.59** | **7.73** | **-10.01%** |
+
+Weighted render time increased 11.13%. The implementation remains recoverable
+as a negative test case, but is rejected as an optimization. This does not
+rule out fixed-point arithmetic elsewhere in the pipeline: a future proposal
+must identify the operations it removes, include conversion/setup costs, and
+earn retention through the same hardware A/B protocol.
+
+The only unchecked historical Hecker item is the bespoke unrolled x86 inner
+loop. It cannot run on Xtensa and was intended to accelerate the rejected
+fixed-point fragment path. An Xtensa translation would have to recover the
+entire 10.01% deficit merely to equal the simpler floating implementation, so
+it is declined for the next tranche. The portable Hecker investigation is
+therefore algorithmically complete.
+
+#### Incremental depth stacked on subdivided-affine mapping
+
+After `953ec2b`, the stable difference-form depth recurrence documented above
+was manually adapted to the subdivided-affine loop. The production diff is
+confined to `renderer.c`: it computes one triangle-wide X gradient, evaluates
+the first covered pixel of each accepted row span with the original
+barycentric expression, and advances subsequent depths by one floating
+addition. UV subdivision, coverage, clipping, illumination, texture formats,
+and output code are unchanged.
+
+Completed combined-candidate gates:
+
+1. ordinary and diagnostic native smoke suites pass;
+2. perspective-span and exact-row-span UBSan suites pass;
+3. the command-surface guard still reports TurboVega commands `0..40` plus
+   render notification `41`;
+4. ordinary and diagnostic PlatformIO builds pass;
+5. RAM remains 42,520 bytes; ordinary flash usage is 1,066,281 bytes and
+   diagnostic flash usage is 1,068,637 bytes; and
+6. the complete headless suite emits all 1,447 expected target records:
+   bitmap `1257` sequences `0..579` and bitmap `1410` sequences `0..866`.
+
+Against the accepted subdivided-affine state, 1,268 color hashes and 1,415
+z-buffer hashes differ. Those counts exactly match the earlier standalone
+incremental-depth experiment against its exact-span base, with no new
+fixture-level divergence introduced by stacking UV subdivision. Repeated
+addition remains the known cause: representative historical comparisons
+changed 0–14 final color pixels and stored depth by at most 1,792 integer
+units, approximately `4.2e-7` normalized. Near-coplanar and z-fighting
+geometry remains the principal correctness risk.
+
+The ordinary candidate firmware prepared for physical review has SHA-256:
+
+```text
+f070d462f1fedea6c8a4aaaf00906da74db525bebc8a87513c2bfc86e4d4165d
+```
+
+The author found the complete physical run visually correct. Two clean
+507-frame captures on the same Olimex, fixture binaries, and SD-card chain as
+the subdivided-affine baseline produced:
+
+| Fixture | Subdivided-affine FPS | With incremental depth FPS | FPS gain |
+| --- | ---: | ---: | ---: |
+| Cube | 11.03 | 11.84 | +7.34% |
+| EarthUV | 11.25 | 11.59 | +3.04% |
+| Earth party ellipse | 7.89 | 8.01 | +1.58% |
+| Cube near-plane | 9.28 | 10.05 | +8.27% |
+| EarthUV near-plane | 9.07 | 9.61 | +5.95% |
+| **All 507 frames, weighted** | **8.59** | **8.88** | **+3.40%** |
+
+Weighted render time fell 3.29%, and both candidate runs were visually and
+structurally complete. Xtensa disassembly confirms that `depthStepX` is
+computed once per triangle, the exact starting depth once per accepted row
+span, and subsequent fragments execute one register-resident `add.s`. The
+previous per-fragment path performed three integer-to-float conversions,
+multiple floating multiplies/fused additions, negation, and final scaling.
+The optimized `renderObject` grows by 148 bytes and its stack frame by 16
+bytes; the complete ordinary firmware binary grows by 144 bytes.
+
+The immutable hardware capture and comparison are:
+
+```text
+~/Agon/mystuff/pingoasm/benchmarks/render-spin/results/olimex-subdivided-affine-plus-incremental-depth-two-run-hardware-2026-07-29.log
+~/Agon/mystuff/pingoasm/benchmarks/render-spin/results/olimex-subdivided-affine-vs-incremental-depth-hardware-2026-07-29.json
+```
+
+Accept incremental depth as the new rasterizer checkpoint. Begin modular
+object-level frustum culling only after committing this state, so culling
+performance and correctness remain independently attributable.
 
 ### 5. Indexed transformed-vertex cache
 
