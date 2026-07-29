@@ -27,6 +27,7 @@ typedef struct tag_RendererDiagnostics {
     uint32_t objects;
     uint32_t triangles_submitted;
     uint32_t triangles_z_rejected;
+    uint32_t triangles_frustum_rejected;
     uint32_t triangles_backface_rejected;
     uint32_t triangles_degenerate;
     uint32_t triangles_bbox_rejected;
@@ -54,6 +55,7 @@ typedef struct tag_Renderer{
     Mat4 camera_view;
 
     BackEnd * backEnd;
+    int frustumCulling;
 
 #if PINGO_RENDER_DIAGNOSTICS
     /*
@@ -75,3 +77,5 @@ extern int rendererInit(Renderer *, Vec2i size, struct tag_BackEnd * backEnd);
 extern int rendererSetScene(Renderer *r, Scene *s);
 
 extern int rendererSetCamera(Renderer *r, Vec4i camera);
+
+extern void rendererSetFrustumCulling(Renderer *r, int enabled);

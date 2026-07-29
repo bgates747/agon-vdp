@@ -57,6 +57,25 @@ Vec3f vec3Cross(Vec3f a, Vec3f b)
 
 Vec3f vec3Normalize(Vec3f v)
 {
-    float sqrt = sqrtf(v.x * v.x + v.y * v.y + v.z * v.z);
-    return (Vec3f){v.x / sqrt, v.y / sqrt, v.z / sqrt};
+    /*
+     * Adapted from upstream Pingo fb67d951: keep the zero/unit fast paths
+     * and replace three floating-point divisions with one reciprocal and
+     * three multiplies.
+     */
+    float length_squared = v.x * v.x + v.y * v.y + v.z * v.z;
+
+    if (length_squared == 0.0f) {
+        return (Vec3f){0.0f, 0.0f, 0.0f};
+    }
+
+    if (length_squared == 1.0f) {
+        return v;
+    }
+
+    float inverse_length = 1.0f / sqrtf(length_squared);
+    return (Vec3f){
+        v.x * inverse_length,
+        v.y * inverse_length,
+        v.z * inverse_length
+    };
 }

@@ -12,7 +12,9 @@ output expansion. Hardware remains the performance ground truth.
 
 1. `PINGO_RENDER_DIAGNOSTICS=0` is the default. The detailed fields, counters,
    phase clocks, and their runtime overhead are compiled out.
-2. `PINGO_RENDER_DIAGNOSTICS=1` enables the version-1 diagnostic schema.
+2. `PINGO_RENDER_DIAGNOSTICS=1` enables the diagnostic schema implemented by
+   that source revision. The pre-optimization tag emits version 1; the
+   frustum-culling experiment emits version 2.
    There is no runtime VDU toggle: every successful command-38 render made by
    that firmware build emits the detailed record.
 3. Native diagnostic objects live under
@@ -40,17 +42,21 @@ The implementation is concentrated in:
 5. `userspace/Makefile` — isolated native build mode; and
 6. `platformio.ini` — isolated embedded build environment.
 
-## Version-1 record
+## Version-2 record
 
-The diagnostic build preserves the established first three fields and appends
-a closed, versioned schema:
+The frustum-culling diagnostic build preserves the established first three
+fields and appends a closed, versioned schema:
 
 ```text
-PINGO_RENDER seq=<u32> bmid=<u16> render_us=<u32> d=1 w=<u16> h=<u16> fmt=<2|8> cmd=<u32> pre=<u32> clr=<u32> xf=<u32> ts=<u32> ras=<u32> out=<u32> ob=<u32> ti=<u32> tz=<u32> tf=<u32> td=<u32> to=<u32> tr=<u32> tv=<u32> pt=<u64> pc=<u64> pz=<u64> pd=<u64> pu=<u64> ps=<u64>
+PINGO_RENDER seq=<u32> bmid=<u16> render_us=<u32> d=2 w=<u16> h=<u16> fmt=<2|8> cmd=<u32> pre=<u32> clr=<u32> xf=<u32> ts=<u32> ras=<u32> out=<u32> ob=<u32> ti=<u32> tz=<u32> tfr=<u32> tf=<u32> td=<u32> to=<u32> tr=<u32> tv=<u32> pt=<u64> pc=<u64> pz=<u64> pd=<u64> pu=<u64> ps=<u64>
 ```
 
 All values are unsigned decimal integers. Time fields are microseconds. The
 abbreviations keep the one-record-per-frame serial cost manageable.
+
+Version 2 differs from closed version 1 only by adding `tfr` between `tz` and
+`tf`. The pingoasm summarizer accepts both complete schemas and rejects a
+record that mixes their fields.
 
 ### Identity and timing fields
 
@@ -59,7 +65,7 @@ abbreviations keep the one-record-per-frame serial cost manageable.
 | `seq` | Full control-local render sequence. The callback protocol carries only its low 16 bits. |
 | `bmid` | Command-38 output bitmap ID. |
 | `render_us` | Existing independent monotonic measurement around `rendererRender()` only. In a diagnostic build it necessarily includes instrumentation overhead inside that call. |
-| `d` | Diagnostic schema version; exactly `1` for this schema. |
+| `d` | Diagnostic schema version; exactly `2` for the current experimental schema. |
 | `w`, `h` | Pingo render width and height. |
 | `fmt` | Target bitmap bits per RGBA channel: `2` for RGBA2222 or `8` for RGBA8888. |
 | `cmd` | Valid command-38 handler entry, before reading `bmid`, through target-bitmap finalization and restoration of Pingo's private frame pointer. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
@@ -88,6 +94,7 @@ The timed phases do not form a perfect sum:
 | `ob` | Object render calls reached. Scenes and sprites are not included. |
 | `ti` | Indexed triangle triplets submitted by those objects. |
 | `tz` | Triangles rejected by the renderer's exact projected-Z predicate: all three post-projection, pre-division Z values are greater than zero. This counter must not be interpreted as near-plane clipping. |
+| `tfr` | Triangles rejected before perspective division because all three clip-space vertices lie beyond the same far, left, right, top, or bottom plane. Near/camera-side rejection remains `tz`. This is conservative whole-triangle rejection, not geometric clipping. |
 | `tf` | Triangles rejected by the projected floating-point winding/back-face predicate. |
 | `td` | Triangles that survive the winding test but collapse to zero area after conversion to integer screen coordinates. |
 | `to` | Triangles rejected because their viewport-clamped bounding box is empty. |
@@ -97,10 +104,13 @@ The timed phases do not form a perfect sum:
 The triangle partition is:
 
 ```text
-ti = tz + tf + td + to + tr
+ti = tz + tfr + tf + td + to + tr
 ```
 
 `tv` may overlap `to` or `tr` and is deliberately absent from that sum.
+
+For a version-1 record, `tfr` is absent and the original partition remains
+`ti = tz + tf + td + to + tr`.
 
 ### Fragment fields
 
@@ -150,9 +160,10 @@ These definitions make several comparisons direct:
    PINGO_RENDER seq=<u32> bmid=<u16> render_us=<u32>
    ```
 
-8. Schema version 1 is closed. A record containing `d=1` must contain each
-   version-1 field exactly once and no unknown fields. Adding, removing, or
-   redefining fields requires a new schema version and parser support.
+8. Schema versions 1 and 2 are closed. A record must contain every field for
+   its declared version exactly once and no unknown fields. Version 1 has no
+   `tfr`; version 2 requires it. Adding, removing, or redefining fields requires
+   another schema version and parser support.
 
 The callback wire ABI and application-side interrupt contract are separate
 from this debug schema; see `docs/pingo-render-completion.md`.
@@ -200,8 +211,10 @@ performance-neutral:
    qualified archived firmware image. Do not compare diagnostic
    `render_us` directly with a release baseline and call the difference a
    renderer regression.
-8. Emulator or native timing is useful for functional regression only. It is
-   not an ESP32 performance substitute.
+8. Repeated emulator/native timing on the same quiet host is useful for
+   screening relative regressions and ranking candidates. Its absolute times
+   and percentages are host-specific and are not substitutes for ESP32
+   hardware qualification.
 
 ## Native verification
 
@@ -237,12 +250,22 @@ The direct renderer test covers:
 4. reversed winding and back-face rejection;
 5. two overlapping triangles and a nonzero depth-test rejection count;
 6. exact projected-Z rejection;
-7. integer-screen degeneracy independently of back-face rejection;
-8. an offscreen empty-bounding-box rejection and a separately rasterized,
-   viewport-clamped triangle;
-9. covered fragments rejected by the `[0,1]` depth range;
-10. unsigned elapsed-tick arithmetic across a 32-bit clock wrap; and
-11. both triangle and fragment partition invariants.
+7. far, left, right, top, and bottom common-plane frustum rejection;
+8. strict clip-boundary retention, plane-crossing retention, and mixed
+   outcodes with no common rejected plane;
+9. the qualified projection's `z > 0` near predicate;
+10. triangles with all three W values zero or negative rejected before
+    perspective division, including mixed canonical outcodes;
+11. byte-identical framebuffer and depth results with frustum testing enabled
+    and disabled across retained, plane-crossing, far-rejected, and
+    side-rejected triangles;
+12. integer-screen degeneracy independently of back-face rejection;
+13. an offscreen frustum rejection and a separately rasterized,
+    viewport-clamped triangle;
+14. legacy covered-fragment depth-range rejection with frustum testing
+    disabled;
+15. unsigned elapsed-tick arithmetic across a 32-bit clock wrap; and
+16. both triangle and fragment partition invariants.
 
 Run the ordinary, non-instrumented native smoke independently when required:
 
@@ -263,6 +286,41 @@ make -C ~/Agon/mystuff/agon-vdp/userspace \
 Native tests establish structure, arithmetic, state reset, command plumbing,
 and ABI loading. They do not visually qualify a render and do not qualify
 hardware timing.
+
+## Silent emulator benchmarking
+
+The owned Fab fork provides a strict, windowless benchmark harness:
+
+```bash
+~/Agon/mystuff/fab-agon-emulator/scripts/benchmark-pingo.py \
+  --emulator \
+    ~/Agon/mystuff/fab-agon-emulator/target/release/fab-agon-emulator \
+  --vdp ~/Agon/mystuff/agon-vdp/video/build/userspace/vdp_pingo.so \
+  --sdcard \
+    ~/Agon/mystuff/pingoasm/emulators/tv-port-baseline/sdcard \
+  --expected-count 289 \
+  --expected-bmid 1410 \
+  --repeats 3 \
+  --output /tmp/pingo-emulator-benchmark.json
+```
+
+The harness forces dummy SDL video and audio drivers, so it opens no window
+and plays no boot beep. Every repeat starts a fresh Fab process with the
+software renderer, zero-initialized RAM, and unlimited eZ80 execution. It
+requires one active `LOAD` followed by one active `RUN`, contiguous render
+sequence numbers, the declared bitmap IDs and record count, stable input
+hashes, and clean debugger-assisted shutdown.
+
+The userspace `force_debug_log()` path writes the ordinary or detailed
+`PINGO_RENDER` record to host `stderr`; the embedded build retains
+`DBGSerial`. Reports hash the harness, emulator, VDP, MOS, selected fixture,
+runtime assets, and raw logs. Forced replacement is staged and publishes the
+JSON report last so a failed rerun cannot make stale metadata claim new or
+partial logs.
+
+Use emulator A/B/A brackets to reject poor candidates cheaply. State emulator
+results explicitly as same-host screening evidence; final visual correctness
+and performance claims still require hardware.
 
 ## Embedded build and flash
 

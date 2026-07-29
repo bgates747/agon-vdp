@@ -1,6 +1,10 @@
 #include <string.h>
 #include <stdio.h>
 #include "renderer.h"
+
+#ifndef PINGO_DISABLE_ILLUMINATION
+#define PINGO_DISABLE_ILLUMINATION 0
+#endif
 #include "sprite.h"
 #include "pixel.h"
 #include "depth.h"
@@ -96,15 +100,50 @@ int orient2d( Vec2i a,  Vec2i b,  Vec2i c)
     return (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x);
 }
 
+/*
+ * Clip-space Z is [-W, 0] for Pingo's qualified projection. The existing
+ * all-Z-positive test retains responsibility for the near/camera plane.
+ * This helper adds only the far and four lateral trivial rejects.
+ */
+static int triangleOutsideRemainingClipPlanes(
+        Vec4f a, Vec4f b, Vec4f c) {
+    /*
+     * A triangle wholly on or behind the eye plane cannot be projected.
+     * Keep this explicit: mixed canonical outcodes alone do not guarantee
+     * that a nonpositive W will satisfy one common plane test.
+     */
+    if (a.w <= 0.0f && b.w <= 0.0f && c.w <= 0.0f)
+        return 1;
+    if (a.z < -a.w && b.z < -b.w && c.z < -c.w)
+        return 1;
+    if (a.x < -a.w && b.x < -b.w && c.x < -c.w)
+        return 1;
+    if (a.x > a.w && b.x > b.w && c.x > c.w)
+        return 1;
+    if (a.y < -a.w && b.y < -b.w && c.y < -c.w)
+        return 1;
+    if (a.y > a.w && b.y > b.w && c.y > c.w)
+        return 1;
+    return 0;
+}
+
 void backendDrawPixel (Renderer * r, Texture * f, Vec2i pos, Pixel color, float illumination) {
     // If backend specifies something..
     if (r->backEnd->drawPixel != 0) {
         // Draw using the backend
+#if PINGO_DISABLE_ILLUMINATION
+        r->backEnd->drawPixel(f, pos, color, 1.0f);
+#else
         r->backEnd->drawPixel(f, pos, color, illumination);
+#endif
     }
     else {
         // By default call this
+#if PINGO_DISABLE_ILLUMINATION
+        texture_draw(f, pos, color);
+#else
         texture_draw(f, pos, pixelMul(color,illumination));
+#endif
     }
 }
 
@@ -120,9 +159,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     // MODEL MATRIX
     Mat4 m = mat4MultiplyM( &o->transform, &object_transform  );
 
-    // VIEW MATRIX
+    // Locally derived from upstream Pingo's transform-composition lineage
+    // (notably a0ed0cb). Preserve this port's model-space lighting convention,
+    // but compose view and projection once per object instead of performing
+    // both matrix-vector products for every triangle vertex. Despite its
+    // argument order, mat4MultiplyM(&v, &p) returns p * v.
     Mat4 v = r->camera_view;
     Mat4 p = r->camera_projection;
+    Mat4 vp = mat4MultiplyM(&v, &p);
 
 #if PINGO_RENDER_DIAGNOSTICS
     r->diagnostics.objects++;
@@ -156,21 +200,22 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         b = mat4MultiplyVec4( &b, &m);
         c = mat4MultiplyVec4( &c, &m);
 
-        //Calc Face Normal
+        // Calculate face illumination unless this experimental build removes
+        // the lighting path to measure its complete renderer cost.
+#if PINGO_DISABLE_ILLUMINATION
+        const float diffuseLight = 1.0f;
+#else
         Vec3f na = vec3fsubV(*((Vec3f*)(&a)), *((Vec3f*)(&b)));
         Vec3f nb = vec3fsubV(*((Vec3f*)(&a)), *((Vec3f*)(&c)));
         Vec3f normal = vec3Normalize(vec3Cross(na, nb));
         Vec3f light = vec3Normalize((Vec3f){-8,-5,5});
         float diffuseLight = (1.0 + vec3Dot(normal, light)) *0.5;
         diffuseLight = MIN(1.0, MAX(diffuseLight, 0));
+#endif
 
-        a = mat4MultiplyVec4( &a, &v);
-        b = mat4MultiplyVec4( &b, &v);
-        c = mat4MultiplyVec4( &c, &v);
-
-        a = mat4MultiplyVec4( &a, &p);
-        b = mat4MultiplyVec4( &b, &p);
-        c = mat4MultiplyVec4( &c, &p);
+        a = mat4MultiplyVec4( &a, &vp);
+        b = mat4MultiplyVec4( &b, &vp);
+        c = mat4MultiplyVec4( &c, &vp);
 
 #if PINGO_RENDER_DIAGNOSTICS
         phase_started = rendererDiagnosticsFinishPhase(
@@ -185,6 +230,16 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                 r, phase_started, &r->diagnostics.triangle_setup_ticks);
 #endif
            continue;
+        }
+
+        if (r->frustumCulling &&
+            triangleOutsideRemainingClipPlanes(a, b, c)) {
+#if PINGO_RENDER_DIAGNOSTICS
+            r->diagnostics.triangles_frustum_rejected++;
+            rendererDiagnosticsFinishPhase(
+                r, phase_started, &r->diagnostics.triangle_setup_ticks);
+#endif
+            continue;
         }
 
         // convert to device coordinates by perspective division
@@ -388,6 +443,7 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     r->clear = 1;
     r->clearColor = PIXELBLACK;
     r->backEnd = backEnd;
+    r->frustumCulling = 1;
 
 #if PINGO_RENDER_DIAGNOSTICS
     r->diagnostics_clock = 0;
@@ -402,6 +458,12 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     if (e) return e;
 
     return 0;
+}
+
+void rendererSetFrustumCulling(Renderer * r, int enabled) {
+    if (r) {
+        r->frustumCulling = enabled != 0;
+    }
 }
 
 int rendererRender(Renderer * r) {
