@@ -55,12 +55,18 @@ make -C userspace \
 
 Diagnostic and ordinary objects use separate ignored build directories, so
 switching variants cannot silently reuse objects compiled with the other
-macro. The counter test covers empty and ordinary frames, projected-Z,
-whole-frustum, and backface rejection; strict clip boundaries and crossing
-triangles; all-nonpositive W; enabled/disabled output equivalence; integer-screen
+macro. The current closed diagnostic schema is version 3. The counter test
+covers exact mesh-AABB caching and invalidation; conservative eight-corner
+object rejection at every common clip plane; exact and just-outside object
+boundaries; crossing bounds; rotation, scene hierarchy, nonuniform negative
+scale, nonfinite/unordered bounds and disabled-culling fail-open behavior, and
+byte-identical output between object rejection and the triangle fallback. It
+also retains the direct triangle tests for empty and
+ordinary frames, projected-Z, whole-frustum, and backface rejection; strict
+clip boundaries and crossing triangles; all-nonpositive W; integer-screen
 degeneracy; bounding-box clamp; overdraw; depth-range and depth-buffer
 rejection; frame-to-frame reset; unsigned clock wrap; and the published
-counter partitions.
+object, triangle, and fragment invariants.
 See `docs/pingo-render-diagnostics.md` for the record schema and hardware
 workflow.
 

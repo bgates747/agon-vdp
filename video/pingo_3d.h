@@ -497,33 +497,53 @@ typedef struct tag_Pingo3dControl {
     // VDU 23, 0, &A0, sid; &48, 1, mid; n; x0; y0; z0; ... :  Define Mesh Vertices
     void define_mesh_vertices() {
         auto mesh = get_mesh();
+        if (!mesh) {
+            return;
+        }
+        mesh->positions_count = 0;
+        mesh->bounds_valid = 0;
         if (mesh->positions) {
             heap_caps_free(mesh->positions);
             mesh->positions = NULL;
         }
-        auto n = (uint32_t) m_proc->readWord_t();
+        auto vertex_count = m_proc->readWord_t();
+        if (vertex_count < 0) {
+            return;
+        }
+        auto n = (uint32_t)vertex_count;
         if (n > 0) {
             auto size = n*sizeof(p3d::Vec3f);
             mesh->positions = (p3d::Vec3f*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
             auto pos = mesh->positions;
+            bool complete = pos != nullptr;
             if (!pos) {
                 debug_log("define_mesh_vertices: failed to allocate %u bytes\n", size);
                 show_free_ram();
             }
             debug_log("Reading %u vertices\n", n);
             for (uint32_t i = 0; i < n; i++) {
-                uint16_t x = m_proc->readWord_t();
-                uint16_t y = m_proc->readWord_t();
-                uint16_t z = m_proc->readWord_t();
-                if (pos) {
-                    pos->x = convert_position_value(x);
-                    pos->y = convert_position_value(y);
-                    pos->z = convert_position_value(z);
+                auto x = m_proc->readWord_t();
+                auto y = m_proc->readWord_t();
+                auto z = m_proc->readWord_t();
+                if (x < 0 || y < 0 || z < 0) {
+                    complete = false;
+                }
+                if (pos && complete) {
+                    pos->x = convert_position_value((uint16_t)x);
+                    pos->y = convert_position_value((uint16_t)y);
+                    pos->z = convert_position_value((uint16_t)z);
                     if (!(i & 0x1F)) debug_log("%u %f %f %f\n", i, pos->x, pos->y, pos->z);
                     pos++;
                 }
             }
             debug_log("\n");
+            if (mesh->positions && complete) {
+                mesh->positions_count = n;
+                p3d::meshUpdateBounds(mesh);
+            } else if (mesh->positions) {
+                heap_caps_free(mesh->positions);
+                mesh->positions = NULL;
+            }
         }
     }
 
@@ -1172,8 +1192,9 @@ typedef struct tag_Pingo3dControl {
 
         force_debug_log(
             "PINGO_RENDER seq=%u bmid=%u render_us=%u "
-            "d=2 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
-            "ras=%u out=%u ob=%u ti=%u tz=%u tfr=%u tf=%u td=%u to=%u tr=%u tv=%u "
+            "d=3 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
+            "ras=%u out=%u ob=%u obt=%u ofr=%u ta=%u "
+            "ti=%u tz=%u tfr=%u tf=%u td=%u to=%u tr=%u tv=%u "
             "pt=%llu pc=%llu pz=%llu pd=%llu pu=%llu ps=%llu\n",
             sequence, bmid, render_elapsed_us,
             m_width, m_height,
@@ -1181,6 +1202,9 @@ typedef struct tag_Pingo3dControl {
             command_us, prepare_us, clear_us, transform_us,
             triangle_setup_us, raster_us, output_us,
             renderer.diagnostics.objects,
+            renderer.diagnostics.objects_bounds_tested,
+            renderer.diagnostics.objects_frustum_rejected,
+            renderer.diagnostics.triangles_avoided,
             renderer.diagnostics.triangles_submitted,
             renderer.diagnostics.triangles_z_rejected,
             renderer.diagnostics.triangles_frustum_rejected,

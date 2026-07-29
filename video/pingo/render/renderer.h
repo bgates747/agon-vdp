@@ -25,6 +25,9 @@ typedef struct tag_RendererDiagnostics {
     uint64_t raster_ticks;
 
     uint32_t objects;
+    uint32_t objects_bounds_tested;
+    uint32_t objects_frustum_rejected;
+    uint32_t triangles_avoided;
     uint32_t triangles_submitted;
     uint32_t triangles_z_rejected;
     uint32_t triangles_frustum_rejected;
