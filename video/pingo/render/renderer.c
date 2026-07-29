@@ -395,11 +395,6 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
             for (int32_t x = spanMinX; x < spanMaxX;
                  x++, w0 += A12, w1 += A20, w2 += A01) {
-
-                if ((area > 0 && (w0 | w1 | w2) < 0)
-                    || (area < 0 && (w0 > 0 || w1 > 0 || w2 > 0)))
-                    continue;
-
 #if PINGO_RENDER_DIAGNOSTICS
                 fragmentsCovered++;
 #endif
