@@ -70,3 +70,35 @@ from `pingoasm/apps/turbovega`, using the isolated profile documented in
 The persistent comparison emulator must snapshot the resulting shared object.
 It must not symlink directly to this build output, because later
 `pingo-codex` builds will replace that file.
+
+## Exact render-target comparison
+
+Optimization experiments can add an emulator-only hash after each completed
+Pingo render:
+
+```bash
+make -C userspace \
+  FAB_ROOT=~/Agon/mystuff/fab-agon-emulator \
+  BUILD_DIR="$PWD/video/build/userspace-target-hash" \
+  CPPFLAGS=-DPINGO_RENDER_TARGET_HASH=1
+```
+
+`PINGO_TARGET` records contain the render sequence, bitmap ID, byte count, and
+64-bit FNV-1a hash of the final target bitmap. Hashing occurs after the timed
+renderer interval. It is compiled out unless both `USERSPACE` and
+`PINGO_RENDER_TARGET_HASH=1` are defined, so embedded and ordinary emulator
+builds pay no cost.
+
+Validate one log or require a candidate to match a baseline exactly:
+
+```bash
+scripts/compare_pingo_target_hashes.py \
+  --expected-stream 1257:580 \
+  --expected-stream 1410:867 \
+  baseline.log candidate.log
+```
+
+Use `--extract oracle.txt` to retain only the canonical `PINGO_TARGET` records.
+The comparator also rejects missing, duplicate, reordered, or non-contiguous
+records. A passing hash comparison is an automated image-equivalence gate; it
+does not replace final visual and hardware qualification.
