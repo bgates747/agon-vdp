@@ -50,41 +50,6 @@ static inline Pixel texture_readFInline(
    return texture_read_index_inline(f, index);
 }
 
-/*
- * Read texel-space signed 16.16 coordinates. V is already a top-down texture
- * memory row. Clamp before shifting so the shift operand is nonnegative and
- * the result is portable for coordinates outside the texture.
- */
-static inline Pixel texture_read_fixed16_16_inline(
-      const Texture * f, int32_t u, int32_t v)
-{
-   const int32_t maxX = f->size.x > 1 ? f->size.x - 1 : 0;
-   const int32_t maxY = f->size.y > 1 ? f->size.y - 1 : 0;
-
-   uint32_t x;
-   if (u <= 0) {
-      x = 0;
-   } else if (maxX <= 32767 &&
-              u >= maxX * (int32_t)65536) {
-      x = (uint32_t)maxX;
-   } else {
-      x = (uint32_t)u >> 16;
-   }
-
-   uint32_t y;
-   if (v <= 0) {
-      y = 0;
-   } else if (maxY <= 32767 &&
-              v >= maxY * (int32_t)65536) {
-      y = (uint32_t)maxY;
-   } else {
-      y = (uint32_t)v >> 16;
-   }
-
-   return texture_read_index_inline(
-      f, x + y * (uint32_t)f->size.x);
-}
-
 extern int texture_init( Texture * f, Vec2i size, Pixel *);
 
 extern int texture_init_format(Texture * f, Vec2i size, void *, TextureFormat);
