@@ -50,6 +50,14 @@ lost; the observed timeout was ultimately traced to the client's setup queue.
 The compact record is retained as the version-1 ABI because it is sufficient,
 has more UART margin, and is now qualified on hardware.
 
+A sixteen-byte payload is stock MOS's hard parser/storage limit, not a proven
+physical transport threshold. Do not send more: the current MOS oversized
+packet path enters discard state without loading the rejected length, so it
+can discard roughly 256 subsequent bytes and desynchronize the protocol. The
+physical receive FIFO is elastic buffering rather than a packet-size rule;
+only the compact twelve-byte wire record has a clean post-barrier hardware
+qualification.
+
 The notification is sent only after `rendererRender()` returns, any RGBA8888
 compatibility expansion has completed, and Pingo has restored its private frame
 pointer. A completion is emitted only after a successful render; an invalid
@@ -61,8 +69,14 @@ a success status in the record would add no correlation value.
 
 An application installs a receiver with MOS API `mos_setkbvector` (`0x1D`).
 MOS calls it with `DEU` pointing at its 16-byte protocol-data buffer. The
-callback must remain short and register-safe because it runs from the UART
-interrupt path.
+callback does not receive the packet length, so the fixed ten-byte payload and
+prefix magic are part of the ABI. It must remain short and register-safe
+because it runs from the UART interrupt path.
+
+MOS provides one global user keyboard-vector slot. Installing a receiver
+replaces any existing receiver, and the API does not return the old value. An
+application must own or explicitly multiplex that slot. The qualified fixture
+assumes ownership and clears it to zero during clean shutdown.
 
 The callback must first check the `P3DR` magic. Normal keyboard events use the
 same packet type and still reach the callback, so non-matching four-byte
@@ -120,10 +134,12 @@ Before timing the first render, send a stock general-poll marker:
 VDU 23,0,&80,&A5
 ```
 
-Wait until MOS `sysvar_gp` (`IX+&37`) becomes `&A5`, then start the render
-timeout and submit command 38. Subsequent renders in the one-in-flight state
-machine naturally follow a received completion, so they do not require another
-setup barrier.
+First clear MOS `sysvar_gp` or choose a marker different from its current
+value; otherwise a stale prior marker can satisfy the wait immediately. Wait
+until `sysvar_gp` (`IX+&37`) becomes `&A5`, then start the render timeout and
+submit command 38. Subsequent renders in the one-in-flight state machine
+naturally follow a received completion, so they do not require another setup
+barrier.
 
 The hardware fixture also leaves the active video mode and final framebuffer
 intact when it exits. An earlier version restored mode 0 immediately after
@@ -153,7 +169,9 @@ application memory that MOS has already reused.
 The implementation deliberately uses `VDUStreamProcessor::send_packet()`, the
 normal VDP response path. Consequently, explicit buffered-command output
 redirection also redirects this packet. Direct application-issued Pingo
-commands use the normal MOS UART stream.
+commands use the normal MOS UART stream. The same send path honors
+`VDPVAR_VDPP_SUPPRESSNEXT`; if that flag is set, it discards the completion,
+clears the flag, and returns before running post-send callbacks.
 
 Pingo rendering itself currently blocks VDP's core-0 command loop. The eZ80
 can keep simulating while a frame renders, but VDP-originated keyboard packets

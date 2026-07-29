@@ -16,10 +16,20 @@ FAB_CHECKOUT := $(abspath $(FAB_ROOT_INPUT))
 FAB_VDP_DIR := $(FAB_CHECKOUT)/src/vdp
 VDP_GL_SRC := $(FAB_VDP_DIR)/userspace-vdp-gl/src
 
-BUILD_DIR ?= $(VDP_ROOT)/video/build/userspace
+DIAGNOSTICS ?= 0
+ifeq ($(DIAGNOSTICS),0)
+DEFAULT_BUILD_DIR := $(VDP_ROOT)/video/build/userspace
+DIAGNOSTIC_FLAGS :=
+else
+DEFAULT_BUILD_DIR := $(VDP_ROOT)/video/build/userspace-diagnostics
+DIAGNOSTIC_FLAGS := -DPINGO_RENDER_DIAGNOSTICS=$(DIAGNOSTICS)
+endif
+
+BUILD_DIR ?= $(DEFAULT_BUILD_DIR)
 TARGET ?= $(BUILD_DIR)/vdp_pingo.so
 SMOKE_TARGET ?= $(BUILD_DIR)/pingo_smoke
 TEXTURE_TEST_TARGET ?= $(BUILD_DIR)/pingo_texture_test
+DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
 ifeq ($(filter clean,$(MAKECMDGOALS)),)
@@ -43,6 +53,7 @@ COMMON_INCLUDES := \
 
 PINGO_CFLAGS := \
 	-DUSERSPACE \
+	$(DIAGNOSTIC_FLAGS) \
 	$(COMMON_INCLUDES) \
 	-Wall \
 	-Wno-error=return-type \
@@ -56,6 +67,7 @@ PINGO_CFLAGS := \
 
 VDP_CXXFLAGS := \
 	-DUSERSPACE \
+	$(DIAGNOSTIC_FLAGS) \
 	$(COMMON_INCLUDES) \
 	-Wall \
 	-Werror=return-type \
@@ -138,7 +150,7 @@ VDP_OBJECTS := \
 OBJECTS := $(VDP_OBJECTS) $(PINGO_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
-.PHONY: all clean smoke texture-test
+.PHONY: all clean smoke texture-test diagnostics-test diagnostics-smoke
 
 all: $(TARGET)
 
@@ -183,14 +195,32 @@ $(TEXTURE_TEST_TARGET): pingo_texture_test.c \
 		$(VDP_ROOT)/video/pingo/render/pixel.c \
 		$(VDP_ROOT)/video/pingo/render/texture.c -lm -o $@
 
+$(DIAGNOSTICS_TEST_TARGET): pingo_renderer_diagnostics_test.c \
+		$(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
+		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -lm -o $@
+
 texture-test: $(TEXTURE_TEST_TARGET)
 	$(TEXTURE_TEST_TARGET)
 
 smoke: $(TARGET) $(SMOKE_TARGET) texture-test
 	$(SMOKE_TARGET) $(TARGET)
 
+ifeq ($(DIAGNOSTICS),0)
+diagnostics-test:
+	@echo "diagnostics-test requires DIAGNOSTICS=1" >&2
+	@false
+else
+diagnostics-test: $(DIAGNOSTICS_TEST_TARGET)
+	$(DIAGNOSTICS_TEST_TARGET)
+endif
+
+diagnostics-smoke: smoke diagnostics-test
+
 clean:
-	$(RM) $(TARGET) $(SMOKE_TARGET) $(TEXTURE_TEST_TARGET) $(VDP_GL_LIB) \
+	$(RM) $(TARGET) $(SMOKE_TARGET) $(TEXTURE_TEST_TARGET) \
+		$(DIAGNOSTICS_TEST_TARGET) $(VDP_GL_LIB) \
 		$(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 
 -include $(DEPS)

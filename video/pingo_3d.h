@@ -1,6 +1,10 @@
 #ifndef PINGO_3D_H
 #define PINGO_3D_H
 
+#ifndef PINGO_RENDER_DIAGNOSTICS
+#define PINGO_RENDER_DIAGNOSTICS 0
+#endif
+
 #include <stdint.h>
 #include <string.h>
 #include <agon.h>
@@ -9,6 +13,9 @@
 #include <chrono>
 #else
 #include <esp_timer.h>
+#if PINGO_RENDER_DIAGNOSTICS
+#include <xtensa/hal.h>
+#endif
 #endif
 #include "esp_heap_caps.h"
 #include "sprites.h"
@@ -22,6 +29,52 @@ static uint64_t pingo_render_clock_us() {
     return (uint64_t) esp_timer_get_time();
 #endif
 }
+
+#if PINGO_RENDER_DIAGNOSTICS
+/*
+ * Detailed renderer diagnostics use a cheap wrapping tick source so that
+ * phase boundaries do not pay the much larger cost of a formatted log or an
+ * ESP timer conversion. Each individually measured clear or per-triangle
+ * phase must take less than one 32-bit wrap (approximately 17.9 seconds at
+ * 240 MHz); frame totals accumulate in 64 bits.
+ */
+static uint32_t pingo_render_diagnostics_clock_ticks() {
+#ifdef USERSPACE
+    using clock = std::chrono::steady_clock;
+    return (uint32_t)std::chrono::duration_cast<std::chrono::microseconds>(
+        clock::now().time_since_epoch()).count();
+#else
+    return (uint32_t)xthal_get_ccount();
+#endif
+}
+
+static uint32_t pingo_render_diagnostics_clock_hz() {
+#ifdef USERSPACE
+    return 1000000U;
+#else
+    return (uint32_t)F_CPU;
+#endif
+}
+
+static uint32_t pingo_render_diagnostics_elapsed_us(
+        uint64_t started, uint64_t finished) {
+    uint64_t elapsed = finished - started;
+    return elapsed > UINT32_MAX ? UINT32_MAX : (uint32_t)elapsed;
+}
+
+static uint32_t pingo_render_diagnostics_ticks_to_us(
+        uint64_t ticks, uint32_t clock_hz) {
+    if (!clock_hz) {
+        return 0;
+    }
+    uint64_t microseconds =
+        (ticks / clock_hz) * 1000000ULL +
+        ((ticks % clock_hz) * 1000000ULL + clock_hz / 2) / clock_hz;
+    return microseconds > UINT32_MAX
+        ? UINT32_MAX
+        : (uint32_t)microseconds;
+}
+#endif
 
 namespace p3d {
 
@@ -863,6 +916,9 @@ typedef struct tag_Pingo3dControl {
 
     // VDU 23, 0, &A0, sid; &48, 38, bmid; :  Render To Bitmap
     void render_to_bitmap() {
+#if PINGO_RENDER_DIAGNOSTICS
+        uint64_t command_started_us = pingo_render_clock_us();
+#endif
         auto bmid = m_proc->readWord_t();
         if (bmid < 0) {
             return;
@@ -878,6 +934,10 @@ typedef struct tag_Pingo3dControl {
             return;
         }
 
+#if PINGO_RENDER_DIAGNOSTICS
+        uint64_t prepare_started_us = pingo_render_clock_us();
+#endif
+
         // Native RGBA2222 targets are Pingo's working format, so render
         // directly into them. Keep the private frame for RGBA8888 targets,
         // which require an explicit compatibility expansion after rendering.
@@ -890,6 +950,11 @@ typedef struct tag_Pingo3dControl {
         auto size = p3d::Vec2i{(p3d::I_TYPE)m_width, (p3d::I_TYPE)m_height};
         p3d::Renderer renderer;
         rendererInit(&renderer, size, &m_backend );
+#if PINGO_RENDER_DIAGNOSTICS
+        renderer.diagnostics_clock = pingo_render_diagnostics_clock_ticks;
+        renderer.diagnostics_clock_hz =
+            pingo_render_diagnostics_clock_hz();
+#endif
         rendererSetCamera(&renderer,(p3d::Vec4i){0,0,size.x,size.y});
 
         p3d::Scene scene;
@@ -923,6 +988,11 @@ typedef struct tag_Pingo3dControl {
         }
         scene.transform = m_scene.m_transform;
 
+#if PINGO_RENDER_DIAGNOSTICS
+        uint32_t prepare_us = pingo_render_diagnostics_elapsed_us(
+            prepare_started_us, pingo_render_clock_us());
+#endif
+
         //debug_log("Frame data:  %02hX %02hX %02hX %02hX\n", m_frame->r, m_frame->g, m_frame->b, m_frame->a);
         //debug_log("Destination: %02hX %02hX %02hX %02hX\n", dst_pix->r, dst_pix->g, dst_pix->b, dst_pix->a);
 
@@ -933,6 +1003,9 @@ typedef struct tag_Pingo3dControl {
         uint32_t render_elapsed_us =
             (uint32_t)(pingo_render_clock_us() - render_start_us);
 
+#if PINGO_RENDER_DIAGNOSTICS
+        uint64_t output_started_us = pingo_render_clock_us();
+#endif
         if (bitmap->format == PixelFormat::RGBA8888) {
             auto dst_pix = (uint32_t *)bitmap->data;
             uint32_t frame_size = (uint32_t)m_width * m_height;
@@ -942,12 +1015,65 @@ typedef struct tag_Pingo3dControl {
         }
         m_frame = private_frame;
 
+#if PINGO_RENDER_DIAGNOSTICS
+        uint64_t output_finished_us = pingo_render_clock_us();
+        auto sequence = m_render_sequence++;
+        // Do not hold the completion callback behind timing conversion or a
+        // long diagnostic line.
+        send_render_complete(sequence);
+
+        uint32_t output_us = pingo_render_diagnostics_elapsed_us(
+            output_started_us, output_finished_us);
+        uint32_t command_us = pingo_render_diagnostics_elapsed_us(
+            command_started_us, output_finished_us);
+        uint32_t diagnostics_clock_hz = renderer.diagnostics_clock_hz;
+
+        uint32_t clear_us = pingo_render_diagnostics_ticks_to_us(
+            renderer.diagnostics.clear_ticks, diagnostics_clock_hz);
+        uint32_t transform_us = pingo_render_diagnostics_ticks_to_us(
+            renderer.diagnostics.transform_ticks, diagnostics_clock_hz);
+        uint32_t triangle_setup_us =
+            pingo_render_diagnostics_ticks_to_us(
+                renderer.diagnostics.triangle_setup_ticks,
+                diagnostics_clock_hz);
+        uint32_t raster_us = pingo_render_diagnostics_ticks_to_us(
+            renderer.diagnostics.raster_ticks, diagnostics_clock_hz);
+
+        force_debug_log(
+            "PINGO_RENDER seq=%u bmid=%u render_us=%u "
+            "d=1 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
+            "ras=%u out=%u ob=%u ti=%u tz=%u tf=%u td=%u to=%u tr=%u tv=%u "
+            "pt=%llu pc=%llu pz=%llu pd=%llu pu=%llu ps=%llu\n",
+            sequence, bmid, render_elapsed_us,
+            m_width, m_height,
+            bitmap->format == PixelFormat::RGBA2222 ? 2 : 8,
+            command_us, prepare_us, clear_us, transform_us,
+            triangle_setup_us, raster_us, output_us,
+            renderer.diagnostics.objects,
+            renderer.diagnostics.triangles_submitted,
+            renderer.diagnostics.triangles_z_rejected,
+            renderer.diagnostics.triangles_backface_rejected,
+            renderer.diagnostics.triangles_degenerate,
+            renderer.diagnostics.triangles_bbox_rejected,
+            renderer.diagnostics.triangles_rasterized,
+            renderer.diagnostics.triangles_bbox_clamped,
+            (unsigned long long)renderer.diagnostics.fragments_bbox,
+            (unsigned long long)renderer.diagnostics.fragments_covered,
+            (unsigned long long)
+                renderer.diagnostics.fragments_depth_range_rejected,
+            (unsigned long long)
+                renderer.diagnostics.fragments_depth_test_rejected,
+            (unsigned long long)
+                renderer.diagnostics.fragments_reciprocal_w_rejected,
+            (unsigned long long)renderer.diagnostics.fragments_shaded);
+#else
         auto sequence = m_render_sequence++;
         force_debug_log("PINGO_RENDER seq=%u bmid=%u render_us=%u\n",
             sequence, bmid, render_elapsed_us);
         // Completion is deliberately last: RGBA8888 compatibility expansion
         // and restoration of Pingo's private frame have both finished.
         send_render_complete(sequence);
+#endif
         //debug_log("Frame data:  %02hX %02hX %02hX %02hX\n", m_frame->r, m_frame->g, m_frame->b, m_frame->a);
         //debug_log("Final data:  %02hX %02hX %02hX %02hX\n", dst_pix->r, dst_pix->g, dst_pix->b, dst_pix->a);
     }

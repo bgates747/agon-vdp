@@ -14,6 +14,19 @@
 extern void show_pixel(float x, float y, uint8_t a, uint8_t b, uint8_t g, uint8_t r);
 #endif
 
+#if PINGO_RENDER_DIAGNOSTICS
+static uint32_t rendererDiagnosticsNow(Renderer * r) {
+    return r->diagnostics_clock ? r->diagnostics_clock() : 0;
+}
+
+static uint32_t rendererDiagnosticsFinishPhase(
+        Renderer * r, uint32_t started, uint64_t * accumulator) {
+    uint32_t finished = rendererDiagnosticsNow(r);
+    *accumulator += (uint32_t)(finished - started);
+    return finished;
+}
+#endif
+
 int renderFrame(Renderer * r, Renderable ren) {
     Texture * f = ren.impl;
     return rasterizer_draw_pixel_perfect((Vec2i) { 0, 0 }, r, f);
@@ -111,7 +124,16 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     Mat4 v = r->camera_view;
     Mat4 p = r->camera_projection;
 
+#if PINGO_RENDER_DIAGNOSTICS
+    r->diagnostics.objects++;
+#endif
+
     for (int i = 0; i < o->mesh->indexes_count; i += 3) {
+#if PINGO_RENDER_DIAGNOSTICS
+        r->diagnostics.triangles_submitted++;
+        uint32_t phase_started = rendererDiagnosticsNow(r);
+#endif
+
         Vec3f * ver1 = &o->mesh->positions[o->mesh->pos_indices[i+0]];
         Vec3f * ver2 = &o->mesh->positions[o->mesh->pos_indices[i+1]];
         Vec3f * ver3 = &o->mesh->positions[o->mesh->pos_indices[i+2]];
@@ -150,10 +172,20 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         b = mat4MultiplyVec4( &b, &p);
         c = mat4MultiplyVec4( &c, &p);
 
+#if PINGO_RENDER_DIAGNOSTICS
+        phase_started = rendererDiagnosticsFinishPhase(
+            r, phase_started, &r->diagnostics.transform_ticks);
+#endif
 
         //Triangle is completely behind camera
-        if (a.z > 0 && b.z > 0 && c.z > 0)
+        if (a.z > 0 && b.z > 0 && c.z > 0) {
+#if PINGO_RENDER_DIAGNOSTICS
+            r->diagnostics.triangles_z_rejected++;
+            rendererDiagnosticsFinishPhase(
+                r, phase_started, &r->diagnostics.triangle_setup_ticks);
+#endif
            continue;
+        }
 
         // convert to device coordinates by perspective division
         a.w = 1.0 / a.w;
@@ -164,8 +196,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         c.x *= c.w; c.y *= c.w; c.z *= c.w;
 
         float clocking = isClockWise(a.x, a.y, b.x, b.y, c.x, c.y);
-        if (clocking >= 0)
+        if (clocking >= 0) {
+#if PINGO_RENDER_DIAGNOSTICS
+            r->diagnostics.triangles_backface_rejected++;
+            rendererDiagnosticsFinishPhase(
+                r, phase_started, &r->diagnostics.triangle_setup_ticks);
+#endif
             continue;
+        }
 
         //Compute Screen coordinates
         float halfX = scrSize.x/2;
@@ -179,17 +217,37 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         int32_t maxX = MAX(MAX(a_s.x, b_s.x), c_s.x);
         int32_t maxY = MAX(MAX(a_s.y, b_s.y), c_s.y);
 
+#if PINGO_RENDER_DIAGNOSTICS
+        int32_t unclippedMinX = minX;
+        int32_t unclippedMinY = minY;
+        int32_t unclippedMaxX = maxX;
+        int32_t unclippedMaxY = maxY;
+#endif
+
         minX = MIN(MAX(minX, 0), r->frameBuffer.size.x);
         minY = MIN(MAX(minY, 0), r->frameBuffer.size.y);
         maxX = MIN(MAX(maxX, 0), r->frameBuffer.size.x);
         maxY = MIN(MAX(maxY, 0), r->frameBuffer.size.y);
 
+#if PINGO_RENDER_DIAGNOSTICS
+        if (minX != unclippedMinX || minY != unclippedMinY ||
+            maxX != unclippedMaxX || maxY != unclippedMaxY) {
+            r->diagnostics.triangles_bbox_clamped++;
+        }
+#endif
+
         // Barycentric coordinates at minX/minY corner
         Vec2i minTriangle = { minX, minY };
 
         int32_t area =  orient2d( a_s, b_s, c_s);
-        if (area == 0)
+        if (area == 0) {
+#if PINGO_RENDER_DIAGNOSTICS
+            r->diagnostics.triangles_degenerate++;
+            rendererDiagnosticsFinishPhase(
+                r, phase_started, &r->diagnostics.triangle_setup_ticks);
+#endif
             continue;
+        }
         float areaInverse = 1.0/area;
 
         int32_t A01 = ( a_s.y - b_s.y); //Barycentric coordinates steps
@@ -213,6 +271,29 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             tcc.y *= c.w;
         }
 
+#if PINGO_RENDER_DIAGNOSTICS
+        bool viewportEmpty = minX >= maxX || minY >= maxY;
+        if (viewportEmpty) {
+            r->diagnostics.triangles_bbox_rejected++;
+        } else {
+            r->diagnostics.triangles_rasterized++;
+            r->diagnostics.fragments_bbox +=
+                (uint64_t)(maxX - minX) * (uint64_t)(maxY - minY);
+        }
+        phase_started = rendererDiagnosticsFinishPhase(
+            r, phase_started, &r->diagnostics.triangle_setup_ticks);
+
+        if (viewportEmpty) {
+            continue;
+        }
+
+        uint32_t fragmentsCovered = 0;
+        uint32_t fragmentsDepthRangeRejected = 0;
+        uint32_t fragmentsDepthTestRejected = 0;
+        uint32_t fragmentsReciprocalWRejected = 0;
+        uint32_t fragmentsShaded = 0;
+#endif
+
         for (int16_t y = minY; y < maxY; y++, w0_row += B12,w1_row += B20,w2_row += B01) {
             int32_t w0 = w0_row;
             int32_t w1 = w1_row;
@@ -224,12 +305,24 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     || (area < 0 && (w0 > 0 || w1 > 0 || w2 > 0)))
                     continue;
 
-                float depth =  -( w0 * a.z + w1 * b.z + w2 * c.z ) * areaInverse;
-                if (depth < 0.0 || depth > 1.0)
-                    continue;
+#if PINGO_RENDER_DIAGNOSTICS
+                fragmentsCovered++;
+#endif
 
-                if (depth_check(r->backEnd->getZetaBuffer(r,r->backEnd), x + y * scrSize.x, 1-depth ))
+                float depth =  -( w0 * a.z + w1 * b.z + w2 * c.z ) * areaInverse;
+                if (depth < 0.0 || depth > 1.0) {
+#if PINGO_RENDER_DIAGNOSTICS
+                    fragmentsDepthRangeRejected++;
+#endif
                     continue;
+                }
+
+                if (depth_check(r->backEnd->getZetaBuffer(r,r->backEnd), x + y * scrSize.x, 1-depth )) {
+#if PINGO_RENDER_DIAGNOSTICS
+                    fragmentsDepthTestRejected++;
+#endif
+                    continue;
+                }
 
                 depth_write(r->backEnd->getZetaBuffer(r,r->backEnd), x + y * scrSize.x, 1- depth );
 
@@ -238,8 +331,12 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
                     float oneOverW =
                         (w0 * a.w + w1 * b.w + w2 * c.w) * areaInverse;
-                    if (oneOverW == 0.0f)
+                    if (oneOverW == 0.0f) {
+#if PINGO_RENDER_DIAGNOSTICS
+                        fragmentsReciprocalWRejected++;
+#endif
                         continue;
+                    }
                     float textCoordx =
                         (w0 * tca.x + w1 * tcb.x + w2 * tcc.x)
                         * areaInverse / oneOverW;
@@ -258,9 +355,25 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     backendDrawPixel(r, &r->frameBuffer, (Vec2i){x,y}, pixel, diffuseLight);
                 }
 
+#if PINGO_RENDER_DIAGNOSTICS
+                fragmentsShaded++;
+#endif
             }
 
         }
+
+#if PINGO_RENDER_DIAGNOSTICS
+        rendererDiagnosticsFinishPhase(
+            r, phase_started, &r->diagnostics.raster_ticks);
+        r->diagnostics.fragments_covered += fragmentsCovered;
+        r->diagnostics.fragments_depth_range_rejected +=
+            fragmentsDepthRangeRejected;
+        r->diagnostics.fragments_depth_test_rejected +=
+            fragmentsDepthTestRejected;
+        r->diagnostics.fragments_reciprocal_w_rejected +=
+            fragmentsReciprocalWRejected;
+        r->diagnostics.fragments_shaded += fragmentsShaded;
+#endif
     }
 
     return 0;
@@ -276,6 +389,12 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     r->clearColor = PIXELBLACK;
     r->backEnd = backEnd;
 
+#if PINGO_RENDER_DIAGNOSTICS
+    r->diagnostics_clock = 0;
+    r->diagnostics_clock_hz = 0;
+    memset(&r->diagnostics, 0, sizeof(r->diagnostics));
+#endif
+
     r->backEnd->init(r, r->backEnd, (Vec4i) { 0, 0, 0, 0 });
 
     int e = 0;
@@ -286,6 +405,11 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
 }
 
 int rendererRender(Renderer * r) {
+
+#if PINGO_RENDER_DIAGNOSTICS
+    memset(&r->diagnostics, 0, sizeof(r->diagnostics));
+    uint32_t clear_started = rendererDiagnosticsNow(r);
+#endif
 
     int pixels = r->frameBuffer.size.x * r->frameBuffer.size.y;
     memset(r->backEnd->getZetaBuffer(r,r->backEnd), 0, pixels * sizeof (PingoDepth));
@@ -299,6 +423,11 @@ int rendererRender(Renderer * r) {
     if (r->clear) {
         memset(r->backEnd->getFrameBuffer(r,r->backEnd), 0, pixels * sizeof (Pixel));
     }
+
+#if PINGO_RENDER_DIAGNOSTICS
+    rendererDiagnosticsFinishPhase(
+        r, clear_started, &r->diagnostics.clear_ticks);
+#endif
 
     renderScene(mat4Identity(), r, sceneAsRenderable(r->scene));
 

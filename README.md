@@ -39,4 +39,7 @@ Previously, it was also possible to use the Arduino IDE to build the firmware, b
 The `pingo-codex` branch is the hardware- and emulator-qualified Pingo
 2.15.0 Alpha 1 variant based on Agon VDP 2.15 and TurboVega's final Pingo
 port. See [docs/tv-port.md](docs/tv-port.md) for provenance, build/flash
-commands, the coordinate contract, fixtures, and remaining work.
+commands, the coordinate contract, fixtures, and remaining work. The optional
+compile-time renderer-attribution build and its hardware capture workflow are
+documented in
+[docs/pingo-render-diagnostics.md](docs/pingo-render-diagnostics.md).
