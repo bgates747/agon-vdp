@@ -419,7 +419,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                         (w0 * tca.y + w1 * tcb.y + w2 * tcc.y)
                         * areaInverse / oneOverW;
 
-                    Pixel text = texture_readF(o->material->texture, (Vec2f){textCoordx,textCoordy});
+                    Pixel text = texture_readFInline(
+                        o->material->texture,
+                        (Vec2f){textCoordx,textCoordy});
 #if DEBUG
                     //show_pixel(textCoordx, textCoordy, text.a, text.b, text.g, text.r);
 #endif
