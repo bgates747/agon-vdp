@@ -129,7 +129,8 @@ static int triangleOutsideRemainingClipPlanes(
 
 static inline void backendDrawPixel(
         Renderer * r, Texture * f, Vec2i pos,
-        int32_t pixelIndex, Pixel color, float illumination) {
+        int32_t pixelIndex, Pixel color, float illumination,
+        const PixelShadeLut * shadeLut) {
     // If backend specifies something..
     if (r->backEnd->drawPixel != 0) {
         // Draw using the backend
@@ -145,7 +146,7 @@ static inline void backendDrawPixel(
         f->frameBuffer[pixelIndex] = color;
 #else
         f->frameBuffer[pixelIndex] =
-            pixelMulInline(color,illumination);
+            pixelMulLut(color, shadeLut);
 #endif
     }
 }
@@ -360,6 +361,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         uint32_t fragmentsShaded = 0;
 #endif
 
+#if PINGO_DISABLE_ILLUMINATION
+        const PixelShadeLut * shadeLut = 0;
+#else
+        PixelShadeLut shadeLutStorage =
+            pixelShadeLut(diffuseLight);
+        const PixelShadeLut * shadeLut = &shadeLutStorage;
+#endif
+
         for (int16_t y = minY; y < maxY; y++, w0_row += B12,w1_row += B20,w2_row += B01) {
             int32_t w0 = w0_row;
             int32_t w1 = w1_row;
@@ -417,12 +426,12 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
                     backendDrawPixel(
                         r, &r->frameBuffer, (Vec2i){x,y},
-                        pixelIndex, text, diffuseLight);
+                        pixelIndex, text, diffuseLight, shadeLut);
                 } else {
                     Pixel pixel = pixelFromRGBA(255, 0, 255, 255);
                     backendDrawPixel(
                         r, &r->frameBuffer, (Vec2i){x,y},
-                        pixelIndex, pixel, diffuseLight);
+                        pixelIndex, pixel, diffuseLight, shadeLut);
                 }
 
 #if PINGO_RENDER_DIAGNOSTICS
