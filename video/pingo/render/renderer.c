@@ -144,7 +144,7 @@ static inline void backendDrawPixel(
 #if PINGO_DISABLE_ILLUMINATION
         texture_draw(f, pos, color);
 #else
-        texture_draw(f, pos, pixelMul(color,illumination));
+        texture_draw(f, pos, pixelMulInline(color,illumination));
 #endif
     }
 }

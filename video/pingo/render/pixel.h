@@ -21,6 +21,20 @@ _Static_assert(sizeof(Pixel) == 1, "Pingo working pixels must be one byte");
 
 #define PIXELBLACK (Pixel){0xC0}
 #define PIXELWHITE (Pixel){0xFF}
+
+static inline Pixel pixelMulInline(Pixel p, float f)
+{
+    uint8_t r = (uint8_t)((p.c & 0x03) * 85 * f);
+    uint8_t g = (uint8_t)(((p.c >> 2) & 0x03) * 85 * f);
+    uint8_t b = (uint8_t)(((p.c >> 4) & 0x03) * 85 * f);
+    return (Pixel){
+        (uint8_t)(
+            (p.c & 0xC0) |
+            ((b >> 6) << 4) |
+            ((g >> 6) << 2) |
+            (r >> 6))
+    };
+}
 #endif
 
 #ifdef UINT8

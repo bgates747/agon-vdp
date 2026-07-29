@@ -62,16 +62,7 @@ extern uint32_t pixelToRGBA8888(Pixel pixel)
 
 extern Pixel pixelMul(Pixel p, float f)
 {
-    uint8_t r = (uint8_t)(pixelChannelToUInt8(p.c & 0x03) * f);
-    uint8_t g = (uint8_t)(pixelChannelToUInt8((p.c >> 2) & 0x03) * f);
-    uint8_t b = (uint8_t)(pixelChannelToUInt8((p.c >> 4) & 0x03) * f);
-    return (Pixel){
-        (uint8_t)(
-            (p.c & 0xC0) |
-            (pixelChannelFromUInt8(b) << 4) |
-            (pixelChannelFromUInt8(g) << 2) |
-            pixelChannelFromUInt8(r))
-    };
+    return pixelMulInline(p, f);
 }
 
 #endif
