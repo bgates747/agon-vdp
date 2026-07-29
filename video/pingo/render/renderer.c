@@ -8,6 +8,7 @@
 #include "sprite.h"
 #include "pixel.h"
 #include "depth.h"
+#include "perspective_span.h"
 #include "triangle_span.h"
 #include "backend.h"
 #include "scene.h"
@@ -329,6 +330,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         int32_t w1_row = orient2d( c_s, a_s, minTriangle);
         int32_t w2_row = orient2d( a_s, b_s, minTriangle);
 
+        PingoPerspectiveAttributes textureStepX = {0.0f, 0.0f, 0.0f};
         if (o->material != 0) {
             // a.w/b.w/c.w retain reciprocal clip-space W.
             tca.x *= a.w;
@@ -337,6 +339,23 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             tcb.y *= b.w;
             tcc.x *= c.w;
             tcc.y *= c.w;
+
+            /*
+             * A12 + A20 + A01 == 0. Use the equivalent difference form to
+             * reduce cancellation while preparing the perspective-attribute
+             * X gradients once per triangle.
+             */
+            textureStepX.reciprocalW =
+                (A12 * (a.w - c.w) + A20 * (b.w - c.w)) *
+                areaInverse;
+            textureStepX.uOverW =
+                (A12 * (tca.x - tcc.x) +
+                 A20 * (tcb.x - tcc.x)) *
+                areaInverse;
+            textureStepX.vOverW =
+                (A12 * (tca.y - tcc.y) +
+                 A20 * (tcb.y - tcc.y)) *
+                areaInverse;
         }
 
 #if PINGO_RENDER_DIAGNOSTICS
@@ -393,8 +412,57 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             int32_t w2 = (int32_t)(
                 (int64_t)w2_row + (int64_t)A01 * offset);
 
+            PingoPerspectiveBoundary textureBoundary = {
+                .attributes = {0.0f, 0.0f, 0.0f},
+                .u = 0.0f,
+                .v = 0.0f,
+                .valid = false
+            };
+            float textCoordx = 0.0f;
+            float textCoordy = 0.0f;
+            float textCoordStepX = 0.0f;
+            float textCoordStepY = 0.0f;
+            uint32_t textureSpanRemaining = 0u;
+            uint32_t textureBlockRemaining = 0u;
+            bool textureBlockValid = false;
+
+            if (o->material != 0) {
+                PingoPerspectiveAttributes textureAttributes;
+                textureAttributes.reciprocalW =
+                    (w0 * a.w + w1 * b.w + w2 * c.w) *
+                    areaInverse;
+                textureAttributes.uOverW =
+                    (w0 * tca.x + w1 * tcb.x + w2 * tcc.x) *
+                    areaInverse;
+                textureAttributes.vOverW =
+                    (w0 * tca.y + w1 * tcb.y + w2 * tcc.y) *
+                    areaInverse;
+                textureBoundary =
+                    pingoPerspectiveBoundaryRecover(textureAttributes);
+                textureSpanRemaining =
+                    (uint32_t)(spanMaxX - spanMinX);
+            }
+
             for (int32_t x = spanMinX; x < spanMaxX;
                  x++, w0 += A12, w1 += A20, w2 += A01) {
+                if (o->material != 0 &&
+                    textureBlockRemaining == 0u) {
+                    PingoPerspectiveSpanBlock block;
+                    textureBlockValid =
+                        pingoPerspectiveSpanBlockPrepare(
+                            textureBoundary,
+                            textureStepX,
+                            textureSpanRemaining,
+                            &block);
+                    textureBlockRemaining = block.length;
+                    textureSpanRemaining -= block.length;
+                    textureBoundary = block.end;
+                    textCoordx = block.u;
+                    textCoordy = block.v;
+                    textCoordStepX = block.uStep;
+                    textCoordStepY = block.vStep;
+                }
+
 #if PINGO_RENDER_DIAGNOSTICS
                 fragmentsCovered++;
 #endif
@@ -404,56 +472,71 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #if PINGO_RENDER_DIAGNOSTICS
                     fragmentsDepthRangeRejected++;
 #endif
-                    continue;
-                }
-
-                int32_t pixelIndex = x + y * scrSize.x;
-                if (!depth_try_write(
-                        zetaBuffer, pixelIndex, 1-depth )) {
-#if PINGO_RENDER_DIAGNOSTICS
-                    fragmentsDepthTestRejected++;
-#endif
-                    continue;
-                }
-
-                if (o->material != 0) {
-                    //Texture lookup
-
-                    float oneOverW =
-                        (w0 * a.w + w1 * b.w + w2 * c.w) * areaInverse;
-                    if (oneOverW == 0.0f) {
-#if PINGO_RENDER_DIAGNOSTICS
-                        fragmentsReciprocalWRejected++;
-#endif
-                        continue;
-                    }
-                    float textCoordx =
-                        (w0 * tca.x + w1 * tcb.x + w2 * tcc.x)
-                        * areaInverse / oneOverW;
-                    float textCoordy =
-                        (w0 * tca.y + w1 * tcb.y + w2 * tcc.y)
-                        * areaInverse / oneOverW;
-
-                    Pixel text = texture_readFInline(
-                        o->material->texture,
-                        (Vec2f){textCoordx,textCoordy});
-#if DEBUG
-                    //show_pixel(textCoordx, textCoordy, text.a, text.b, text.g, text.r);
-#endif
-
-                    backendDrawPixel(
-                        r, &r->frameBuffer, (Vec2i){x,y},
-                        pixelIndex, text, diffuseLight, shadeLut);
                 } else {
-                    Pixel pixel = pixelFromRGBA(255, 0, 255, 255);
-                    backendDrawPixel(
-                        r, &r->frameBuffer, (Vec2i){x,y},
-                        pixelIndex, pixel, diffuseLight, shadeLut);
-                }
+                    int32_t pixelIndex = x + y * scrSize.x;
+                    if (!depth_try_write(
+                            zetaBuffer, pixelIndex, 1-depth )) {
+#if PINGO_RENDER_DIAGNOSTICS
+                        fragmentsDepthTestRejected++;
+#endif
+                    } else if (o->material != 0) {
+                        /*
+                         * A zero required block endpoint makes the affine UV
+                         * undefined. Fail closed after the unchanged depth
+                         * write. For valid blocks, retain the exact old
+                         * per-fragment projective-pole expression and
+                         * evaluation order.
+                         */
+                        bool reciprocalWRejected =
+                            !textureBlockValid;
+                        if (!reciprocalWRejected) {
+                            const float fragmentReciprocalW =
+                                (w0 * a.w + w1 * b.w + w2 * c.w) *
+                                areaInverse;
+                            reciprocalWRejected =
+                                fragmentReciprocalW == 0.0f;
+                        }
+                        if (reciprocalWRejected) {
+#if PINGO_RENDER_DIAGNOSTICS
+                            fragmentsReciprocalWRejected++;
+#endif
+                        } else {
+                            Pixel text = texture_readFInline(
+                                o->material->texture,
+                                (Vec2f){textCoordx,textCoordy});
+#if DEBUG
+                            //show_pixel(textCoordx, textCoordy, text.a, text.b, text.g, text.r);
+#endif
+
+                            backendDrawPixel(
+                                r, &r->frameBuffer, (Vec2i){x,y},
+                                pixelIndex, text, diffuseLight, shadeLut);
 
 #if PINGO_RENDER_DIAGNOSTICS
-                fragmentsShaded++;
+                            fragmentsShaded++;
 #endif
+                        }
+                    } else {
+                        Pixel pixel = pixelFromRGBA(255, 0, 255, 255);
+                        backendDrawPixel(
+                            r, &r->frameBuffer, (Vec2i){x,y},
+                            pixelIndex, pixel, diffuseLight, shadeLut);
+
+#if PINGO_RENDER_DIAGNOSTICS
+                        fragmentsShaded++;
+#endif
+                    }
+                }
+
+                /*
+                 * Attribute position follows covered X, not visibility.
+                 * Depth rejection must not freeze the texture mapper.
+                 */
+                if (o->material != 0) {
+                    textCoordx += textCoordStepX;
+                    textCoordy += textCoordStepY;
+                    textureBlockRemaining--;
+                }
             }
 
         }
