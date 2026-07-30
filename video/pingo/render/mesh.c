@@ -41,3 +41,36 @@ int meshUpdateBounds(Mesh * mesh) {
     mesh->bounds_valid = 1;
     return 1;
 }
+
+int meshUpdateGeometryValidity(Mesh * mesh) {
+    if (!mesh) {
+        return 0;
+    }
+
+    mesh->geometry_valid = 0;
+    if (!mesh->positions ||
+        mesh->positions_count == 0 ||
+        !mesh->pos_indices ||
+        mesh->indexes_count < 3 ||
+        (mesh->indexes_count % 3) != 0) {
+        return 0;
+    }
+
+    for (uint32_t i = 0; i < mesh->positions_count; i++) {
+        Vec3f position = mesh->positions[i];
+        if (!isfinite(position.x) ||
+            !isfinite(position.y) ||
+            !isfinite(position.z)) {
+            return 0;
+        }
+    }
+
+    for (int i = 0; i < mesh->indexes_count; i++) {
+        if (mesh->pos_indices[i] >= mesh->positions_count) {
+            return 0;
+        }
+    }
+
+    mesh->geometry_valid = 1;
+    return 1;
+}

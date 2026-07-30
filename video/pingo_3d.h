@@ -475,12 +475,18 @@ typedef struct tag_Pingo3dControl {
     TexObject* establish_object(uint16_t oid) {
         auto object_iter = m_objects->find(oid);
         if (object_iter == m_objects->end()) {
-            TexObject object;
-            memset(&object, 0, sizeof(object));
-            object.m_oid = oid;
-            object.initialize();
-            (*m_objects).insert(std::pair<uint16_t, TexObject>(oid, object));
-            return &m_objects->find(oid)->second;
+            /*
+             * Bind the map-resident object. Initializing a stack temporary
+             * before copying it would leave m_object.material and
+             * m_material.texture pointing back into the dead temporary.
+             */
+            auto inserted = m_objects->insert(
+                std::pair<uint16_t, TexObject>(oid, TexObject{}));
+            auto object = &inserted.first->second;
+            memset(object, 0, sizeof(*object));
+            object->m_oid = oid;
+            object->initialize();
+            return object;
         } else {
             return &object_iter->second;
         }
@@ -494,29 +500,46 @@ typedef struct tag_Pingo3dControl {
         return NULL;
     }
 
+    /*
+     * Mesh components are independent VDU uploads and may arrive out of
+     * order. Recompute renderability after every successful replacement so a
+     * later complementary upload can make an existing mesh/object valid.
+     */
+    void refresh_mesh_dependents(p3d::Mesh* mesh) {
+        if (!mesh) {
+            return;
+        }
+        p3d::meshUpdateGeometryValidity(mesh);
+        if (!m_objects) {
+            return;
+        }
+        for (auto& entry : *m_objects) {
+            if (entry.second.m_object.mesh == mesh) {
+                p3d::objectUpdateTextureMappingValidity(
+                    &entry.second.m_object);
+            }
+        }
+    }
+
     // VDU 23, 0, &A0, sid; &48, 1, mid; n; x0; y0; z0; ... :  Define Mesh Vertices
     void define_mesh_vertices() {
         auto mesh = get_mesh();
         if (!mesh) {
             return;
         }
-        mesh->positions_count = 0;
-        mesh->bounds_valid = 0;
-        if (mesh->positions) {
-            heap_caps_free(mesh->positions);
-            mesh->positions = NULL;
-        }
         auto vertex_count = m_proc->readWord_t();
         if (vertex_count < 0) {
             return;
         }
         auto n = (uint32_t)vertex_count;
+        p3d::Vec3f* replacement = NULL;
+        bool complete = true;
         if (n > 0) {
             auto size = n*sizeof(p3d::Vec3f);
-            mesh->positions = (p3d::Vec3f*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            auto pos = mesh->positions;
-            bool complete = pos != nullptr;
-            if (!pos) {
+            replacement = (p3d::Vec3f*)heap_caps_malloc(
+                size, MALLOC_CAP_SPIRAM);
+            if (!replacement) {
+                complete = false;
                 debug_log("define_mesh_vertices: failed to allocate %u bytes\n", size);
                 show_free_ram();
             }
@@ -528,138 +551,268 @@ typedef struct tag_Pingo3dControl {
                 if (x < 0 || y < 0 || z < 0) {
                     complete = false;
                 }
-                if (pos && complete) {
-                    pos->x = convert_position_value((uint16_t)x);
-                    pos->y = convert_position_value((uint16_t)y);
-                    pos->z = convert_position_value((uint16_t)z);
-                    if (!(i & 0x1F)) debug_log("%u %f %f %f\n", i, pos->x, pos->y, pos->z);
-                    pos++;
+                if (replacement && x >= 0 && y >= 0 && z >= 0) {
+                    replacement[i].x =
+                        convert_position_value((uint16_t)x);
+                    replacement[i].y =
+                        convert_position_value((uint16_t)y);
+                    replacement[i].z =
+                        convert_position_value((uint16_t)z);
+                    if (!(i & 0x1F)) {
+                        debug_log(
+                            "%u %f %f %f\n", i,
+                            replacement[i].x,
+                            replacement[i].y,
+                            replacement[i].z);
+                    }
                 }
             }
             debug_log("\n");
-            if (mesh->positions && complete) {
-                mesh->positions_count = n;
-                p3d::meshUpdateBounds(mesh);
-            } else if (mesh->positions) {
-                heap_caps_free(mesh->positions);
-                mesh->positions = NULL;
-            }
         }
+
+        if (!complete) {
+            if (replacement) {
+                heap_caps_free(replacement);
+            }
+            return;
+        }
+
+        auto previous = mesh->positions;
+        mesh->positions = replacement;
+        mesh->positions_count = n;
+        mesh->bounds_valid = 0;
+        if (n > 0) {
+            p3d::meshUpdateBounds(mesh);
+        }
+        if (previous) {
+            heap_caps_free(previous);
+        }
+        refresh_mesh_dependents(mesh);
     }
 
     // VDU 23, 0, &A0, sid; &48, 2, mid; n; i0; ... :  Set Mesh Vertex Indexes
     void set_mesh_vertex_indexes() {
         auto mesh = get_mesh();
-        if (mesh->pos_indices) {
-            heap_caps_free(mesh->pos_indices);
-            mesh->pos_indices = NULL;
-            mesh->indexes_count = 0;
+        if (!mesh) {
+            return;
         }
-        auto n = (uint32_t) m_proc->readWord_t();
+        auto index_count = m_proc->readWord_t();
+        if (index_count < 0) {
+            return;
+        }
+        auto n = (uint32_t)index_count;
+        bool complete = (n % 3U) == 0;
+        uint16_t* replacement = NULL;
+        if (!complete) {
+            debug_log(
+                "set_mesh_vertex_indexes: count %u is not a triangle triplet\n",
+                n);
+        }
         if (n > 0) {
-            mesh->indexes_count = n;
             auto size = n*sizeof(uint16_t);
-            mesh->pos_indices = (uint16_t*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            auto idx = mesh->pos_indices;
-            if (!idx) {
+            if (complete) {
+                replacement = (uint16_t*)heap_caps_malloc(
+                    size, MALLOC_CAP_SPIRAM);
+            }
+            if (complete && !replacement) {
+                complete = false;
                 debug_log("set_mesh_vertex_indexes: failed to allocate %u bytes\n", size);
                 show_free_ram();
             }
             debug_log("Reading %u vertex indexes\n", n);
             for (uint32_t i = 0; i < n; i++) {
-                uint16_t index = m_proc->readWord_t();
-                if (idx) {
-                    *idx++ = index;
+                auto index = m_proc->readWord_t();
+                if (index < 0) {
+                    complete = false;
+                } else if (replacement) {
+                    replacement[i] = (uint16_t)index;
                 }
-                if (!(i & 0x1F)) debug_log("%u %hu\n", i, index);
+                if (!(i & 0x1F) && index >= 0) {
+                    debug_log("%u %hu\n", i, (uint16_t)index);
+                }
             }
             debug_log("\n");
         }
+
+        if (!complete) {
+            if (replacement) {
+                heap_caps_free(replacement);
+            }
+            return;
+        }
+
+        auto previous = mesh->pos_indices;
+        mesh->pos_indices = replacement;
+        mesh->indexes_count = (int)n;
+        if (previous) {
+            heap_caps_free(previous);
+        }
+        refresh_mesh_dependents(mesh);
     }
 
     // VDU 23, 0, &A0, sid; &48, 3, mid; n; u0; v0; ... :  Define Mesh Texture Coordinates
     void define_mesh_texture_coordinates() {
         auto mesh = get_mesh();
-        if (mesh->textCoord) {
-            heap_caps_free(mesh->textCoord);
-            mesh->textCoord = NULL;
+        if (!mesh) {
+            return;
         }
-        auto n = (uint32_t) m_proc->readWord_t();
+        auto coordinate_count = m_proc->readWord_t();
+        if (coordinate_count < 0) {
+            return;
+        }
+        auto n = (uint32_t)coordinate_count;
+        p3d::Vec2f* replacement = NULL;
+        bool complete = true;
         if (n > 0) {
             auto size = n*sizeof(p3d::Vec2f);
-            mesh->textCoord = (p3d::Vec2f*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            auto coord = mesh->textCoord;
-            if (!coord) {
-                debug_log("set_mesh_vertex_indexes: failed to allocate %u bytes\n", size);
+            replacement = (p3d::Vec2f*)heap_caps_malloc(
+                size, MALLOC_CAP_SPIRAM);
+            if (!replacement) {
+                complete = false;
+                debug_log("define_mesh_texture_coordinates: failed to allocate %u bytes\n", size);
                 show_free_ram();
             }
             debug_log("Reading %u texture coordinates\n", n);
             for (uint32_t i = 0; i < n; i++) {
-                uint16_t u = m_proc->readWord_t();
-                uint16_t v = m_proc->readWord_t();
-                if (coord) {
-                    coord->x = convert_texture_coordinate_value(u);
-                    coord->y = convert_texture_coordinate_value(v);
-                    coord++;
+                auto u = m_proc->readWord_t();
+                auto v = m_proc->readWord_t();
+                if (u < 0 || v < 0) {
+                    complete = false;
+                } else if (replacement) {
+                    replacement[i].x =
+                        convert_texture_coordinate_value((uint16_t)u);
+                    replacement[i].y =
+                        convert_texture_coordinate_value((uint16_t)v);
                 }
             }
         }
+
+        if (!complete) {
+            if (replacement) {
+                heap_caps_free(replacement);
+            }
+            return;
+        }
+
+        auto previous = mesh->textCoord;
+        mesh->textCoord = replacement;
+        mesh->texture_coordinates_count = n;
+        if (previous) {
+            heap_caps_free(previous);
+        }
+        refresh_mesh_dependents(mesh);
     }
 
     // VDU 23, 0, &A0, sid; &48, 40, oid; n; u0; v0; ... :  Define Object Texture Coordinates
     void define_object_texture_coordinates() {
         auto object = get_object();
-        if (object->m_object.textCoord) {
-            heap_caps_free(object->m_object.textCoord);
-            object->m_object.textCoord = NULL;
+        if (!object) {
+            return;
         }
-        auto n = (uint32_t) m_proc->readWord_t();
+        auto coordinate_count = m_proc->readWord_t();
+        if (coordinate_count < 0) {
+            return;
+        }
+        auto n = (uint32_t)coordinate_count;
+        p3d::Vec2f* replacement = NULL;
+        bool complete = true;
         if (n > 0) {
             auto size = n*sizeof(p3d::Vec2f);
-            object->m_object.textCoord = (p3d::Vec2f*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            auto coord = object->m_object.textCoord;
-            if (!coord) {
-                debug_log("set_object_vertex_indexes: failed to allocate %u bytes\n", size);
+            replacement = (p3d::Vec2f*)heap_caps_malloc(
+                size, MALLOC_CAP_SPIRAM);
+            if (!replacement) {
+                complete = false;
+                debug_log("define_object_texture_coordinates: failed to allocate %u bytes\n", size);
                 show_free_ram();
             }
             debug_log("Reading %u texture coordinates\n", n);
             for (uint32_t i = 0; i < n; i++) {
-                uint16_t u = m_proc->readWord_t();
-                uint16_t v = m_proc->readWord_t();
-                if (coord) {
-                    coord->x = convert_texture_coordinate_value(u);
-                    coord->y = convert_texture_coordinate_value(v);
-                    coord++;
+                auto u = m_proc->readWord_t();
+                auto v = m_proc->readWord_t();
+                if (u < 0 || v < 0) {
+                    complete = false;
+                } else if (replacement) {
+                    replacement[i].x =
+                        convert_texture_coordinate_value((uint16_t)u);
+                    replacement[i].y =
+                        convert_texture_coordinate_value((uint16_t)v);
                 }
             }
         }
+
+        if (!complete) {
+            if (replacement) {
+                heap_caps_free(replacement);
+            }
+            return;
+        }
+
+        auto previous = object->m_object.textCoord;
+        object->m_object.textCoord = replacement;
+        object->m_object.textCoord_count = n;
+        if (previous) {
+            heap_caps_free(previous);
+        }
+        p3d::objectUpdateTextureMappingValidity(&object->m_object);
     }
 
     // VDU 23, 0, &A0, sid; &48, 4, mid; n; i0; ... :  Set Texture Coordinate Indexes
     void set_texture_coordinate_indexes() {
         auto mesh = get_mesh();
-        if (mesh->tex_indices) {
-            heap_caps_free(mesh->tex_indices);
-            mesh->tex_indices = NULL;
+        if (!mesh) {
+            return;
         }
-        auto n = (uint32_t) m_proc->readWord_t();
+        auto index_count = m_proc->readWord_t();
+        if (index_count < 0) {
+            return;
+        }
+        auto n = (uint32_t)index_count;
+        bool complete = (n % 3U) == 0;
+        uint16_t* replacement = NULL;
+        if (!complete) {
+            debug_log(
+                "set_texture_coordinate_indexes: count %u is not a triangle triplet\n",
+                n);
+        }
         if (n > 0) {
             auto size = n*sizeof(uint16_t);
-            mesh->tex_indices = (uint16_t*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-            auto idx = mesh->tex_indices;
-            if (!idx) {
+            if (complete) {
+                replacement = (uint16_t*)heap_caps_malloc(
+                    size, MALLOC_CAP_SPIRAM);
+            }
+            if (complete && !replacement) {
+                complete = false;
                 debug_log("set_texture_coordinate_indexes: failed to allocate %u bytes\n", size);
                 show_free_ram();
             }
             debug_log("Reading %u texture coordinate indexes\n", n);
             for (uint32_t i = 0; i < n; i++) {
-                uint16_t index = m_proc->readWord_t();
-                if (idx && (i < mesh->indexes_count)) {
-                    *idx++ = index;
+                auto index = m_proc->readWord_t();
+                if (index < 0) {
+                    complete = false;
+                } else if (replacement) {
+                    replacement[i] = (uint16_t)index;
                 }
-                if (!(i & 0x1F)) debug_log("%u %hu\n", i, index);
+                if (!(i & 0x1F) && index >= 0) {
+                    debug_log("%u %hu\n", i, (uint16_t)index);
+                }
             }
         }
+
+        if (!complete) {
+            if (replacement) {
+                heap_caps_free(replacement);
+            }
+            return;
+        }
+
+        auto previous = mesh->tex_indices;
+        mesh->tex_indices = replacement;
+        mesh->texture_indexes_count = n;
+        if (previous) {
+            heap_caps_free(previous);
+        }
+        refresh_mesh_dependents(mesh);
     }
 
     // VDU 23, 0, &A0, sid; &48, 5, oid; mid; bmid; :  Create Object
@@ -695,6 +848,8 @@ typedef struct tag_Pingo3dControl {
                         return;
                     }
                     object->m_object.mesh = mesh;
+                    p3d::objectUpdateTextureMappingValidity(
+                        &object->m_object);
                     auto pixel = p3d::texture_read(
                         &object->m_texture, p3d::Vec2i{0, 0});
                     debug_log("Texture format %u data: %02hX\n",
@@ -1192,9 +1347,10 @@ typedef struct tag_Pingo3dControl {
 
         force_debug_log(
             "PINGO_RENDER seq=%u bmid=%u render_us=%u "
-            "d=3 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
+            "d=4 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
             "ras=%u out=%u ob=%u obt=%u ofr=%u ta=%u "
-            "ti=%u tz=%u tfr=%u tf=%u td=%u to=%u tr=%u tv=%u "
+            "ti=%u tz=%u tfr=%u tc=%u tu=%u tg=%u "
+            "tp=%u tf=%u td=%u to=%u tr=%u tv=%u "
             "pt=%llu pc=%llu pz=%llu pd=%llu pu=%llu ps=%llu\n",
             sequence, bmid, render_elapsed_us,
             m_width, m_height,
@@ -1208,6 +1364,10 @@ typedef struct tag_Pingo3dControl {
             renderer.diagnostics.triangles_submitted,
             renderer.diagnostics.triangles_z_rejected,
             renderer.diagnostics.triangles_frustum_rejected,
+            renderer.diagnostics.triangles_clipped,
+            renderer.diagnostics.triangles_unclipped,
+            renderer.diagnostics.triangles_generated,
+            renderer.diagnostics.triangles_projection_rejected,
             renderer.diagnostics.triangles_backface_rejected,
             renderer.diagnostics.triangles_degenerate,
             renderer.diagnostics.triangles_bbox_rejected,

@@ -31,13 +31,27 @@ The smoke target first runs:
 
 1. `pingo_texture_test`, which verifies the one-byte Pingo working pixel, all
    256 RGBA2222 packed values, RGBA8888-to-RGBA2222 quantization and stride,
-   and the qualified UV row direction; and
+   and the qualified UV row direction;
 2. `pingo_math_test`, which covers guarded vector normalization, identity,
    translation-only and general matrix inversion, and sequential versus
-   composed view/projection transforms; and
+   composed view/projection transforms;
 3. `pingo_triangle_span_test`, which exhaustively compares the row-span
    primitive with the renderer's current inclusive edge equations across both
-   windings, clipped viewports, randomized rows, and integer-limit cases.
+   windings, clipped viewports, randomized rows, and integer-limit cases;
+4. `pingo_perspective_span_test`, which checks the perspective span's
+   fixed-block interpolation and numerically stable remainder path;
+5. `pingo_depth_test`, which checks endpoint and representative `[0,1]`
+   float-to-`uint32_t` depth mappings, adjacent representable values,
+   rejection of out-of-range and nonfinite values, and agreement between the
+   fused and split depth APIs;
+6. `pingo_mesh_validation_test`, which checks out-of-order mesh assembly,
+   triplet and index bounds, nonfinite positions and UVs, geometry validity,
+   mesh- versus object-owned texture coordinates, and texture-index/count
+   cross-validation; and
+7. `pingo_clip_test`, which checks exact pass-through, one- and two-vertex
+   near-plane crossings, exact and adjacent near boundaries, all six
+   homogeneous clip planes, bounded output, interpolated UVs, and safe
+   rejection of nonfinite input.
 
 It then loads the module with immediate symbol resolution, starts the native
 VDP, creates 64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene
@@ -55,18 +69,26 @@ make -C userspace \
 
 Diagnostic and ordinary objects use separate ignored build directories, so
 switching variants cannot silently reuse objects compiled with the other
-macro. The current closed diagnostic schema is version 3. The counter test
-covers exact mesh-AABB caching and invalidation; conservative eight-corner
-object rejection at every common clip plane; exact and just-outside object
-boundaries; crossing bounds; rotation, scene hierarchy, nonuniform negative
-scale, nonfinite/unordered bounds and disabled-culling fail-open behavior, and
-byte-identical output between object rejection and the triangle fallback. It
-also retains the direct triangle tests for empty and
+macro. The current candidate's closed diagnostic schema is version 4. The
+counter test covers exact mesh-AABB caching and invalidation; conservative
+eight-corner object rejection at every common clip plane; exact and
+just-outside object boundaries; crossing bounds; rotation, scene hierarchy,
+nonuniform negative scale, nonfinite/unordered bounds and disabled-culling
+fail-open behavior, and byte-identical output between object rejection and the
+triangle fallback. It also retains the direct triangle tests for empty and
 ordinary frames, projected-Z, whole-frustum, and backface rejection; strict
 clip boundaries and crossing triangles; all-nonpositive W; integer-screen
 degeneracy; bounding-box clamp; overdraw; depth-range and depth-buffer
 rejection; frame-to-frame reset; unsigned clock wrap; and the published
-object, triangle, and fragment invariants.
+object, source-triangle, generated-primitive, and fragment invariants.
+
+The version-4 diagnostic cases additionally exercise the production
+projection matrix's near-side rejection semantics, near crossings with either
+one or two vertices outside, a huge laterally crossing triangle, nonfinite
+projection input, and generated fan counts without unsafe projection. These
+are deterministic native correctness checks. The combined candidate
+subsequently passed focused emulator visual review and Olimex hardware
+qualification on 2026-07-29.
 See `docs/pingo-render-diagnostics.md` for the record schema and hardware
 workflow.
 

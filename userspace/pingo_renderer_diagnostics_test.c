@@ -88,6 +88,11 @@ static void initialize_renderer(
     renderer->diagnostics_clock_hz = 1000000;
 }
 
+static void use_production_projection(Renderer * renderer) {
+    renderer->camera_projection =
+        mat4Perspective(1.0f, 2500.0f, 4.0f / 3.0f, 0.6f);
+}
+
 static void add_mesh_object(
         Scene * scene,
         Object * object,
@@ -102,6 +107,13 @@ static void add_mesh_object(
         .positions = positions,
         .textCoord = 0
     };
+    for (int i = 0; i < index_count; i++) {
+        uint32_t required_count = (uint32_t)indices[i] + 1U;
+        if (required_count > mesh->positions_count) {
+            mesh->positions_count = required_count;
+        }
+    }
+    assert(meshUpdateGeometryValidity(mesh) == 1);
     *object = (Object) {
         .mesh = mesh,
         .transform = mat4Identity(),
@@ -122,6 +134,7 @@ static void add_bounded_mesh_object(
     add_mesh_object(
         scene, object, mesh, positions, indices, index_count);
     mesh->positions_count = position_count;
+    assert(meshUpdateGeometryValidity(mesh) == 1);
     assert(meshUpdateBounds(mesh) == 1);
 }
 
@@ -137,6 +150,11 @@ static void assert_diagnostic_invariants(
         diagnostics->triangles_submitted ==
         diagnostics->triangles_z_rejected +
         diagnostics->triangles_frustum_rejected +
+        diagnostics->triangles_clipped +
+        diagnostics->triangles_unclipped);
+    assert(
+        diagnostics->triangles_generated ==
+        diagnostics->triangles_projection_rejected +
         diagnostics->triangles_backface_rejected +
         diagnostics->triangles_degenerate +
         diagnostics->triangles_bbox_rejected +
@@ -757,14 +775,143 @@ static void test_actual_projection_uses_zero_as_near_clip_boundary(void) {
     uint16_t indices[] = {0, 1, 2};
 
     initialize_renderer(&renderer, &scene, &backend, &buffers);
-    renderer.camera_projection =
-        mat4Perspective(1.0f, 2500.0f, 4.0f / 3.0f, 0.6f);
+    use_production_projection(&renderer);
     add_mesh_object(
         &scene, &object, &mesh, positions, indices, 3);
 
     assert(rendererRender(&renderer) == 0);
     assert(renderer.diagnostics.triangles_z_rejected == 1);
     assert(renderer.diagnostics.triangles_frustum_rejected == 0);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_actual_projection_clips_near_crossings(void) {
+    Renderer one_outside;
+    Renderer two_outside;
+    Scene one_outside_scene;
+    Scene two_outside_scene;
+    BackEnd one_outside_backend;
+    BackEnd two_outside_backend;
+    TestBuffers one_outside_buffers;
+    TestBuffers two_outside_buffers;
+    Mesh one_outside_mesh;
+    Mesh two_outside_mesh;
+    Object one_outside_object;
+    Object two_outside_object;
+    Vec3f one_outside_positions[] = {
+        {-0.60f, -0.50f, -2.00f},
+        { 0.60f, -0.50f, -2.00f},
+        { 0.00f,  0.00f, -0.50f}
+    };
+    Vec3f two_outside_positions[] = {
+        {-0.60f, -0.50f, -2.00f},
+        { 0.30f, -0.10f, -0.50f},
+        {-0.20f,  0.40f, -0.50f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(
+        &one_outside, &one_outside_scene,
+        &one_outside_backend, &one_outside_buffers);
+    initialize_renderer(
+        &two_outside, &two_outside_scene,
+        &two_outside_backend, &two_outside_buffers);
+    use_production_projection(&one_outside);
+    use_production_projection(&two_outside);
+    add_mesh_object(
+        &one_outside_scene, &one_outside_object,
+        &one_outside_mesh, one_outside_positions, indices, 3);
+    add_mesh_object(
+        &two_outside_scene, &two_outside_object,
+        &two_outside_mesh, two_outside_positions, indices, 3);
+
+    assert(rendererRender(&one_outside) == 0);
+    assert(one_outside.diagnostics.triangles_submitted == 1);
+    assert(one_outside.diagnostics.triangles_clipped == 1);
+    assert(one_outside.diagnostics.triangles_unclipped == 0);
+    assert(one_outside.diagnostics.triangles_generated == 2);
+    assert(
+        one_outside.diagnostics.triangles_projection_rejected == 0);
+    assert(one_outside.diagnostics.triangles_rasterized > 0);
+    assert(one_outside.diagnostics.fragments_shaded > 0);
+    assert_diagnostic_invariants(&one_outside.diagnostics);
+
+    assert(rendererRender(&two_outside) == 0);
+    assert(two_outside.diagnostics.triangles_submitted == 1);
+    assert(two_outside.diagnostics.triangles_clipped == 1);
+    assert(two_outside.diagnostics.triangles_unclipped == 0);
+    assert(two_outside.diagnostics.triangles_generated == 1);
+    assert(
+        two_outside.diagnostics.triangles_projection_rejected == 0);
+    assert(two_outside.diagnostics.triangles_rasterized == 1);
+    assert(two_outside.diagnostics.fragments_shaded > 0);
+    assert_diagnostic_invariants(&two_outside.diagnostics);
+}
+
+static void test_actual_projection_clips_huge_lateral_triangle(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh mesh;
+    Object object;
+    Vec3f positions[] = {
+        {-1.0e9f, -0.20f, -2.0f},
+        { 1.0e9f, -0.20f, -2.0f},
+        { 0.0f,     1.0e9f, -2.0f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    use_production_projection(&renderer);
+    add_mesh_object(
+        &scene, &object, &mesh, positions, indices, 3);
+
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.triangles_submitted == 1);
+    assert(renderer.diagnostics.triangles_clipped == 1);
+    assert(renderer.diagnostics.triangles_generated > 0);
+    assert(renderer.diagnostics.triangles_projection_rejected == 0);
+    assert(renderer.diagnostics.triangles_rasterized > 0);
+    assert(renderer.diagnostics.fragments_shaded > 0);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
+static void test_actual_projection_rejects_nonfinite_input_safely(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh mesh;
+    Object object;
+    Vec3f positions[] = {
+        {-0.60f, -0.50f, -2.0f},
+        { 0.60f, -0.50f, -2.0f},
+        {-0.60f,  0.50f, -2.0f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    use_production_projection(&renderer);
+    add_mesh_object(
+        &scene, &object, &mesh, positions, indices, 3);
+
+    renderer.camera_projection.elements[0] = NAN;
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.triangles_submitted == 1);
+    assert(renderer.diagnostics.triangles_frustum_rejected == 1);
+    assert(renderer.diagnostics.triangles_generated == 0);
+    assert(renderer.diagnostics.fragments_bbox == 0);
+    assert(renderer.diagnostics.fragments_shaded == 0);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+
+    renderer.camera_projection.elements[0] = INFINITY;
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.triangles_submitted == 1);
+    assert(renderer.diagnostics.triangles_frustum_rejected == 1);
+    assert(renderer.diagnostics.triangles_generated == 0);
+    assert(renderer.diagnostics.fragments_bbox == 0);
+    assert(renderer.diagnostics.fragments_shaded == 0);
     assert_diagnostic_invariants(&renderer.diagnostics);
 }
 
@@ -874,7 +1021,7 @@ static void test_enabled_and_disabled_outputs_match(void) {
             disabled_buffers.depth,
             sizeof(enabled_buffers.depth)) == 0);
     assert(enabled.diagnostics.triangles_frustum_rejected == 2);
-    assert(disabled.diagnostics.triangles_frustum_rejected == 0);
+    assert(disabled.diagnostics.triangles_frustum_rejected == 2);
     assert_diagnostic_invariants(&enabled.diagnostics);
     assert_diagnostic_invariants(&disabled.diagnostics);
 }
@@ -928,13 +1075,15 @@ static void test_bbox_rejection_and_clamping(void) {
     assert(rendererRender(&renderer) == 0);
     assert(renderer.diagnostics.triangles_frustum_rejected == 1);
     assert(renderer.diagnostics.triangles_bbox_rejected == 0);
-    assert(renderer.diagnostics.triangles_rasterized == 1);
-    assert(renderer.diagnostics.triangles_bbox_clamped == 1);
+    assert(renderer.diagnostics.triangles_clipped == 1);
+    assert(renderer.diagnostics.triangles_generated == 2);
+    assert(renderer.diagnostics.triangles_rasterized == 2);
+    assert(renderer.diagnostics.triangles_bbox_clamped == 0);
     assert(renderer.diagnostics.fragments_bbox > 0);
     assert_diagnostic_invariants(&renderer.diagnostics);
 }
 
-static void test_depth_range_rejection(void) {
+static void test_far_clip_rejection_prevents_out_of_range_depth(void) {
     Renderer renderer;
     Scene scene;
     BackEnd backend;
@@ -954,10 +1103,11 @@ static void test_depth_range_rejection(void) {
         &scene, &object, &mesh, positions, indices, 3);
 
     assert(rendererRender(&renderer) == 0);
-    assert(renderer.diagnostics.fragments_covered > 0);
-    assert(
-        renderer.diagnostics.fragments_depth_range_rejected ==
-        renderer.diagnostics.fragments_covered);
+    assert(renderer.diagnostics.triangles_submitted == 1);
+    assert(renderer.diagnostics.triangles_frustum_rejected == 1);
+    assert(renderer.diagnostics.triangles_generated == 0);
+    assert(renderer.diagnostics.fragments_covered == 0);
+    assert(renderer.diagnostics.fragments_depth_range_rejected == 0);
     assert(renderer.diagnostics.fragments_shaded == 0);
     assert_diagnostic_invariants(&renderer.diagnostics);
 }
@@ -992,11 +1142,14 @@ int main(void) {
     test_object_bounds_invalid_and_disabled_fail_open();
     test_clip_boundaries_and_crossings_are_retained();
     test_actual_projection_uses_zero_as_near_clip_boundary();
+    test_actual_projection_clips_near_crossings();
+    test_actual_projection_clips_huge_lateral_triangle();
+    test_actual_projection_rejects_nonfinite_input_safely();
     test_all_nonpositive_w_is_rejected_before_division();
     test_enabled_and_disabled_outputs_match();
     test_integer_screen_degeneracy();
     test_bbox_rejection_and_clamping();
-    test_depth_range_rejection();
+    test_far_clip_rejection_prevents_out_of_range_depth();
     test_wrapping_clock();
     puts("Pingo renderer diagnostics test passed");
     return 0;

@@ -9,6 +9,7 @@
 #include "sprite.h"
 #include "pixel.h"
 #include "depth.h"
+#include "clip.h"
 #include "perspective_span.h"
 #include "triangle_span.h"
 #include "backend.h"
@@ -103,44 +104,6 @@ int orient2d( Vec2i a,  Vec2i b,  Vec2i c)
     return (b.x-a.x)*(c.y-a.y) - (b.y-a.y)*(c.x-a.x);
 }
 
-/*
- * Clip-space Z is [-W, 0] for Pingo's qualified projection. The existing
- * all-Z-positive test retains responsibility for the near/camera plane.
- * This helper adds only the far and four lateral trivial rejects.
- */
-static int triangleOutsideRemainingClipPlanes(
-        Vec4f a, Vec4f b, Vec4f c) {
-    /*
-     * A triangle wholly on or behind the eye plane cannot be projected.
-     * Keep this explicit: mixed canonical outcodes alone do not guarantee
-     * that a nonpositive W will satisfy one common plane test.
-     */
-    if (a.w <= 0.0f && b.w <= 0.0f && c.w <= 0.0f)
-        return 1;
-    if (a.z < -a.w && b.z < -b.w && c.z < -c.w)
-        return 1;
-    if (a.x < -a.w && b.x < -b.w && c.x < -c.w)
-        return 1;
-    if (a.x > a.w && b.x > b.w && c.x > c.w)
-        return 1;
-    if (a.y < -a.w && b.y < -b.w && c.y < -c.w)
-        return 1;
-    if (a.y > a.w && b.y > b.w && c.y > c.w)
-        return 1;
-    return 0;
-}
-
-enum {
-    PINGO_CLIP_OUTSIDE_EYE = 1 << 0,
-    PINGO_CLIP_OUTSIDE_NEAR = 1 << 1,
-    PINGO_CLIP_OUTSIDE_FAR = 1 << 2,
-    PINGO_CLIP_OUTSIDE_LEFT = 1 << 3,
-    PINGO_CLIP_OUTSIDE_RIGHT = 1 << 4,
-    PINGO_CLIP_OUTSIDE_BOTTOM = 1 << 5,
-    PINGO_CLIP_OUTSIDE_TOP = 1 << 6,
-    PINGO_CLIP_OUTSIDE_ALL = (1 << 7) - 1
-};
-
 static uint8_t clipOutcode(Vec4f point) {
     /*
      * A malformed transform must never make a valid object disappear. A
@@ -209,6 +172,58 @@ static int meshBoundsOutsideClipPlanes(
     return 1;
 }
 
+static int projectClipVertex(
+        Vec4f * point, Vec2i screen_size, Vec2i * screen) {
+    if (!point || !screen ||
+        !isfinite(point->x) ||
+        !isfinite(point->y) ||
+        !isfinite(point->z) ||
+        !isfinite(point->w) ||
+        !(point->w > 0.0f)) {
+        return 0;
+    }
+
+    /*
+     * Retain the accepted renderer's division expression for vertices that
+     * need no clipping. Changing 1.0 to 1.0f is a separate, already measured
+     * numerical/performance tradeoff rather than part of this safety fix.
+     */
+    float reciprocal_w = 1.0 / point->w;
+    point->x *= reciprocal_w;
+    point->y *= reciprocal_w;
+    point->z *= reciprocal_w;
+    point->w = reciprocal_w;
+    if (!isfinite(point->x) ||
+        !isfinite(point->y) ||
+        !isfinite(point->z) ||
+        !isfinite(point->w)) {
+        return 0;
+    }
+
+    float half_x = screen_size.x / 2;
+    float half_y = screen_size.y / 2;
+    float screen_x = point->x * half_x + half_x;
+    float screen_y = -point->y * half_y + half_y;
+
+    /*
+     * 2147483520 is the largest finite float that converts safely to int32.
+     * Full homogeneous clipping normally keeps these values within the
+     * viewport; this guard also makes malformed matrices fail closed.
+     */
+    if (!isfinite(screen_x) ||
+        !isfinite(screen_y) ||
+        screen_x < -2147483648.0f ||
+        screen_x > 2147483520.0f ||
+        screen_y < -2147483648.0f ||
+        screen_y > 2147483520.0f) {
+        return 0;
+    }
+
+    screen->x = (int32_t)screen_x;
+    screen->y = (int32_t)screen_y;
+    return 1;
+}
+
 static inline void backendDrawPixel(
         Renderer * r, Texture * f, Vec2i pos,
         int32_t pixelIndex, Pixel color, float illumination,
@@ -242,13 +257,25 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     if (!o || !o->mesh ||
         !o->mesh->positions ||
         !o->mesh->pos_indices ||
-        o->mesh->indexes_count < 3) {
+        !o->mesh->geometry_valid ||
+        o->mesh->indexes_count < 3 ||
+        (o->mesh->indexes_count % 3) != 0) {
         return 0;
     }
 
     Vec2f * tex_coords = o->textCoord;
     if (!tex_coords) {
         tex_coords = o->mesh->textCoord;
+    }
+    if (o->material != 0 &&
+        (!o->texture_mapping_valid ||
+         !tex_coords ||
+         !o->mesh->tex_indices ||
+         !o->material->texture ||
+         !o->material->texture->frameBuffer ||
+         o->material->texture->size.x <= 0 ||
+         o->material->texture->size.y <= 0)) {
+        return 0;
     }
 
     // MODEL MATRIX
@@ -345,7 +372,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             r, phase_started, &r->diagnostics.transform_ticks);
 #endif
 
-        //Triangle is completely behind camera
+        // Triangle is wholly closer than the qualified near plane.
         if (a.z > 0 && b.z > 0 && c.z > 0) {
 #if PINGO_RENDER_DIAGNOSTICS
             r->diagnostics.triangles_z_rejected++;
@@ -355,8 +382,13 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
            continue;
         }
 
-        if (r->frustumCulling &&
-            triangleOutsideRemainingClipPlanes(a, b, c)) {
+        uint8_t outcode_a = clipOutcode(a);
+        uint8_t outcode_b = clipOutcode(b);
+        uint8_t outcode_c = clipOutcode(c);
+        uint8_t common_outcode =
+            outcode_a & outcode_b & outcode_c &
+            PINGO_CLIP_PLANES;
+        if (common_outcode != 0) {
 #if PINGO_RENDER_DIAGNOSTICS
             r->diagnostics.triangles_frustum_rejected++;
             rendererDiagnosticsFinishPhase(
@@ -365,30 +397,86 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             continue;
         }
 
-        // convert to device coordinates by perspective division
-        a.w = 1.0 / a.w;
-        b.w = 1.0 / b.w;
-        c.w = 1.0 / c.w;
-        a.x *= a.w; a.y *= a.w; a.z *= a.w;
-        b.x *= b.w; b.y *= b.w; b.z *= b.w;
-        c.x *= c.w; c.y *= c.w; c.z *= c.w;
-
-        float clocking = isClockWise(a.x, a.y, b.x, b.y, c.x, c.y);
-        if (clocking >= 0) {
+        PingoClipVertex input[3] = {
+            {.position = a, .texture = tca},
+            {.position = b, .texture = tcb},
+            {.position = c, .texture = tcc}
+        };
+        PingoClipVertex clipped[PINGO_CLIP_MAX_VERTICES];
+        uint8_t clip_planes =
+            (outcode_a | outcode_b | outcode_c) &
+            PINGO_CLIP_PLANES;
+        uint8_t clipped_count =
+            pingoClipTriangle(input, clip_planes, clipped);
+        bool projection_safe = clipped_count >= 3;
+        for (uint8_t vertex_index = 0;
+             projection_safe && vertex_index < clipped_count;
+             vertex_index++) {
+            projection_safe =
+                clipped[vertex_index].position.w > 0.0f &&
+                isfinite(clipped[vertex_index].position.w);
+        }
+        if (!projection_safe) {
 #if PINGO_RENDER_DIAGNOSTICS
-            r->diagnostics.triangles_backface_rejected++;
+            r->diagnostics.triangles_frustum_rejected++;
             rendererDiagnosticsFinishPhase(
                 r, phase_started, &r->diagnostics.triangle_setup_ticks);
 #endif
             continue;
         }
 
-        //Compute Screen coordinates
-        float halfX = scrSize.x/2;
-        float halfY = scrSize.y/2;
-        Vec2i a_s = {a.x * halfX + halfX, -a.y * halfY + halfY};
-        Vec2i b_s = {b.x * halfX + halfX, -b.y * halfY + halfY};
-        Vec2i c_s = {c.x * halfX + halfX, -c.y * halfY + halfY};
+#if PINGO_RENDER_DIAGNOSTICS
+        if (clip_planes != 0) {
+            r->diagnostics.triangles_clipped++;
+        } else {
+            r->diagnostics.triangles_unclipped++;
+        }
+        r->diagnostics.triangles_generated += clipped_count - 2;
+#endif
+
+        for (uint8_t fan_index = 1;
+             fan_index + 1 < clipped_count;
+             fan_index++) {
+            a = clipped[0].position;
+            b = clipped[fan_index].position;
+            c = clipped[fan_index + 1].position;
+            tca = clipped[0].texture;
+            tcb = clipped[fan_index].texture;
+            tcc = clipped[fan_index + 1].texture;
+
+#if PINGO_RENDER_DIAGNOSTICS
+            uint32_t primitive_phase_started =
+                fan_index == 1
+                    ? phase_started
+                    : rendererDiagnosticsNow(r);
+#endif
+
+            Vec2i a_s;
+            Vec2i b_s;
+            Vec2i c_s;
+            if (!projectClipVertex(&a, scrSize, &a_s) ||
+                !projectClipVertex(&b, scrSize, &b_s) ||
+                !projectClipVertex(&c, scrSize, &c_s)) {
+#if PINGO_RENDER_DIAGNOSTICS
+                r->diagnostics.triangles_projection_rejected++;
+                rendererDiagnosticsFinishPhase(
+                    r, primitive_phase_started,
+                    &r->diagnostics.triangle_setup_ticks);
+#endif
+                continue;
+            }
+
+            float clocking =
+                isClockWise(a.x, a.y, b.x, b.y, c.x, c.y);
+            if (clocking >= 0) {
+#if PINGO_RENDER_DIAGNOSTICS
+                r->diagnostics.triangles_backface_rejected++;
+                rendererDiagnosticsFinishPhase(
+                    r, primitive_phase_started,
+                    &r->diagnostics.triangle_setup_ticks);
+#endif
+                continue;
+            }
 
         int32_t minX = MIN(MIN(a_s.x, b_s.x), c_s.x);
         int32_t minY = MIN(MIN(a_s.y, b_s.y), c_s.y);
@@ -422,7 +510,8 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #if PINGO_RENDER_DIAGNOSTICS
             r->diagnostics.triangles_degenerate++;
             rendererDiagnosticsFinishPhase(
-                r, phase_started, &r->diagnostics.triangle_setup_ticks);
+                r, primitive_phase_started,
+                &r->diagnostics.triangle_setup_ticks);
 #endif
             continue;
         }
@@ -476,8 +565,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             r->diagnostics.fragments_bbox +=
                 (uint64_t)(maxX - minX) * (uint64_t)(maxY - minY);
         }
-        phase_started = rendererDiagnosticsFinishPhase(
-            r, phase_started, &r->diagnostics.triangle_setup_ticks);
+        primitive_phase_started = rendererDiagnosticsFinishPhase(
+            r, primitive_phase_started,
+            &r->diagnostics.triangle_setup_ticks);
 
         if (viewportEmpty) {
             continue;
@@ -588,7 +678,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                 fragmentsCovered++;
 #endif
 
-                if (depth < 0.0 || depth > 1.0) {
+                if (!(depth >= 0.0f && depth <= 1.0f)) {
 #if PINGO_RENDER_DIAGNOSTICS
                     fragmentsDepthRangeRejected++;
 #endif
@@ -663,7 +753,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
 #if PINGO_RENDER_DIAGNOSTICS
         rendererDiagnosticsFinishPhase(
-            r, phase_started, &r->diagnostics.raster_ticks);
+            r, primitive_phase_started, &r->diagnostics.raster_ticks);
         r->diagnostics.fragments_covered += fragmentsCovered;
         r->diagnostics.fragments_depth_range_rejected +=
             fragmentsDepthRangeRejected;
@@ -673,6 +763,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             fragmentsReciprocalWRejected;
         r->diagnostics.fragments_shaded += fragmentsShaded;
 #endif
+        }
     }
 
     return 0;
