@@ -32,7 +32,11 @@ TEXTURE_TEST_TARGET ?= $(BUILD_DIR)/pingo_texture_test
 MATH_TEST_TARGET ?= $(BUILD_DIR)/pingo_math_test
 SPAN_TEST_TARGET ?= $(BUILD_DIR)/pingo_triangle_span_test
 PERSPECTIVE_SPAN_TEST_TARGET ?= $(BUILD_DIR)/pingo_perspective_span_test
+DEPTH_TEST_TARGET ?= $(BUILD_DIR)/pingo_depth_test
+MESH_VALIDATION_TEST_TARGET ?= $(BUILD_DIR)/pingo_mesh_validation_test
+CLIP_TEST_TARGET ?= $(BUILD_DIR)/pingo_clip_test
 DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
+SANITIZER_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_sanitizer_test
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
 ifeq ($(filter clean,$(MAKECMDGOALS)),)
@@ -113,6 +117,8 @@ PINGO_C_SOURCES := \
 	render/scene.c \
 	render/sprite.c \
 	render/texture.c
+PINGO_C_SOURCE_PATHS := \
+	$(addprefix $(VDP_ROOT)/video/pingo/,$(PINGO_C_SOURCES))
 
 VDP_GL_CXX_SOURCES := \
 	canvas.cpp \
@@ -154,7 +160,8 @@ OBJECTS := $(VDP_OBJECTS) $(PINGO_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
 .PHONY: all clean smoke texture-test math-test span-test \
-	perspective-span-test diagnostics-test diagnostics-smoke
+	perspective-span-test depth-test mesh-validation-test \
+	clip-test diagnostics-test diagnostics-smoke sanitizer-test
 
 all: $(TARGET)
 
@@ -223,11 +230,49 @@ $(PERSPECTIVE_SPAN_TEST_TARGET): pingo_perspective_span_test.c \
 		-I$(VDP_ROOT)/video/pingo \
 		$< -lm -o $@
 
+$(DEPTH_TEST_TARGET): pingo_depth_test.c \
+		$(VDP_ROOT)/video/pingo/render/depth.c \
+		$(VDP_ROOT)/video/pingo/render/depth.h $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) -Wall -Werror -O2 -g -std=c11 \
+		-I$(VDP_ROOT)/video/pingo/render \
+		$< $(VDP_ROOT)/video/pingo/render/depth.c -lm -o $@
+
+$(MESH_VALIDATION_TEST_TARGET): pingo_mesh_validation_test.c \
+		$(VDP_ROOT)/video/pingo/render/mesh.c \
+		$(VDP_ROOT)/video/pingo/render/object.c \
+		$(VDP_ROOT)/video/pingo/render/mesh.h \
+		$(VDP_ROOT)/video/pingo/render/object.h $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) -Wall -Werror -O2 -g -std=c11 \
+		-I$(VDP_ROOT)/video/pingo/render \
+		-I$(VDP_ROOT)/video/pingo/math \
+		$< \
+		$(VDP_ROOT)/video/pingo/render/mesh.c \
+		$(VDP_ROOT)/video/pingo/render/object.c -lm -o $@
+
+$(CLIP_TEST_TARGET): pingo_clip_test.c \
+		$(VDP_ROOT)/video/pingo/render/clip.h $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) -Wall -Werror -O2 -g -std=c11 \
+		-I$(VDP_ROOT)/video/pingo \
+		$< -lm -o $@
+
 $(DIAGNOSTICS_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 		$(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
 		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -lm -o $@
+
+$(SANITIZER_TEST_TARGET): pingo_renderer_diagnostics_test.c \
+		$(PINGO_C_SOURCE_PATHS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) -DPINGO_RENDER_DIAGNOSTICS=1 \
+		$(COMMON_INCLUDES) \
+		-Wall -Werror=return-type -O1 -g -std=c11 \
+		-fno-omit-frame-pointer \
+		-fsanitize=address,undefined,float-divide-by-zero,float-cast-overflow \
+		$< $(PINGO_C_SOURCE_PATHS) -lm -o $@
 
 texture-test: $(TEXTURE_TEST_TARGET)
 	$(TEXTURE_TEST_TARGET)
@@ -241,8 +286,17 @@ span-test: $(SPAN_TEST_TARGET)
 perspective-span-test: $(PERSPECTIVE_SPAN_TEST_TARGET)
 	$(PERSPECTIVE_SPAN_TEST_TARGET)
 
+depth-test: $(DEPTH_TEST_TARGET)
+	$(DEPTH_TEST_TARGET)
+
+mesh-validation-test: $(MESH_VALIDATION_TEST_TARGET)
+	$(MESH_VALIDATION_TEST_TARGET)
+
+clip-test: $(CLIP_TEST_TARGET)
+	$(CLIP_TEST_TARGET)
+
 smoke: $(TARGET) $(SMOKE_TARGET) texture-test math-test span-test \
-		perspective-span-test
+		perspective-span-test depth-test mesh-validation-test clip-test
 	$(SMOKE_TARGET) $(TARGET)
 
 ifeq ($(DIAGNOSTICS),0)
@@ -256,11 +310,20 @@ endif
 
 diagnostics-smoke: smoke diagnostics-test
 
+sanitizer-test: $(SANITIZER_TEST_TARGET)
+	ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+	$(SANITIZER_TEST_TARGET)
+
 clean:
 	$(RM) $(TARGET) $(SMOKE_TARGET) $(TEXTURE_TEST_TARGET) $(MATH_TEST_TARGET) \
 		$(SPAN_TEST_TARGET) \
 		$(PERSPECTIVE_SPAN_TEST_TARGET) \
-		$(DIAGNOSTICS_TEST_TARGET) $(VDP_GL_LIB) \
+		$(DEPTH_TEST_TARGET) \
+		$(MESH_VALIDATION_TEST_TARGET) \
+		$(CLIP_TEST_TARGET) \
+		$(DIAGNOSTICS_TEST_TARGET) \
+		$(SANITIZER_TEST_TARGET) $(VDP_GL_LIB) \
 		$(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 
 -include $(DEPS)

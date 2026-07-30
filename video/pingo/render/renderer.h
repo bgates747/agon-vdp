@@ -31,6 +31,10 @@ typedef struct tag_RendererDiagnostics {
     uint32_t triangles_submitted;
     uint32_t triangles_z_rejected;
     uint32_t triangles_frustum_rejected;
+    uint32_t triangles_clipped;
+    uint32_t triangles_unclipped;
+    uint32_t triangles_generated;
+    uint32_t triangles_projection_rejected;
     uint32_t triangles_backface_rejected;
     uint32_t triangles_degenerate;
     uint32_t triangles_bbox_rejected;
@@ -81,4 +85,8 @@ extern int rendererSetScene(Renderer *r, Scene *s);
 
 extern int rendererSetCamera(Renderer *r, Vec4i camera);
 
+/*
+ * Toggle the conservative per-object bounds test. Per-triangle homogeneous
+ * rejection and clipping are correctness requirements and remain active.
+ */
 extern void rendererSetFrustumCulling(Renderer *r, int enabled);

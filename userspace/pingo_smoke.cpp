@@ -74,6 +74,22 @@ int main(int argc, char **argv) {
 			send(byte);
 		}
 	};
+	auto appendWord = [](
+			std::vector<std::uint8_t>& bytes,
+			std::uint16_t value) {
+		bytes.push_back(static_cast<std::uint8_t>(value));
+		bytes.push_back(static_cast<std::uint8_t>(value >> 8));
+	};
+	auto sendPingo = [&](std::uint8_t subcommand,
+			const std::vector<std::uint16_t>& words) {
+		std::vector<std::uint8_t> bytes = {
+			23, 0, 0xA0, 0xE8, 0x03, 0x49, subcommand,
+		};
+		for (auto word : words) {
+			appendWord(bytes, word);
+		}
+		sendBytes(bytes);
+	};
 	auto receiveBytes = [&](std::chrono::milliseconds quietPeriod) {
 		std::vector<std::uint8_t> bytes;
 		auto quietSince = std::chrono::steady_clock::now();
@@ -194,6 +210,57 @@ int main(int argc, char **argv) {
 	auto reDisabledBytes = receiveBytes(std::chrono::milliseconds(10));
 	if (hasAnyCompletion(reDisabledBytes)) {
 		std::fprintf(stderr, "render notification did not disable\n");
+		shutdown();
+		return 1;
+	}
+
+	/*
+	 * Exercise malformed mesh ingestion through the actual VDU bridge. A
+	 * rejected non-triplet replacement must consume its entire payload, and
+	 * an out-of-range replacement must make the object non-renderable rather
+	 * than dereferencing it. A later valid component set must recover without
+	 * recreating the control structure.
+	 */
+	sendPingo(1, {
+		7, 3,
+		0xC000, 0xC000, 0xC000,
+		0x4000, 0xC000, 0xC000,
+		0x0000, 0x4000, 0xC000,
+	});
+	sendPingo(2, {7, 4, 0, 1, 2, 0});
+	sendPingo(2, {7, 3, 0, 1, 9});
+	sendPingo(4, {7, 3, 0, 1, 2});
+	sendPingo(5, {7, 7, 257});
+
+	sendBytes({
+		23, 0, 0xA0, 0xE8, 0x03, 0x49, 41, 1, 0xA7, 0xC3,
+	});
+	sendBytes({23, 0, 0xA0, 0xE8, 0x03, 0x49, 38, 1, 1});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	auto invalidMeshBytes = receiveBytes(std::chrono::milliseconds(10));
+	if (!findCompletion(invalidMeshBytes, 0xC3A7, 3)) {
+		std::fprintf(
+			stderr,
+			"malformed mesh upload desynchronized or crashed the VDU bridge\n");
+		shutdown();
+		return 1;
+	}
+
+	sendPingo(2, {7, 3, 0, 1, 2});
+	sendPingo(3, {
+		7, 3,
+		0x0000, 0x0000,
+		0xFFFF, 0x0000,
+		0x0000, 0xFFFF,
+	});
+	sendPingo(4, {7, 3, 0, 1, 2});
+	sendBytes({23, 0, 0xA0, 0xE8, 0x03, 0x49, 38, 1, 1});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	auto recoveredMeshBytes = receiveBytes(std::chrono::milliseconds(10));
+	if (!findCompletion(recoveredMeshBytes, 0xC3A7, 4)) {
+		std::fprintf(
+			stderr,
+			"valid replacement did not recover malformed mesh state\n");
 		shutdown();
 		return 1;
 	}

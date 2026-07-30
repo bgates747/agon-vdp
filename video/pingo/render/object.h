@@ -11,7 +11,9 @@ typedef struct Object {
     Mat4 transform;
     Material * material;
     Vec2f * textCoord;
+    uint32_t textCoord_count;
+    uint8_t texture_mapping_valid;
 } Object;
 
 Renderable object_as_renderable(Object * object);
-
+int objectUpdateTextureMappingValidity(Object * object);
