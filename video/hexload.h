@@ -69,6 +69,9 @@ uint8_t getIHexNibble(bool addcrc) {
 	else nibble = input - 'A' + 10;
 	// illegal characters will be dealt with by checksum later
 	return nibble;
+#else /* USERSPACE */
+	// unreachable: vdu_sys_hexload() returns immediately under USERSPACE
+	return 0;
 #endif /* !USERSPACE */
 }
 
