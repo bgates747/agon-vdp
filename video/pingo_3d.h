@@ -599,6 +599,7 @@ typedef struct tag_Pingo3dControl {
             case 45: set_ambient_light(); break;
             case 46: set_illumination_enabled(); break;
             case 47: set_mesh_shading_mode(); break;
+            case 48: set_mesh_illumination_policy(); break;
         }
     }
 
@@ -705,6 +706,24 @@ typedef struct tag_Pingo3dControl {
         auto mesh = establish_mesh((uint16_t)mesh_id);
         if (mesh) {
             mesh->shading_mode = (uint8_t)mode;
+        }
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 48, mesh_id; mode
+    // Mode 0 inherits scene lighting; mode 1 emits native mesh colors.
+    void set_mesh_illumination_policy() {
+        auto mesh_id = m_proc->readWord_t();
+        if (mesh_id < 0) {
+            return;
+        }
+        auto mode = m_proc->readByte_t();
+        if (mode != p3d::MESH_ILLUMINATION_INHERIT_SCENE &&
+            mode != p3d::MESH_ILLUMINATION_SELF_ILLUMINATED) {
+            return;
+        }
+        auto mesh = establish_mesh((uint16_t)mesh_id);
+        if (mesh) {
+            mesh->illumination_policy = (uint8_t)mode;
         }
     }
 
@@ -1891,6 +1910,7 @@ extern "C" bool pingo_userspace_get_upload_state_hash(
     PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.y);
     PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.z);
     PINGO_HASH_UPLOAD_FIELD(mesh.shading_mode);
+    PINGO_HASH_UPLOAD_FIELD(mesh.illumination_policy);
     PINGO_HASH_UPLOAD_FIELD(object.textCoord_count);
     PINGO_HASH_UPLOAD_FIELD(object.texture_mapping_valid);
 #undef PINGO_HASH_UPLOAD_FIELD
@@ -1969,6 +1989,20 @@ extern "C" bool pingo_userspace_get_mesh_shading_mode(
         return false;
     }
     *mode = mesh->second.shading_mode;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_mesh_illumination_policy(
+        uint16_t buffer_id, uint16_t mesh_id, uint8_t * policy) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !policy) {
+        return false;
+    }
+    auto mesh = control->m_meshes->find(mesh_id);
+    if (mesh == control->m_meshes->end()) {
+        return false;
+    }
+    *policy = mesh->second.illumination_policy;
     return true;
 }
 #endif

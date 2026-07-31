@@ -143,6 +143,7 @@ channel saturates at its maximum rather than wrapping.
 <b>VDU 23, 0, &A0, sid; &49, 45, ambient</b> :  Set Ambient-Light Floor<br>
 <b>VDU 23, 0, &A0, sid; &49, 46, enabled</b> :  Enable or Disable Illumination<br>
 <b>VDU 23, 0, &A0, sid; &49, 47, mid; mode</b> :  Set Mesh Shading Mode<br>
+<b>VDU 23, 0, &A0, sid; &49, 48, mid; mode</b> :  Set Mesh Illumination Policy<br>
 
 ## Create Control Structure
 <b>VDU 23, 0, &A0, sid; &49, 0, w; h;</b> :  Create Control Structure<br>
@@ -510,6 +511,32 @@ Asset-build tooling must ensure that all three UVs of a flat-shaded source
 triangle select the same cell in the reference palette; malformed multi-color
 triangles should be rejected before upload. The firmware deliberately does not
 reinterpret or rewrite the UV data.
+
+## Set Mesh Illumination Policy
+<b>VDU 23, 0, &A0, sid; &49, 48, mid; mode</b> :  Set Mesh Illumination Policy
+
+This command selects how every object using a mesh responds to the scene-wide
+illumination state. The 16-bit mesh ID is followed by an unsigned byte:
+
+- Mode 0: inherit scene illumination.
+- Mode 1: self-illuminated; emit native texture or flat-palette colors.
+
+Mode 0 is the default and preserves the behavior of existing applications.
+Mode 1 bypasses the face-normal, directional-light, ambient-floor, and
+shade-table work for that mesh. It does not bypass geometry transforms,
+clipping, depth testing, texture mapping, or flat-palette selection. Shading
+mode and illumination policy are independent: either a textured or a
+flat-palette mesh may be scene-lit or self-illuminated.
+
+A valid policy may be selected before mesh geometry is uploaded, and later
+component uploads retain it. Invalid modes are rejected without changing or
+creating the mesh. The policy is mesh-owned, so it applies to every object that
+references that mesh.
+
+When scene illumination is disabled with subcommand 46, inherited meshes also
+emit native colors. The `PINGO_DISABLE_ILLUMINATION=1` diagnostic build retains
+its compile-time behavior: all meshes emit native colors regardless of their
+runtime illumination policy.
 
 ## Sample
 

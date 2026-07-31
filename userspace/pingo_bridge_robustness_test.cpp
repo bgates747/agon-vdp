@@ -42,6 +42,8 @@ struct Harness {
         std::uint8_t *, std::uint8_t *);
     bool (*meshShadingMode)(
         std::uint16_t, std::uint16_t, std::uint8_t *);
+    bool (*meshIlluminationPolicy)(
+        std::uint16_t, std::uint16_t, std::uint8_t *);
     bool (*uploadHash)(
         std::uint16_t, std::uint16_t, std::uint16_t, std::uint64_t *);
     bool (*texturePixel)(
@@ -63,6 +65,7 @@ struct Harness {
           sceneScale(nullptr),
           lightingState(nullptr),
           meshShadingMode(nullptr),
+          meshIlluminationPolicy(nullptr),
           uploadHash(nullptr),
           texturePixel(nullptr),
           nextEcho(0x40) {
@@ -97,6 +100,9 @@ struct Harness {
         meshShadingMode = loadSymbol<bool (*)(
             std::uint16_t, std::uint16_t, std::uint8_t *)>(
             handle, "pingo_userspace_get_mesh_shading_mode");
+        meshIlluminationPolicy = loadSymbol<bool (*)(
+            std::uint16_t, std::uint16_t, std::uint8_t *)>(
+            handle, "pingo_userspace_get_mesh_illumination_policy");
         uploadHash = loadSymbol<bool (*)(
             std::uint16_t, std::uint16_t, std::uint16_t, std::uint64_t *)>(
             handle, "pingo_userspace_get_upload_state_hash");
@@ -463,6 +469,23 @@ void testLightingAndShadingCommands(
         intensity == 127 && ambient == 0 && enabled == 1,
         "lighting initialization did not publish qualified defaults", harness);
 
+    // Establishing a mesh through an older rendering-policy command must
+    // retain the zero-valued, backward-compatible scene-lighting policy.
+    auto texturedMode = harness.pingoPrefix(control, 47);
+    Harness::appendWord(texturedMode, mesh);
+    texturedMode.push_back(0);
+    harness.sendBytes(texturedMode);
+    require(
+        harness.synchronize(),
+        "general-poll barrier failed after default mesh policy setup",
+        harness);
+    std::uint8_t illuminationPolicy = 0xFF;
+    require(
+        harness.meshIlluminationPolicy(
+            control, mesh, &illuminationPolicy) &&
+        illuminationPolicy == 0,
+        "new mesh did not default to inherited scene illumination", harness);
+
     harness.sendPingo(control, 43, {100, 0, 0});
     harness.sendPingoBytes(control, 44, {255});
     harness.sendPingoBytes(control, 45, {63});
@@ -471,6 +494,10 @@ void testLightingAndShadingCommands(
     Harness::appendWord(flatMode, mesh);
     flatMode.push_back(1);
     harness.sendBytes(flatMode);
+    auto selfIlluminated = harness.pingoPrefix(control, 48);
+    Harness::appendWord(selfIlluminated, mesh);
+    selfIlluminated.push_back(1);
+    harness.sendBytes(selfIlluminated);
     require(
         harness.synchronize(),
         "general-poll barrier failed after lighting commands", harness);
@@ -501,8 +528,11 @@ void testLightingAndShadingCommands(
     std::uint8_t shadingMode = 0;
     require(
         harness.meshShadingMode(control, mesh, &shadingMode) &&
-        shadingMode == 1,
-        "flat shading command did not update mesh state", harness);
+        shadingMode == 1 &&
+        harness.meshIlluminationPolicy(
+            control, mesh, &illuminationPolicy) &&
+        illuminationPolicy == 1,
+        "mesh rendering-policy commands did not update mesh state", harness);
 
     // Mode may be selected before any geometry arrives. Later component
     // uploads update the same mesh and must not reset its rendering policy.
@@ -518,8 +548,11 @@ void testLightingAndShadingCommands(
         "mesh upload after shading selection disrupted alignment", harness);
     require(
         harness.meshShadingMode(control, mesh, &shadingMode) &&
-        shadingMode == 1,
-        "mesh upload reset its previously selected shading mode", harness);
+        shadingMode == 1 &&
+        harness.meshIlluminationPolicy(
+            control, mesh, &illuminationPolicy) &&
+        illuminationPolicy == 1,
+        "mesh upload reset its previously selected rendering policy", harness);
 
     // Invalid values are consumed but preserve the previous state. In
     // particular, a zero direction must not destroy the usable light.
@@ -529,6 +562,10 @@ void testLightingAndShadingCommands(
     Harness::appendWord(invalidMode, mesh);
     invalidMode.push_back(2);
     harness.sendBytes(invalidMode);
+    auto invalidPolicy = harness.pingoPrefix(control, 48);
+    Harness::appendWord(invalidPolicy, mesh);
+    invalidPolicy.push_back(2);
+    harness.sendBytes(invalidPolicy);
     require(
         harness.synchronize(),
         "invalid lighting commands disrupted command alignment", harness);
@@ -540,7 +577,10 @@ void testLightingAndShadingCommands(
         approximately(direction[2], -inverseSqrtThree) &&
         enabled == 0 &&
         harness.meshShadingMode(control, mesh, &shadingMode) &&
-        shadingMode == 1,
+        shadingMode == 1 &&
+        harness.meshIlluminationPolicy(
+            control, mesh, &illuminationPolicy) &&
+        illuminationPolicy == 1,
         "invalid lighting command changed accepted state", harness);
 
     // Fixed-size commands commit only after their complete payload arrives.
@@ -578,6 +618,24 @@ void testLightingAndShadingCommands(
         "truncated mesh shading command created or changed mesh state",
         harness);
 
+    constexpr std::uint16_t truncatedPolicyMesh = 25;
+    auto truncatedPolicy = harness.pingoPrefix(control, 48);
+    Harness::appendWord(truncatedPolicy, truncatedPolicyMesh);
+    harness.sendBytes(truncatedPolicy);
+    harness.settle(std::chrono::milliseconds(450));
+    require(
+        harness.synchronize(),
+        "truncated mesh illumination command did not recover alignment",
+        harness);
+    require(
+        !harness.meshIlluminationPolicy(
+            control, truncatedPolicyMesh, &illuminationPolicy) &&
+        harness.meshIlluminationPolicy(
+            control, mesh, &illuminationPolicy) &&
+        illuminationPolicy == 1,
+        "truncated mesh illumination command created or changed mesh state",
+        harness);
+
     harness.sendPingo(control, 39);
     harness.sendPingo(control, 0, {32, 32});
     require(
@@ -592,8 +650,11 @@ void testLightingAndShadingCommands(
         intensity == 127 && ambient == 0 && enabled == 1,
         "control reinitialization did not restore lighting defaults", harness);
     require(
-        !harness.meshShadingMode(control, mesh, &shadingMode),
-        "control reinitialization retained stale mesh shading state", harness);
+        !harness.meshShadingMode(control, mesh, &shadingMode) &&
+        !harness.meshIlluminationPolicy(
+            control, mesh, &illuminationPolicy),
+        "control reinitialization retained stale mesh rendering state",
+        harness);
     harness.sendPingo(control, 39);
     require(
         harness.synchronize(),
