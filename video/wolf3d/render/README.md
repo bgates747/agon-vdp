@@ -2,7 +2,8 @@
 
 `wolf3d_draw.h`'s `Wolf3dRenderer` implements the real per-column raycast
 and billboard projection: `CalcProjection`/`SetupView`/`CalcHeight`/
-`TransformActor`/`CalcRotate` (view math), `WallRefresh` (grid-DDA against
+`TransformActor`/`CalcRotate` (view math and actor frame selection),
+`WallRefresh` (grid-DDA against
 the tilemap buffer referenced by `Wolf3dWorldState::tilemapBufferId`,
 including door open/closed blocking), and `DrawScaleds` (projects every
 active actor/static via the shared `TransformPoint` helper, culls off-screen/
@@ -24,10 +25,11 @@ one small VDP bitmap buffer per texture, selected by a fixed buffer-id
 offset from the wall texture id / sprite shapenum already on the wire.
 `WallRefresh`'s output (`WallHeights()`/`WallTiles()`/`WallTexU()`/
 `WallSides()`) and `DrawScaleds`' output (`VisSprites()`/
-`VisSpriteCount()`) are what a blit stage should consume. Also still
-missing: `DrawScaleds` doesn't call `CalcRotate` yet -- that needs a
-per-actor-class `numRotations`/`dirangle` table that isn't modeled in
-`Wolf3dWorldState` yet.
+`VisSpriteCount()`) are what a blit stage should consume. `DrawScaleds`
+resolves actor base shapes to their 2/8-way camera-relative frame before
+putting actors and fixed-shape statics into the shared far-to-near list. The
+eZ80 supplies an effective facing angle plus exact rotation count, so no
+gameplay class/state table is duplicated on the VDP.
 
 ## Blit stage (implemented)
 

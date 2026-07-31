@@ -85,9 +85,10 @@ int main(int argc, char **argv) {
 		}
 		return bytes;
 	};
-	auto hasCompletion = [](const std::vector<std::uint8_t>& bytes) {
+	auto hasCompletion = [](const std::vector<std::uint8_t>& bytes,
+	                        std::uint16_t token) {
 		const std::uint8_t prefix[] = {0x81, 10, 'W', '3', 'D', 'R'};
-		for (std::size_t i = 0; i + sizeof(prefix) <= bytes.size(); ++i) {
+		for (std::size_t i = 0; i + 12 <= bytes.size(); ++i) {
 			bool match = true;
 			for (std::size_t j = 0; j < sizeof(prefix); ++j) {
 				if (bytes[i + j] != prefix[j]) {
@@ -95,8 +96,25 @@ int main(int argc, char **argv) {
 					break;
 				}
 			}
-			if (match) {
+			if (match && bytes[i + 6] == 1 && bytes[i + 7] == 1
+			    && bytes[i + 8] == (token & 0xFF)
+			    && bytes[i + 9] == (token >> 8)) {
 				return true;
+			}
+		}
+		return false;
+	};
+	auto waitForCompletion = [&](std::uint16_t token,
+	                             std::chrono::milliseconds timeout) {
+		std::vector<std::uint8_t> bytes;
+		auto deadline = std::chrono::steady_clock::now() + timeout;
+		while (std::chrono::steady_clock::now() < deadline) {
+			std::uint8_t byte;
+			if (receive(&byte)) {
+				bytes.push_back(byte);
+				if (hasCompletion(bytes, token)) return true;
+			} else {
+				std::this_thread::sleep_for(std::chrono::microseconds(100));
 			}
 		}
 		return false;
@@ -114,15 +132,41 @@ int main(int argc, char **argv) {
 	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 0});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
+	// Initialize an empty render snapshot, then exercise the actor ABI. The
+	// notification command follows set_actor immediately: if the old 20-byte
+	// parser (or any other over-read) consumes bytes beyond the exact 15-byte
+	// payload, it destroys the only notification registration and no matching
+	// completion can arrive. Missing tile/art buffers deliberately fail safe
+	// during render.
+	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 1, 2, 0});
+	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 2,
+	           0, 128, 2, 0, 0, 128, 4, 0, 0, 0});
+	// actor 3: base shape 50, (5.5,3.25), facing 180 degrees, 8 rotations.
+	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 4,
+	           3, 0, 50, 0,
+	           0, 128, 5, 0, 0, 64, 3, 0,
+	           180, 0, 8});
+
 	// VDU 23,0,&A0,0;&4A,41,1,0x5A,0xC3; -- enable render-done notify.
-	// Nothing triggers a render yet, so no W3DR packet is expected here;
-	// this only proves the subcommand doesn't crash or desync the stream.
+	// Nothing triggers a render yet, so no W3DR packet is expected here.
 	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 41, 1, 0x5A, 0xC3});
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 	auto afterEnable = receiveBytes(std::chrono::milliseconds(10));
-	if (hasCompletion(afterEnable)) {
+	if (hasCompletion(afterEnable, 0xC35A)) {
 		std::fprintf(stderr,
-			"unexpected W3DR completion with no render pipeline\n");
+			"unexpected W3DR completion before render request\n");
+		shutdown();
+		return 1;
+	}
+
+	// remove_actor immediately precedes render_frame, covering that payload's
+	// byte boundary as well. A token-matched completion proves the full stream
+	// remained aligned.
+	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 5, 3, 0});
+	sendBytes({23, 0, 0xA0, 0, 0, 0x4A, 7});
+	if (!waitForCompletion(0xC35A, std::chrono::seconds(3))) {
+		std::fprintf(stderr,
+			"no W3DR completion after set_actor/remove_actor ABI stream\n");
 		shutdown();
 		return 1;
 	}
@@ -132,7 +176,7 @@ int main(int argc, char **argv) {
 	std::this_thread::sleep_for(std::chrono::milliseconds(50));
 
 	shutdown();
-	std::printf("wolf3d_smoke: ABI symbols resolved, dispatch did not "
-		"crash or desync (hello + notify register/unregister)\n");
+	std::printf("wolf3d_smoke: ABI symbols resolved; actor set/remove payloads "
+		"remained aligned through token-matched render completion\n");
 	return 0;
 }

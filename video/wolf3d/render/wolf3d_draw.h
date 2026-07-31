@@ -119,18 +119,20 @@ public:
 		ob.viewheight = t.viewheight;
 	}
 
-	// Mirrors WL_DRAW.C's CalcRotate(): picks one of an actor's 8 rotation
-	// frames based on its facing relative to the view angle. `numRotations`
-	// mirrors the original's per-state `rotate` field (2 or 8).
-	int CalcRotate(const Wolf3dActor& ob, int numRotations, const int dirangle[9]) const {
+	// Mirrors WL_DRAW.C's CalcRotate(): select a view-relative frame from the
+	// current state's contiguous two- or eight-rotation art. The eZ80 has
+	// already resolved AI dir/projectile angle into one effective world-facing
+	// angle, avoiding gameplay class/state tables on the write-only VDP.
+	int CalcRotate(const Wolf3dActor& ob) const {
+		if (ob.rotations != 2 && ob.rotations != 8) return 0;
 		int viewangle = m_world.playerAngle + (m_centerx - ob.viewx) / 8;
-		int angle = (viewangle - 180) - dirangle[ob.dir];
+		int angle = (viewangle - 180) - ob.facingAngle;
 
 		angle += WOLF3D_ANGLES / 16;
 		while (angle >= WOLF3D_ANGLES) angle -= WOLF3D_ANGLES;
 		while (angle < 0) angle += WOLF3D_ANGLES;
 
-		if (numRotations == 2) return 4 * (angle / (WOLF3D_ANGLES / 2));
+		if (ob.rotations == 2) return 4 * (angle / (WOLF3D_ANGLES / 2));
 		return angle / (WOLF3D_ANGLES / 8);
 	}
 
@@ -314,17 +316,17 @@ public:
 	// Mirrors WL_DRAW.C's DrawScaleds(): projects and distance-sorts every
 	// visible actor/static into m_visSprites (far to near, painter's-
 	// algorithm order). The blit itself is done by the caller
-	// (Wolf3dControl::RenderSprites(), video/wolf3d.h) using SampleSprite()
-	// above -- rotation-frame selection (CalcRotate) also isn't applied
-	// here yet, since it needs a per-actor-class numRotations/dirangle
-	// table not modeled in Wolf3dWorldState yet.
+	// (Wolf3dControl::RenderSprites(), video/wolf3d.h) using SampleSprite().
+	// Actor base shapes are resolved to their camera-relative 2/8-way frame
+	// here; statics remain fixed shapes.
 	void DrawScaleds() {
 		m_visCount = 0;
 
 		for (auto& actor : m_world.actors) {
 			if (actor.shapenum < 0) continue;
 			TransformActor(actor);
-			AddVisSprite(actor.viewx, actor.viewheight, actor.shapenum, actor.transx);
+			int16_t shapenum = (int16_t)(actor.shapenum + CalcRotate(actor));
+			AddVisSprite(actor.viewx, actor.viewheight, shapenum, actor.transx);
 		}
 
 		for (auto& stat : m_world.statics) {

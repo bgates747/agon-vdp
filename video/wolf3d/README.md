@@ -68,3 +68,48 @@ culls them against the view, sorts them with actors far-to-near, and masks
 their scaled columns against the wall-height buffer before one bitmap draw per
 sprite. Collision and pickup effects deliberately remain eZ80 concerns; the
 VDP is a write-only snapshot consumer.
+
+## Actor rendering and wire lifetime
+
+Actors use stable slots `0..149` and the same persistent, dirty-only lifetime
+as statics. Subcommand 4 replaces one complete render record:
+
+```text
+actorId(word), baseShapenum(word), x(long), y(long),
+facingAngle(word), rotations(byte)
+```
+
+The payload is exactly 15 bytes. Words and signed 16.16 longs are
+little-endian, with each long sent low word first. `baseShapenum=-1` is the
+inactive sentinel; subcommand 5 with `actorId(word)` is the shorter,
+equivalent removal operation. A subsequent set on the same slot replaces its
+complete state, so slot reuse remains entirely eZ80-owned.
+
+`facingAngle` uses the player-angle convention (east=0, north=90, integer
+degrees). `rotations` is the exact number of view-relative frames: 0, 2, or 8.
+The eZ80 resolves its gameplay state/AI direction or projectile angle to this
+base shape and effective facing only when that actor changes. The VDP chooses
+the camera-relative frame on every render, so camera movement does not create
+spurious actor updates. Cached tile coordinates, hit points, AI flags, and
+state-machine data never cross this render-only ABI.
+
+## Ordinary actor/combat hardware milestone
+
+The matching eZ80 client now owns the complete ordinary E1L1 actor path:
+patrol, area connectivity, awareness, chase/dodge movement, guard/officer/
+mutant/SS shooting chains, dog jump/bite chains, and player damage/death. The
+VDP remains a write-only snapshot renderer throughout. It receives only dirty
+actor render records and derives the view-relative frame for every rendered
+camera pose; gameplay visibility and hit decisions never depend on render
+completion.
+
+Emulator and physical-hardware acceptance both pass with the real medium E1L1
+population and full wall, static, actor, sprite, and HUD workload. Hardware is
+eminently playable, with a small amount of perceived latency retained as a
+performance note. The ESP32-PICO-D4 build uses 83.0% flash and 13.6% RAM. All
+four uploaded regions passed esptool hash verification and the board reset and
+re-enumerated normally. The accepted 1,087,792-byte firmware image has SHA-256
+`4093eeb054b9494f169c02d576b2d0fd0a7699e09996fc8984eb0d5d80384463`.
+
+The synchronized `ordinary-combat-hardware-pass` tag in this repository and
+the sibling `Wolf3dOrig` repository identifies the matching VDP/client pair.

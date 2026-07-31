@@ -174,6 +174,98 @@ void testDoorParallelWallsStayOrdinary() {
 	}
 }
 
+void testActorSlotsNormalizeRenderStateAndRemove() {
+	Fixture f;
+	f.world.set_actor(149, 50, 0x00058000, 0x00034000, 540, 8);
+	const auto& last = f.world.actors[149];
+	expect("last actor slot", "shape", 50, last.shapenum);
+	expect("last actor slot", "x", 0x00058000, last.x);
+	expect("last actor slot", "y", 0x00034000, last.y);
+	expect("last actor slot", "normalized facing", 180, last.facingAngle);
+	expect("last actor slot", "rotations", 8, last.rotations);
+
+	// An out-of-range id must not alias the final legal slot.
+	f.world.set_actor(150, 99, 1, 2, 3, 2);
+	expect("out-of-range actor", "last shape retained", 50, last.shapenum);
+
+	f.world.set_actor(7, 61, 0x00048000, 0x00048000, -90, 3);
+	expect("negative actor facing", "normalized facing", 270,
+	       f.world.actors[7].facingAngle);
+	expect("invalid rotation count", "fixed shape fallback", 0,
+	       f.world.actors[7].rotations);
+	f.world.remove_actor(7);
+	expect("remove actor", "inactive sentinel", -1, f.world.actors[7].shapenum);
+
+	// The long-form alias remains idempotent for clients that already have a
+	// complete dirty record in hand when an actor becomes non-rendering.
+	f.world.set_actor(8, -1, 0, 0, 0, 0);
+	expect("set actor removal alias", "inactive sentinel", -1,
+	       f.world.actors[8].shapenum);
+}
+
+void testActorRotationBoundaries() {
+	Fixture f;
+	f.world.set_actor(1, 50, 0, 0, 180, 8);
+	auto& actor = f.world.actors[1];
+	actor.viewx = kCenterColumn; // remove the original off-center correction
+
+	f.world.playerAngle = 22;
+	expect("eight-way below boundary", "offset", 0,
+	       f.renderer.CalcRotate(actor));
+	f.world.playerAngle = 23;
+	expect("eight-way above boundary", "offset", 1,
+	       f.renderer.CalcRotate(actor));
+	f.world.playerAngle = 337;
+	expect("eight-way wrap below", "offset", 7,
+	       f.renderer.CalcRotate(actor));
+	f.world.playerAngle = 338;
+	expect("eight-way wrap above", "offset", 0,
+	       f.renderer.CalcRotate(actor));
+
+	actor.rotations = 2;
+	f.world.playerAngle = 157;
+	expect("two-way below boundary", "offset", 0,
+	       f.renderer.CalcRotate(actor));
+	f.world.playerAngle = 158;
+	expect("two-way above boundary", "offset", 4,
+	       f.renderer.CalcRotate(actor));
+
+	actor.rotations = 0;
+	f.world.playerAngle = 23;
+	expect("fixed actor frame", "offset", 0, f.renderer.CalcRotate(actor));
+}
+
+void testActorsShareProjectionAndDepthSortWithStatics() {
+	Fixture f;
+	f.world.set_player_pose(0x00028000, 0x00048000, 0);
+	f.world.set_actor(4, 60, 0x00058000, 0x00048000, 180, 8);
+	f.world.set_static(9, 7, 4, 3, 0);
+	f.renderer.SetupView();
+	f.renderer.DrawScaleds();
+
+	expect("actor/static projection", "visible count", 2,
+	       f.renderer.VisSpriteCount());
+	// Far-to-near painter order: the tile-centered static at x=7.5 precedes
+	// the actor at x=5.5. The actor's eight-way frame is base+0 here.
+	expect("actor/static projection", "far static shape", 3,
+	       f.renderer.VisSprites()[0].shapenum);
+	expect("actor/static projection", "near actor shape", 60,
+	       f.renderer.VisSprites()[1].shapenum);
+
+	f.world.remove_actor(4);
+	f.renderer.DrawScaleds();
+	expect("removed actor projection", "visible count", 1,
+	       f.renderer.VisSpriteCount());
+	expect("removed actor projection", "remaining static", 3,
+	       f.renderer.VisSprites()[0].shapenum);
+
+	f.world.set_static(9, 7, 4, -1, 0);
+	f.world.set_actor(4, 60, 0x00018000, 0x00048000, 180, 0);
+	f.renderer.DrawScaleds();
+	expect("behind-camera actor", "visible count", 0,
+	       f.renderer.VisSpriteCount());
+}
+
 void testSpriteMaskDepthBoundary() {
 	constexpr int width = 3;
 	constexpr int height = 2;
@@ -239,9 +331,12 @@ int main() {
 	testVerticalDoorPerpendicularJamb();
 	testHorizontalDoorPerpendicularJamb();
 	testDoorParallelWallsStayOrdinary();
+	testActorSlotsNormalizeRenderStateAndRemove();
+	testActorRotationBoundaries();
+	testActorsShareProjectionAndDepthSortWithStatics();
 	testSpriteMaskDepthBoundary();
 	testSpriteMaskUsesClippedViewOffset();
 	testSpriteMaskPreservesVisibleTransparency();
-	std::puts("wolf3d_renderer_test: moving-door U, jamb, and sprite occlusion invariants pass");
+	std::puts("wolf3d_renderer_test: door, actor rotation/lifetime, depth sort, and sprite occlusion invariants pass");
 	return 0;
 }

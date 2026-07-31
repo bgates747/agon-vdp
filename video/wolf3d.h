@@ -92,21 +92,19 @@ typedef struct tag_Wolf3dControl {
 		m_world.set_door(doornum, tilex, tiley, vertical != 0, lock, action, position, textureId);
 	}
 
-	// VDU ... &4A, 4, actorIdLo, actorIdHi, shapenum; shapenum; x; x; y; y;
-	//              tilex, tiley, dir, angle; angle; hitpoints; hitpoints; flags;
+	// VDU ... &4A, 4, actorId; shapenum; x; x; y; y; facingAngle; rotations
+	// actorId/shapenum/facingAngle are words; x/y are 32-bit fixed, low word
+	// first; rotations is the exact frame count 0, 2, or 8. The eZ80 resolves
+	// gameplay state to this render-only record and sends it only when dirty.
 	void set_actor(VDUStreamProcessor& processor) {
 		auto actorId = processor.readWord_t();
 		auto shapenum = processor.readWord_t();
 		auto x = read_long(processor);
 		auto y = read_long(processor);
-		auto tilex = processor.readByte_t();
-		auto tiley = processor.readByte_t();
-		auto dir = processor.readByte_t();
-		auto angle = processor.readWord_t();
-		auto hitpoints = processor.readWord_t();
-		auto flags = processor.readByte_t();
-		m_world.set_actor((uint16_t)actorId, (int16_t)shapenum, x, y, tilex, tiley,
-			(Wolf3dDir)dir, (int16_t)angle, (int16_t)hitpoints, flags);
+		auto facingAngle = processor.readWord_t();
+		auto rotations = processor.readByte_t();
+		m_world.set_actor((uint16_t)actorId, (int16_t)shapenum, x, y,
+			(int16_t)facingAngle, rotations);
 	}
 
 	// VDU ... &4A, 5, actorId; actorId;

@@ -9,7 +9,8 @@
 // WL_DEF.H (educational-use-only source, see agonport/doc/HANDOFF.md's
 // licensing note -- this is a clean-room reimplementation, not a copy) so
 // anyone cross-referencing the two stays oriented. Field/struct names below
-// map directly onto WL_DEF.H's objtype/doorobj_t/statobj_t/dirtype.
+// map directly onto the render-relevant parts of WL_DEF.H's
+// objtype/doorobj_t/statobj_t.
 //
 // Architecture (settled -- see video/wolf3d/README.md): the eZ80 owns world
 // state, collision and AI raycasting (sight/hearing/pathfinding, the
@@ -69,20 +70,6 @@ inline uint16_t Wolf3dSpriteBufferId(int16_t shapenum) {
 // 16.16 fixed point, mirrors WL_DEF.H's `typedef long fixed;`
 typedef int32_t wolf3d_fixed_t;
 
-// Mirrors WL_DEF.H's dirtype exactly (same member order/values -- this is
-// the wire contract with the eZ80 side, not just a local convenience enum).
-enum Wolf3dDir {
-	wolf3d_dir_east,
-	wolf3d_dir_northeast,
-	wolf3d_dir_north,
-	wolf3d_dir_northwest,
-	wolf3d_dir_west,
-	wolf3d_dir_southwest,
-	wolf3d_dir_south,
-	wolf3d_dir_southeast,
-	wolf3d_dir_nodir
-};
-
 // Mirrors WL_DEF.H's doorobj_t. `position` is a fractional 0 (closed) to
 // 0xFFFF (fully open) value, replacing the original's `doorposition[]`
 // fixed-point fraction with a plain 16-bit scale for wire simplicity.
@@ -114,20 +101,22 @@ struct Wolf3dStatic {
 	uint8_t flags;
 };
 
-// Mirrors the render-relevant subset of WL_DEF.H's objtype (the full
-// thinking-actor struct). Fields the eZ80 owns and pushes are listed first;
-// the transx/transy/viewx/viewheight fields are scratch space filled in
-// per-frame by Wolf3dRenderer::TransformActor(), same role as in the
-// original -- not sent over the wire.
+// Render-only mirror of an eZ80-authoritative thinking actor. The stable slot
+// index is its identity, just as it is for Wolf3dStatic, so it is not repeated
+// in the record. Gameplay-only state (cached tile, AI direction, hit points,
+// flags, state pointer) stays on the eZ80. `shapenum` is the current state's
+// base shape before view-relative rotation; -1 is the inactive/removed
+// sentinel. `facingAngle` is the effective world facing in the same integer-
+// degree convention as playerAngle. This lets the VDP choose 2/8-way art when
+// the camera moves without making an otherwise unchanged actor dirty.
+//
+// transx/transy/viewx/viewheight are render scratch filled every frame by
+// Wolf3dRenderer::TransformActor() and never cross the wire.
 struct Wolf3dActor {
-	uint16_t id;
-	int16_t  shapenum;  // -1 == inactive/removed slot
+	int16_t  shapenum;
 	wolf3d_fixed_t x, y;
-	uint8_t  tilex, tiley;
-	Wolf3dDir dir;
-	int16_t  angle;     // 0-359, mirrors objtype::angle
-	int16_t  hitpoints;
-	uint8_t  flags;      // mirrors objtype::flags (FL_SHOOTABLE etc, WL_DEF.H)
+	int16_t  facingAngle;
+	uint8_t  rotations;  // exact count: 0 (fixed), 2 (pain frame), or 8
 
 	// Render-only scratch, recomputed every frame -- mirrors objtype's own
 	// transx/transy/viewx/viewheight fields exactly.
@@ -178,19 +167,17 @@ struct Wolf3dWorldState {
 		door.textureId = textureId;
 	}
 
-	void set_actor(uint16_t actorId, int16_t shapenum, wolf3d_fixed_t x, wolf3d_fixed_t y, uint8_t tilex, uint8_t tiley, Wolf3dDir dir, int16_t angle, int16_t hitpoints, uint8_t flags) {
+	void set_actor(uint16_t actorId, int16_t shapenum, wolf3d_fixed_t x,
+		wolf3d_fixed_t y, int16_t facingAngle, uint8_t rotations) {
 		if (actorId >= WOLF3D_MAXACTORS) return;
 		Wolf3dActor& actor = actors[actorId];
-		actor.id = actorId;
 		actor.shapenum = shapenum;
 		actor.x = x;
 		actor.y = y;
-		actor.tilex = tilex;
-		actor.tiley = tiley;
-		actor.dir = dir;
-		actor.angle = angle;
-		actor.hitpoints = hitpoints;
-		actor.flags = flags;
+		int normalizedFacing = facingAngle % 360;
+		if (normalizedFacing < 0) normalizedFacing += 360;
+		actor.facingAngle = (int16_t)normalizedFacing;
+		actor.rotations = rotations == 2 || rotations == 8 ? rotations : 0;
 	}
 
 	void remove_actor(uint16_t actorId) {
