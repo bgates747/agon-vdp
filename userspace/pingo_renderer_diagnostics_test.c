@@ -27,6 +27,9 @@ typedef struct tag_TestBuffers {
 } TestBuffers;
 
 static uint32_t fake_clock_ticks;
+static uint32_t captured_pixels;
+static float captured_minimum_illumination;
+static float captured_maximum_illumination;
 
 static uint32_t fake_clock(void) {
     fake_clock_ticks += 10;
@@ -56,6 +59,24 @@ static PingoDepth * test_depth_buffer(
     (void)renderer;
     TestBuffers * buffers = backend->clientCustomData;
     return buffers->depth;
+}
+
+static void capture_backend_pixel(
+        Texture * frame, Vec2i position, Pixel color, float illumination) {
+    (void)frame;
+    (void)position;
+    (void)color;
+    captured_pixels++;
+    captured_minimum_illumination = fminf(
+        captured_minimum_illumination, illumination);
+    captured_maximum_illumination = fmaxf(
+        captured_maximum_illumination, illumination);
+}
+
+static void reset_backend_capture(void) {
+    captured_pixels = 0;
+    captured_minimum_illumination = INFINITY;
+    captured_maximum_illumination = -INFINITY;
 }
 
 static void initialize_renderer(
@@ -1112,6 +1133,278 @@ static void test_far_clip_rejection_prevents_out_of_range_depth(void) {
     assert_diagnostic_invariants(&renderer.diagnostics);
 }
 
+static uint32_t count_frame_color(
+        const TestBuffers * buffers, uint8_t color) {
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < TEST_PIXELS; i++) {
+        if (buffers->frame[i].c == color) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static uint32_t count_nonzero_frame_pixels(const TestBuffers * buffers) {
+    uint32_t count = 0;
+    for (uint32_t i = 0; i < TEST_PIXELS; i++) {
+        if (buffers->frame[i].c != 0) {
+            count++;
+        }
+    }
+    return count;
+}
+
+static void test_runtime_lighting_and_flat_palette_shading(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh mesh;
+    Object object;
+    Material material;
+    Vec3f positions[] = {
+        {-1.50f, -0.75f, -0.5f},
+        { 0.75f, -0.75f, -0.5f},
+        {-0.75f,  0.75f, -0.5f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+    Vec2f textureCoordinates[] = {
+        {0.0f, 1.0f},
+        {1.0f, 1.0f},
+        {0.0f, 0.0f}
+    };
+    Vec2f objectTextureCoordinates[] = {
+        {1.0f, 0.0f},
+        {0.0f, 1.0f},
+        {0.0f, 0.0f}
+    };
+    uint16_t textureIndices[] = {0, 1, 2};
+    Pixel texturePixels[] = {
+        {0xEA}, {0xD5},
+        {0xF3}, {0xFC}
+    };
+    Texture texture;
+    uint8_t rgba8888Pixel[] = {255, 64, 128, 255};
+    Texture rgba8888Texture;
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    assert(texture_init_format(
+        &texture, (Vec2i){2, 2}, texturePixels,
+        TEXTURE_FORMAT_RGBA2222) == 0);
+    mesh = (Mesh) {
+        .indexes_count = 3,
+        .pos_indices = indices,
+        .tex_indices = textureIndices,
+        .positions = positions,
+        .textCoord = textureCoordinates,
+        .positions_count = 3,
+        .texture_coordinates_count = 3,
+        .texture_indexes_count = 3,
+        .shading_mode = MESH_SHADING_TEXTURED
+    };
+    assert(meshUpdateGeometryValidity(&mesh) == 1);
+    material = (Material){.texture = &texture};
+    object = (Object) {
+        .mesh = &mesh,
+        .transform = mat4Identity(),
+        .material = &material,
+        .textCoord = 0
+    };
+    assert(objectUpdateTextureMappingValidity(&object) == 1);
+    assert(sceneAddRenderable(&scene, object_as_renderable(&object)) == 0);
+
+    // The setter normalizes once and rejects a zero vector without changing
+    // the previous usable direction.
+    assert(rendererSetLightDirection(
+        &renderer, (Vec3f){0.0f, 0.0f, 4.0f}) == 0);
+    assert(fabsf(renderer.lightDirection.z - 1.0f) < 0.0001f);
+    assert(rendererSetLightDirection(
+        &renderer, (Vec3f){0.0f, 0.0f, 0.0f}) != 0);
+    assert(fabsf(renderer.lightDirection.z - 1.0f) < 0.0001f);
+
+    // Textured, unlit rendering samples more than the source triangle's
+    // first palette color.
+    rendererSetIlluminationEnabled(&renderer, 0);
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.triangles_clipped == 1);
+    assert(renderer.diagnostics.triangles_generated == 2);
+    uint32_t shaded = renderer.diagnostics.fragments_shaded;
+    assert(shaded > 0);
+    assert(count_nonzero_frame_pixels(&buffers) > 0);
+    assert(count_frame_color(&buffers, 0xEA) < shaded);
+    uint32_t sampledSourceColors = 0;
+    for (uint32_t i = 0; i < 4; i++) {
+        sampledSourceColors +=
+            count_frame_color(&buffers, texturePixels[i].c) > 0;
+    }
+    assert(sampledSourceColors >= 2);
+
+    // Flat mode samples the first source UV once. Both primitives generated
+    // by clipping carry exactly that one color, with no reciprocal-W rejects.
+    mesh.shading_mode = MESH_SHADING_FLAT_PALETTE;
+    assert(rendererRender(&renderer) == 0);
+    shaded = renderer.diagnostics.fragments_shaded;
+    assert(shaded > 0);
+    assert(renderer.diagnostics.triangles_generated == 2);
+    assert(renderer.diagnostics.fragments_reciprocal_w_rejected == 0);
+    assert(count_nonzero_frame_pixels(&buffers) > 0);
+    assert(
+        count_frame_color(&buffers, 0xEA) ==
+        count_nonzero_frame_pixels(&buffers));
+
+    // Mesh mode remains authoritative while an object's established UV
+    // override still chooses that object's constant face color.
+    object.textCoord = objectTextureCoordinates;
+    object.textCoord_count = 3;
+    assert(objectUpdateTextureMappingValidity(&object) == 1);
+    assert(rendererRender(&renderer) == 0);
+    assert(
+        count_frame_color(&buffers, 0xFC) ==
+        count_nonzero_frame_pixels(&buffers));
+
+    // Legacy RGBA8888 source textures enter the same flat path and are
+    // quantized through the existing one-byte working-pixel conversion.
+    assert(texture_init_format(
+        &rgba8888Texture, (Vec2i){1, 1}, rgba8888Pixel,
+        TEXTURE_FORMAT_RGBA8888) == 0);
+    material.texture = &rgba8888Texture;
+    assert(rendererRender(&renderer) == 0);
+    uint8_t rgba8888Expected = pixelFromRGBA(255, 64, 128, 255).c;
+    assert(
+        count_frame_color(&buffers, rgba8888Expected) ==
+        count_nonzero_frame_pixels(&buffers));
+    material.texture = &texture;
+    object.textCoord = 0;
+    object.textCoord_count = 0;
+    assert(objectUpdateTextureMappingValidity(&object) == 1);
+
+    // A custom backend receives unity when illumination is disabled and the
+    // computed overdrive factor when it is enabled; no null LUT is exposed.
+    backend.drawPixel = capture_backend_pixel;
+    reset_backend_capture();
+    assert(rendererRender(&renderer) == 0);
+    assert(captured_pixels > 0);
+    assert(captured_minimum_illumination == 1.0f);
+    assert(captured_maximum_illumination == 1.0f);
+
+    rendererSetIlluminationEnabled(&renderer, 1);
+    rendererSetLightIntensity(&renderer, 255);
+    rendererSetAmbientLight(&renderer, 0);
+    reset_backend_capture();
+    assert(rendererRender(&renderer) == 0);
+    assert(captured_pixels > 0);
+    assert(captured_minimum_illumination > 2.0f);
+    assert(captured_maximum_illumination > 2.0f);
+    backend.drawPixel = 0;
+
+    // Unity ambient reproduces the native color even with zero directional
+    // intensity. Two-times overdrive saturates every RGB channel to white.
+    rendererSetIlluminationEnabled(&renderer, 1);
+    rendererSetLightIntensity(&renderer, 0);
+    rendererSetAmbientLight(&renderer, 127);
+    assert(rendererRender(&renderer) == 0);
+    assert(
+        count_frame_color(&buffers, 0xEA) ==
+        count_nonzero_frame_pixels(&buffers));
+
+    rendererSetLightIntensity(&renderer, 255);
+    rendererSetAmbientLight(&renderer, 0);
+    assert(rendererRender(&renderer) == 0);
+    assert(
+        count_frame_color(&buffers, 0xFF) ==
+        count_nonzero_frame_pixels(&buffers));
+
+    // A flat source triangle crossing the actual near plane produces a fan
+    // but retains one source color without perspective attributes.
+    rendererSetIlluminationEnabled(&renderer, 0);
+    positions[0] = (Vec3f){-0.75f, -0.75f, 0.5f};
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.triangles_clipped == 1);
+    assert(renderer.diagnostics.triangles_generated == 2);
+    assert(renderer.diagnostics.fragments_reciprocal_w_rejected == 0);
+    assert(
+        count_frame_color(&buffers, 0xEA) ==
+        count_nonzero_frame_pixels(&buffers));
+}
+
+static void test_flat_mode_is_shared_by_mesh_instances(void) {
+    Renderer renderer;
+    Scene scene;
+    BackEnd backend;
+    TestBuffers buffers;
+    Mesh mesh;
+    Object leftObject;
+    Object rightObject;
+    Material material;
+    Vec3f positions[] = {
+        {-0.30f, -0.40f, -0.5f},
+        { 0.30f, -0.40f, -0.5f},
+        {-0.30f,  0.40f, -0.5f}
+    };
+    uint16_t indices[] = {0, 1, 2};
+    uint16_t textureIndices[] = {0, 1, 2};
+    Vec2f meshCoordinates[] = {
+        {0.0f, 1.0f},
+        {0.0f, 1.0f},
+        {0.0f, 1.0f}
+    };
+    Vec2f overrideCoordinates[] = {
+        {1.0f, 0.0f},
+        {1.0f, 0.0f},
+        {1.0f, 0.0f}
+    };
+    Pixel texturePixels[] = {
+        {0xEA}, {0xD5},
+        {0xF3}, {0xFC}
+    };
+    Texture texture;
+
+    initialize_renderer(&renderer, &scene, &backend, &buffers);
+    assert(texture_init_format(
+        &texture, (Vec2i){2, 2}, texturePixels,
+        TEXTURE_FORMAT_RGBA2222) == 0);
+    mesh = (Mesh) {
+        .indexes_count = 3,
+        .pos_indices = indices,
+        .tex_indices = textureIndices,
+        .positions = positions,
+        .textCoord = meshCoordinates,
+        .positions_count = 3,
+        .texture_coordinates_count = 3,
+        .texture_indexes_count = 3,
+        .shading_mode = MESH_SHADING_FLAT_PALETTE
+    };
+    assert(meshUpdateGeometryValidity(&mesh) == 1);
+    material = (Material){.texture = &texture};
+    leftObject = (Object) {
+        .mesh = &mesh,
+        .transform = mat4Translate((Vec3f){-0.50f, 0.0f, 0.0f}),
+        .material = &material
+    };
+    rightObject = (Object) {
+        .mesh = &mesh,
+        .transform = mat4Translate((Vec3f){0.50f, 0.0f, 0.0f}),
+        .material = &material,
+        .textCoord = overrideCoordinates,
+        .textCoord_count = 3
+    };
+    assert(objectUpdateTextureMappingValidity(&leftObject) == 1);
+    assert(objectUpdateTextureMappingValidity(&rightObject) == 1);
+    assert(sceneAddRenderable(
+        &scene, object_as_renderable(&leftObject)) == 0);
+    assert(sceneAddRenderable(
+        &scene, object_as_renderable(&rightObject)) == 0);
+
+    rendererSetIlluminationEnabled(&renderer, 0);
+    assert(rendererRender(&renderer) == 0);
+    assert(renderer.diagnostics.objects == 2);
+    assert(renderer.diagnostics.triangles_submitted == 2);
+    assert(renderer.diagnostics.triangles_rasterized == 2);
+    assert(count_frame_color(&buffers, 0xEA) > 0);
+    assert(count_frame_color(&buffers, 0xFC) > 0);
+    assert_diagnostic_invariants(&renderer.diagnostics);
+}
+
 static void test_wrapping_clock(void) {
     Renderer renderer;
     Scene scene;
@@ -1150,6 +1443,8 @@ int main(void) {
     test_integer_screen_degeneracy();
     test_bbox_rejection_and_clamping();
     test_far_clip_rejection_prevents_out_of_range_depth();
+    test_runtime_lighting_and_flat_palette_shading();
+    test_flat_mode_is_shared_by_mesh_instances();
     test_wrapping_clock();
     puts("Pingo renderer diagnostics test passed");
     return 0;

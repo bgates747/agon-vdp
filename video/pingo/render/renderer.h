@@ -4,6 +4,7 @@
 #include "renderable.h"
 #include "pixel.h"
 #include "../math/vec4.h"
+#include "../math/vec3.h"
 
 #ifndef PINGO_RENDER_DIAGNOSTICS
 #define PINGO_RENDER_DIAGNOSTICS 0
@@ -64,6 +65,12 @@ typedef struct tag_Renderer{
     BackEnd * backEnd;
     int frustumCulling;
 
+    /* Scene-wide directional illumination. Unity is encoded as 127. */
+    Vec3f lightDirection;
+    float lightIntensity;
+    float ambientLight;
+    int illuminationEnabled;
+
 #if PINGO_RENDER_DIAGNOSTICS
     /*
      * The bridge supplies a cheap wrapping tick counter and its frequency.
@@ -90,3 +97,12 @@ extern int rendererSetCamera(Renderer *r, Vec4i camera);
  * rejection and clipping are correctness requirements and remain active.
  */
 extern void rendererSetFrustumCulling(Renderer *r, int enabled);
+
+/* Returns nonzero and leaves the previous value intact for an invalid vector. */
+extern int rendererSetLightDirection(Renderer *r, Vec3f direction);
+
+extern void rendererSetLightIntensity(Renderer *r, uint8_t intensity);
+
+extern void rendererSetAmbientLight(Renderer *r, uint8_t ambient);
+
+extern void rendererSetIlluminationEnabled(Renderer *r, int enabled);

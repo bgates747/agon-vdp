@@ -37,6 +37,11 @@ struct Harness {
     std::uint32_t (*controlSize)();
     bool (*objectScale)(std::uint16_t, std::uint16_t, float *);
     bool (*sceneScale)(std::uint16_t, float *);
+    bool (*lightingState)(
+        std::uint16_t, float *, std::uint8_t *,
+        std::uint8_t *, std::uint8_t *);
+    bool (*meshShadingMode)(
+        std::uint16_t, std::uint16_t, std::uint8_t *);
     bool (*uploadHash)(
         std::uint16_t, std::uint16_t, std::uint16_t, std::uint64_t *);
     bool (*texturePixel)(
@@ -56,6 +61,8 @@ struct Harness {
           controlSize(nullptr),
           objectScale(nullptr),
           sceneScale(nullptr),
+          lightingState(nullptr),
+          meshShadingMode(nullptr),
           uploadHash(nullptr),
           texturePixel(nullptr),
           nextEcho(0x40) {
@@ -83,6 +90,13 @@ struct Harness {
             handle, "pingo_userspace_get_object_scale");
         sceneScale = loadSymbol<bool (*)(std::uint16_t, float *)>(
             handle, "pingo_userspace_get_scene_scale");
+        lightingState = loadSymbol<bool (*)(
+            std::uint16_t, float *, std::uint8_t *,
+            std::uint8_t *, std::uint8_t *)>(
+            handle, "pingo_userspace_get_lighting_state");
+        meshShadingMode = loadSymbol<bool (*)(
+            std::uint16_t, std::uint16_t, std::uint8_t *)>(
+            handle, "pingo_userspace_get_mesh_shading_mode");
         uploadHash = loadSymbol<bool (*)(
             std::uint16_t, std::uint16_t, std::uint16_t, std::uint64_t *)>(
             handle, "pingo_userspace_get_upload_state_hash");
@@ -125,6 +139,15 @@ struct Harness {
         for (auto word : words) {
             appendWord(bytes, word);
         }
+        sendBytes(bytes);
+    }
+
+    void sendPingoBytes(
+            std::uint16_t control,
+            std::uint8_t subcommand,
+            const std::vector<std::uint8_t>& payload) {
+        auto bytes = pingoPrefix(control, subcommand);
+        bytes.insert(bytes.end(), payload.begin(), payload.end());
         sendBytes(bytes);
     }
 
@@ -413,6 +436,171 @@ void testScaleSetters(Harness& harness, std::uint32_t baseline) {
     require(
         harness.ownedAllocations() == baseline,
         "explicit teardown leaked Pingo-owned allocations", harness);
+}
+
+void testLightingAndShadingCommands(
+        Harness& harness, std::uint32_t baseline) {
+    constexpr std::uint16_t control = 1107;
+    constexpr std::uint16_t mesh = 23;
+    harness.sendPingo(control, 0, {64, 64});
+    require(
+        harness.synchronize(),
+        "general-poll barrier failed after lighting initialization", harness);
+
+    float direction[3] = {};
+    std::uint8_t intensity = 0;
+    std::uint8_t ambient = 0;
+    std::uint8_t enabled = 0;
+    require(
+        harness.lightingState(
+            control, direction, &intensity, &ambient, &enabled),
+        "could not inspect default lighting state", harness);
+    const float inverseSqrtTwo = 0.70710678f;
+    require(
+        approximately(direction[0], 0.0f) &&
+        approximately(direction[1], inverseSqrtTwo) &&
+        approximately(direction[2], -inverseSqrtTwo) &&
+        intensity == 127 && ambient == 0 && enabled == 1,
+        "lighting initialization did not publish qualified defaults", harness);
+
+    harness.sendPingo(control, 43, {100, 0, 0});
+    harness.sendPingoBytes(control, 44, {255});
+    harness.sendPingoBytes(control, 45, {63});
+    harness.sendPingoBytes(control, 46, {0});
+    auto flatMode = harness.pingoPrefix(control, 47);
+    Harness::appendWord(flatMode, mesh);
+    flatMode.push_back(1);
+    harness.sendBytes(flatMode);
+    require(
+        harness.synchronize(),
+        "general-poll barrier failed after lighting commands", harness);
+    require(
+        harness.lightingState(
+            control, direction, &intensity, &ambient, &enabled) &&
+        approximately(direction[0], 1.0f) &&
+        approximately(direction[1], 0.0f) &&
+        approximately(direction[2], 0.0f) &&
+        intensity == 255 && ambient == 63 && enabled == 0,
+        "lighting commands did not update scene-wide state", harness);
+
+    // Direction components are signed little-endian words. Verify the wire
+    // representation, not merely the all-positive convenience case above.
+    harness.sendPingo(control, 43, {0xFF9C, 100, 0xFF9C});
+    require(
+        harness.synchronize(),
+        "signed light direction disrupted command alignment", harness);
+    const float inverseSqrtThree = 0.57735027f;
+    require(
+        harness.lightingState(
+            control, direction, &intensity, &ambient, &enabled) &&
+        approximately(direction[0], -inverseSqrtThree) &&
+        approximately(direction[1], inverseSqrtThree) &&
+        approximately(direction[2], -inverseSqrtThree),
+        "signed light direction was decoded incorrectly", harness);
+
+    std::uint8_t shadingMode = 0;
+    require(
+        harness.meshShadingMode(control, mesh, &shadingMode) &&
+        shadingMode == 1,
+        "flat shading command did not update mesh state", harness);
+
+    // Mode may be selected before any geometry arrives. Later component
+    // uploads update the same mesh and must not reset its rendering policy.
+    harness.sendPingo(control, 1, {
+        mesh, 3,
+        0xC000, 0xC000, 0xC000,
+        0x4000, 0xC000, 0xC000,
+        0x0000, 0x4000, 0xC000,
+    });
+    harness.sendPingo(control, 2, {mesh, 3, 0, 1, 2});
+    require(
+        harness.synchronize(),
+        "mesh upload after shading selection disrupted alignment", harness);
+    require(
+        harness.meshShadingMode(control, mesh, &shadingMode) &&
+        shadingMode == 1,
+        "mesh upload reset its previously selected shading mode", harness);
+
+    // Invalid values are consumed but preserve the previous state. In
+    // particular, a zero direction must not destroy the usable light.
+    harness.sendPingo(control, 43, {0, 0, 0});
+    harness.sendPingoBytes(control, 46, {2});
+    auto invalidMode = harness.pingoPrefix(control, 47);
+    Harness::appendWord(invalidMode, mesh);
+    invalidMode.push_back(2);
+    harness.sendBytes(invalidMode);
+    require(
+        harness.synchronize(),
+        "invalid lighting commands disrupted command alignment", harness);
+    require(
+        harness.lightingState(
+            control, direction, &intensity, &ambient, &enabled) &&
+        approximately(direction[0], -inverseSqrtThree) &&
+        approximately(direction[1], inverseSqrtThree) &&
+        approximately(direction[2], -inverseSqrtThree) &&
+        enabled == 0 &&
+        harness.meshShadingMode(control, mesh, &shadingMode) &&
+        shadingMode == 1,
+        "invalid lighting command changed accepted state", harness);
+
+    // Fixed-size commands commit only after their complete payload arrives.
+    // A timeout must preserve accepted state and release the stream for the
+    // next VDU command. Exercise both a mid-word direction timeout and a
+    // missing mesh-mode byte.
+    auto truncatedDirection = harness.pingoPrefix(control, 43);
+    Harness::appendWord(truncatedDirection, 200);
+    truncatedDirection.push_back(0x34);
+    harness.sendBytes(truncatedDirection);
+    harness.settle(std::chrono::milliseconds(450));
+    require(
+        harness.synchronize(),
+        "truncated light direction did not recover alignment", harness);
+    require(
+        harness.lightingState(
+            control, direction, &intensity, &ambient, &enabled) &&
+        approximately(direction[0], -inverseSqrtThree) &&
+        approximately(direction[1], inverseSqrtThree) &&
+        approximately(direction[2], -inverseSqrtThree),
+        "truncated light direction changed accepted state", harness);
+
+    constexpr std::uint16_t truncatedMesh = 24;
+    auto truncatedMode = harness.pingoPrefix(control, 47);
+    Harness::appendWord(truncatedMode, truncatedMesh);
+    harness.sendBytes(truncatedMode);
+    harness.settle(std::chrono::milliseconds(450));
+    require(
+        harness.synchronize(),
+        "truncated mesh shading command did not recover alignment", harness);
+    require(
+        !harness.meshShadingMode(control, truncatedMesh, &shadingMode) &&
+        harness.meshShadingMode(control, mesh, &shadingMode) &&
+        shadingMode == 1,
+        "truncated mesh shading command created or changed mesh state",
+        harness);
+
+    harness.sendPingo(control, 39);
+    harness.sendPingo(control, 0, {32, 32});
+    require(
+        harness.synchronize(),
+        "general-poll barrier failed after lighting reset", harness);
+    require(
+        harness.lightingState(
+            control, direction, &intensity, &ambient, &enabled) &&
+        approximately(direction[0], 0.0f) &&
+        approximately(direction[1], inverseSqrtTwo) &&
+        approximately(direction[2], -inverseSqrtTwo) &&
+        intensity == 127 && ambient == 0 && enabled == 1,
+        "control reinitialization did not restore lighting defaults", harness);
+    require(
+        !harness.meshShadingMode(control, mesh, &shadingMode),
+        "control reinitialization retained stale mesh shading state", harness);
+    harness.sendPingo(control, 39);
+    require(
+        harness.synchronize(),
+        "general-poll barrier failed after lighting teardown", harness);
+    require(
+        harness.ownedAllocations() == baseline,
+        "lighting command test leaked Pingo-owned allocations", harness);
 }
 
 void testAtomicInitialization(Harness& harness, std::uint32_t baseline) {
@@ -895,6 +1083,7 @@ int main(int argc, char ** argv) {
 
     auto baseline = harness.ownedAllocations();
     testScaleSetters(harness, baseline);
+    testLightingAndShadingCommands(harness, baseline);
     testAtomicInitialization(harness, baseline);
     testTeardownAndTextureLifetime(harness, baseline);
     testRegisteredControlIsolation(harness, baseline);

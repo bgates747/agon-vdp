@@ -22,17 +22,29 @@ _Static_assert(sizeof(Pixel) == 1, "Pingo working pixels must be one byte");
 #define PIXELBLACK (Pixel){0xC0}
 #define PIXELWHITE (Pixel){0xFF}
 
+static inline uint8_t pixelShadeLevel(uint8_t level, float f)
+{
+    float scaled = level * 85 * f;
+    if (!(scaled > 0.0f)) {
+        return 0;
+    }
+    if (scaled >= 255.0f) {
+        return 3;
+    }
+    return (uint8_t)scaled >> 6;
+}
+
 static inline Pixel pixelMulInline(Pixel p, float f)
 {
-    uint8_t r = (uint8_t)((p.c & 0x03) * 85 * f);
-    uint8_t g = (uint8_t)(((p.c >> 2) & 0x03) * 85 * f);
-    uint8_t b = (uint8_t)(((p.c >> 4) & 0x03) * 85 * f);
+    uint8_t r = pixelShadeLevel(p.c & 0x03, f);
+    uint8_t g = pixelShadeLevel((p.c >> 2) & 0x03, f);
+    uint8_t b = pixelShadeLevel((p.c >> 4) & 0x03, f);
     return (Pixel){
         (uint8_t)(
             (p.c & 0xC0) |
-            ((b >> 6) << 4) |
-            ((g >> 6) << 2) |
-            (r >> 6))
+            (b << 4) |
+            (g << 2) |
+            r)
     };
 }
 
@@ -44,8 +56,7 @@ static inline PixelShadeLut pixelShadeLut(float f)
 {
     PixelShadeLut lut;
     for (uint8_t level = 0; level < 4; level++) {
-        lut.level[level] =
-            (uint8_t)((uint8_t)(level * 85 * f) >> 6);
+        lut.level[level] = pixelShadeLevel(level, f);
     }
     return lut;
 }

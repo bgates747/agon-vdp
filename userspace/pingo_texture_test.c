@@ -88,6 +88,22 @@ int main(void)
     assert(target_storage[0].c == 0);
     assert(target_storage[3].c == 0xE4);
 
+    // Runtime illumination may intentionally exceed unity. Packed channels
+    // must saturate rather than wrap when overdriven; alpha is unchanged.
+    PixelShadeLut unity = pixelShadeLut(1.0f);
+    PixelShadeLut overdrive = pixelShadeLut(2.0f);
+    PixelShadeLut dark = pixelShadeLut(0.0f);
+    Pixel source = (Pixel){pack(1, 2, 3, 3)};
+    assert_pixel(pixelMulLut(source, &unity), pack(1, 2, 3, 3));
+    assert_pixel(pixelMulLut(source, &overdrive), pack(2, 3, 3, 3));
+    assert_pixel(pixelMulLut(source, &dark), pack(0, 0, 0, 3));
+    assert_pixel(pixelMul(source, 2.0f), pack(2, 3, 3, 3));
+
+    // Multiplicative overdrive saturates channels that are present; a zero
+    // channel remains zero rather than being raised toward white.
+    Pixel saturatedRed = (Pixel){pack(3, 0, 0, 3)};
+    assert_pixel(pixelMulLut(saturatedRed, &overdrive), saturatedRed.c);
+
     puts("Pingo one-byte pixel and dual-format texture sampling passed");
     return 0;
 }
