@@ -4,7 +4,7 @@ AR ?= ar
 
 FAB_ROOT_INPUT := $(strip $(FAB_ROOT))
 ADAPTER_MAKEFILE := $(lastword $(MAKEFILE_LIST))
-FAB_FREE_GOALS := clean renderer-test
+FAB_FREE_GOALS := clean renderer-test fizzle-test
 FAB_REQUIRED_GOALS := $(filter-out $(FAB_FREE_GOALS),$(MAKECMDGOALS))
 ifeq ($(strip $(MAKECMDGOALS)),)
 FAB_REQUIRED_GOALS := all
@@ -25,6 +25,7 @@ BUILD_DIR ?= $(VDP_ROOT)/video/build/userspace
 TARGET ?= $(BUILD_DIR)/vdp_wolf3d.so
 SMOKE_TARGET ?= $(BUILD_DIR)/wolf3d_smoke
 RENDERER_TEST_TARGET ?= $(BUILD_DIR)/wolf3d_renderer_test
+FIZZLE_TEST_TARGET ?= $(BUILD_DIR)/wolf3d_fizzle_test
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
 ifneq ($(strip $(FAB_REQUIRED_GOALS)),)
@@ -125,7 +126,7 @@ VDP_OBJECTS := \
 OBJECTS := $(VDP_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
-.PHONY: all clean smoke renderer-test
+.PHONY: all clean smoke renderer-test fizzle-test
 
 all: $(TARGET)
 
@@ -180,7 +181,17 @@ $(RENDERER_TEST_TARGET): wolf3d_renderer_test.cpp \
 renderer-test: $(RENDERER_TEST_TARGET)
 	$(RENDERER_TEST_TARGET)
 
+$(FIZZLE_TEST_TARGET): wolf3d_fizzle_test.cpp \
+		$(VDP_ROOT)/video/wolf3d/presentation/wolf3d_fizzle.h \
+		$(VDP_ROOT)/video/wolf3d/hud/wolf3d_status.h \
+		$(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(RENDERER_TEST_CXXFLAGS) $< -o $@
+
+fizzle-test: $(FIZZLE_TEST_TARGET)
+	$(FIZZLE_TEST_TARGET)
+
 clean:
-	$(RM) $(TARGET) $(SMOKE_TARGET) $(RENDERER_TEST_TARGET) $(VDP_GL_LIB) $(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
+	$(RM) $(TARGET) $(SMOKE_TARGET) $(RENDERER_TEST_TARGET) $(FIZZLE_TEST_TARGET) $(VDP_GL_LIB) $(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 
 -include $(DEPS)

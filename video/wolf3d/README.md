@@ -27,8 +27,10 @@ video/wolf3d/README.md this file
 
 `render/` owns view/projection, wall/door DDA, and sprite projection.
 `hud/` owns persistent status values and the stable original-WL1 bitmap-ID
-contract. `wolf3d_world.h` is the wire/state model, while the parent
-`video/wolf3d.h` orchestrates VDP-local bitmap blits and completion.
+contract. `presentation/` owns deterministic effects which need no gameplay
+state, beginning with the ordinary-death red fizzle. `wolf3d_world.h` is the
+wire/state model, while the parent `video/wolf3d.h` orchestrates VDP-local
+bitmap blits and completion.
 
 ## Dispatch plan
 
@@ -43,21 +45,62 @@ case BUFFERED_PINGO_3D: {
 }       break;
 ```
 
-Subcommand numbering: subcommand `41` under `BUFFERED_WOLF3D` is reserved
-for the render-done callback (enable/disable + token), mirroring Pingo's
-own subcommand `41` under `BUFFERED_PINGO_3D` for the identical purpose.
+Subcommand numbering: subcommand `41` under `BUFFERED_WOLF3D` registers the
+completion callback transport (enable/disable + render token), mirroring
+Pingo's own subcommand `41` under `BUFFERED_PINGO_3D` for the same transport.
 Same number, same job, different top-level opcode — deliberate parity,
 not a coincidence.
 
+The combat/death presentation additions use these previously free commands:
+
+```text
+8  set_view_weapon  shapenum:int16 little-endian
+9  fizzle_to_red    token:uint16 little-endian
+```
+
+Subcommand 8 persists a first-person sprite shape; `-1` suppresses it. The
+overlay is uniformly scaled to `viewheight+1`, centered in the current view,
+and drawn after all world sprites but before the HUD, without wall masking.
+Ordinary weapon shapes are 416..435 and must be resident in the scoped sprite
+containers. This state is independent of the HUD weapon enum set by
+subcommand 13.
+
+Subcommand 9 performs the original deterministic red-pixel fizzle locally on
+the VDP. It modifies only the active 3D viewport and maintains both mode-8
+buffers itself; the eZ80 does not issue C3 for its completion. See
+`presentation/README.md` for the LFSR and double-buffer invariants.
+
+The existing ten-byte `W3DR` callback packet now defines two event values at
+payload byte 5:
+
+```text
+bytes 0..3  "W3DR"
+byte  4     protocol version 1
+byte  5     event: 1=render complete, 2=fizzle complete
+bytes 6..7  token:uint16 little-endian
+bytes 8..9  sequence:uint16 little-endian
+```
+
+Event 1 retains the registered subcommand-41 token and render sequence. Event
+2 echoes the subcommand-9 token and advances a separate presentation
+sequence, so it cannot perturb the client's render-sequence validation.
+
 ## Current play-screen composition
 
-The accepted 256x160 view is centered at `(32,0)` inside the 320x160 play
-area. The side surround and one-pixel bevel mirror the original play border.
-At `y=160`, buffer `$40F0` supplies a 320x80 lower panel: the original 320x40
-shareware status strip followed by a deliberate neutral extension through the
-extra forty rows in Agon mode 8. Individual weapons, keys, digits, and face
-frames use buffers `$4000 + originalChunkId`; the complete status state is
-redrawn into every hidden buffer before render completion is reported.
+The accepted 256x160 view is centered at `(32,20)` inside a 320x200 play
+surround. The surround and one-pixel bevel occupy all four sides, preserving
+the original play-border idiom while assigning mode 8's extra forty rows to
+the world area instead of stretching the projection. The top/left bevel is
+black and the bottom/right highlight uses the distinct Agon64 cyan component
+2; using RGB888 value 113 here would quantize to the surround's same component
+1 and erase the bevel. At `y=200`, the exact
+original 320x40 shareware status strip fills the remainder of the 320x240
+surface; there is no synthetic lower-panel extension. Individual weapons,
+keys, digits, and face frames use buffers `$4000 + originalChunkId`; the
+complete status state is redrawn into every hidden buffer before render
+completion is reported. The userspace smoke test samples the viewport origin,
+all four surround edges, bevel sides and corners, and both status-bar bounds
+before validating that the fizzle leaves every non-viewport pixel untouched.
 
 ## Static-object rendering
 

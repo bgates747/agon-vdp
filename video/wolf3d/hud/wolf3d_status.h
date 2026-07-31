@@ -7,7 +7,6 @@
 // revision than the checked-in 1992 GFXV_WL1.H table, whose values are eight
 // chunks earlier; keep these decoded-data IDs as the asset contract.
 #define WOLF3D_HUD_BUFFER_BASE       0x4000
-#define WOLF3D_HUD_STATUS_PANEL_ID   0x40F0
 #define WOLF3D_HUD_STATUSBAR_CHUNK   98
 #define WOLF3D_HUD_KNIFE_CHUNK       103
 #define WOLF3D_HUD_NOKEY_CHUNK       107
@@ -19,9 +18,9 @@
 #define WOLF3D_HUD_FACE_DEAD_CHUNK   142
 
 #define WOLF3D_SCREEN_WIDTH          320
-#define WOLF3D_PLAY_AREA_HEIGHT      160
-#define WOLF3D_STATUS_Y              160
-#define WOLF3D_STATUS_HEIGHT         80
+#define WOLF3D_PLAY_AREA_HEIGHT      200
+#define WOLF3D_STATUS_Y              200
+#define WOLF3D_STATUS_HEIGHT         40
 
 static inline uint16_t Wolf3dHudBufferId(uint16_t chunkId) {
 	return (uint16_t)(WOLF3D_HUD_BUFFER_BASE + chunkId);

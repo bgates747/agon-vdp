@@ -10,13 +10,14 @@
 #include "wolf3d/wolf3d_world.h"
 #include "wolf3d/render/wolf3d_draw.h"
 #include "wolf3d/hud/wolf3d_status.h"
+#include "wolf3d/presentation/wolf3d_fizzle.h"
 
 // Wolf3D VDP extension glue. Mirrors video/pingo_3d.h's structure: this file
 // is the dispatch/bridge code living directly under video/, with the
 // renderer implementation itself (once it exists) under video/wolf3d/ --
 // see video/wolf3d/README.md for the layout rationale.
 //
-// Render-completion transport is a deliberate parity mirror of Pingo's
+// Completion transport is a deliberate parity mirror of Pingo's
 // subcommand 41 (video/pingo_3d.h's set_render_notification/
 // send_render_complete): same subcommand number, same enable/disable +
 // token shape, same stock-keyboard-packet delivery. Only the wire magic
@@ -25,21 +26,25 @@
 #define WOLF3D_RENDER_NOTIFY_DISABLED 0
 #define WOLF3D_RENDER_NOTIFY_KEYCODE  1
 #define WOLF3D_RENDER_NOTIFY_VERSION  1
-#define WOLF3D_RENDER_NOTIFY_COMPLETE 1
+#define WOLF3D_NOTIFY_RENDER_COMPLETE 1
+#define WOLF3D_NOTIFY_FIZZLE_COMPLETE 2
 
-// Internal VDP-side scratch buffer ids used by RenderWalls()/RenderSprites()
-// below to stage one resampled column/sprite before it's converted to a
+// Internal VDP-side scratch buffer ids used by RenderWalls()/RenderSprites()/
+// RenderViewWeapon() below to stage one resampled image before it's converted to a
 // bitmap and drawn. These never cross the wire and are never referenced by
 // the eZ80 -- picked well clear of the wall/sprite asset id ranges
 // (Wolf3dWallBufferId()/Wolf3dSpriteBufferId() in wolf3d_world.h use
 // 0x1000-0x107F/0x2000-0x3FFF) and of any eZ80-supplied tilemapBufferId.
 #define WOLF3D_SCRATCH_WALL_BUFFER_ID   0xFFFE
 #define WOLF3D_SCRATCH_SPRITE_BUFFER_ID 0xFFFD
+#define WOLF3D_SCRATCH_WEAPON_BUFFER_ID 0xFFFC
 
 typedef struct tag_Wolf3dControl {
-	uint8_t             m_render_notify_mode = WOLF3D_RENDER_NOTIFY_DISABLED; // Opt-in render-completion transport
+	uint8_t             m_render_notify_mode = WOLF3D_RENDER_NOTIFY_DISABLED; // Opt-in completion transport
 	uint16_t            m_render_notify_token = 0;
 	uint32_t            m_render_sequence = 0;
+	uint32_t            m_presentation_sequence = 0;
+	int16_t             m_view_weapon_shapenum = -1;
 	Wolf3dWorldState    m_world;                // eZ80-authoritative snapshot mirror
 	Wolf3dRenderer       m_renderer { m_world }; // per-column + billboard renderer
 	Wolf3dStatusBar      m_statusBar;            // HUD/status-bar drawing
@@ -123,13 +128,22 @@ typedef struct tag_Wolf3dControl {
 		m_world.set_static((uint16_t)index, tilex, tiley, (int16_t)shapenum, flags);
 	}
 
+	// VDU ... &4A, 8, shapenum; -- persistent first-person view shape.
+	// A wire value of 0xFFFF casts to the -1 sentinel and suppresses the
+	// overlay, independently of the HUD weapon icon set by subcommand 13.
+	void set_view_weapon(VDUStreamProcessor& processor) {
+		auto shapenum = processor.readWord_t();
+		if (shapenum < 0) return;
+		m_view_weapon_shapenum = (int16_t)(uint16_t)shapenum;
+	}
+
 	// VDU ... &4A, 7: renders synchronously into the hidden mode-8 buffer;
 	// completion is reported through subcommand 41 only after all queued draws
 	// have drained. The eZ80 then presents that buffer and may submit the next
 	// newest-state snapshot.
 	void render_frame(VDUStreamProcessor& processor) {
 		debug_log("Wolf3D render_frame: begin\n\r");
-		// Clear the complete original 320x160 play area, then place the active
+		// Clear the complete mode-8 320x200 play surround, then place the active
 		// view window at its centered Wolf3D origin. Bounds continue to follow
 		// CalcProjection(), preserving the viewport-scaling hook.
 		int viewwidth = m_renderer.ViewWidth();
@@ -150,23 +164,43 @@ typedef struct tag_Wolf3dControl {
 		canvas->setBrushColor(85, 85, 85);
 		canvas->fillRectangle(viewX, viewY + horizon, viewX + viewwidth - 1,
 			viewY + viewheight - 1);
-		// Preserve DrawPlayBorder's one-pixel vertical bevel around the
-		// centered window. (At the current full 160-pixel height its top and
-		// bottom bevels fall just outside the play area.)
+		// Preserve DrawPlayBorder's one-pixel bevel around all four sides of
+		// the centered window. With the mode-8 layout the 160-pixel view sits
+		// at y=20 inside a full 200-pixel play surround.
+		const int borderLeft = std::max(viewX - 1, 0);
+		const int borderRight = std::min(viewX + viewwidth,
+			WOLF3D_SCREEN_WIDTH - 1);
+		const int borderTop = std::max(viewY - 1, 0);
+		const int borderBottom = std::min(viewY + viewheight,
+			WOLF3D_PLAY_AREA_HEIGHT - 1);
+		if (viewY > 0) {
+			canvas->setBrushColor(0, 0, 0);
+			canvas->fillRectangle(borderLeft, borderTop,
+				borderRight, borderTop);
+		}
+		if (viewY + viewheight < WOLF3D_PLAY_AREA_HEIGHT) {
+			// Mode 8 quantizes RGB888 components in 64-value bands. 113 would
+			// collapse to the surround's same 0,85,85 output; use component 2
+			// so the bottom/right highlight remains visibly distinct.
+			canvas->setBrushColor(0, 170, 170);
+			canvas->fillRectangle(borderLeft, borderBottom,
+				borderRight, borderBottom);
+		}
 		if (viewX > 0) {
 			canvas->setBrushColor(0, 0, 0);
-			canvas->fillRectangle(viewX - 1, viewY, viewX - 1,
-				viewY + viewheight - 1);
+			canvas->fillRectangle(borderLeft, borderTop, borderLeft,
+				borderBottom);
 		}
 		if (viewX + viewwidth < WOLF3D_SCREEN_WIDTH) {
-			canvas->setBrushColor(0, 113, 113);
-			canvas->fillRectangle(viewX + viewwidth, viewY, viewX + viewwidth,
-				viewY + viewheight - 1);
+			canvas->setBrushColor(0, 170, 170);
+			canvas->fillRectangle(borderRight, borderTop,
+				borderRight, borderBottom);
 		}
 		waitPlotCompletion(false);
 		m_renderer.ThreeDRefresh();
 		RenderWalls(processor);
 		RenderSprites(processor);
+		RenderViewWeapon(processor);
 		RenderStatusBar();
 		// render_frame is synchronous at the wire boundary. Keep that
 		// contract explicit even if a future blit path queues work without
@@ -301,6 +335,48 @@ typedef struct tag_Wolf3dControl {
 		}
 	}
 
+	// Draw the first-person weapon last in the 3D viewport, matching
+	// WL_DRAW.C::DrawPlayerWeapon. It is an unoccluded screen-space overlay:
+	// world wall heights must not mask it. SimpleScaleShape uses viewheight+1
+	// as the uniform scale and centers the shape at viewwidth/2; C++ integer
+	// division also leaves the single excess row clipped at the bottom.
+	void RenderViewWeapon(VDUStreamProcessor& processor) {
+		if (m_view_weapon_shapenum < 0) return;
+
+		auto srcBitmap = getBitmap(Wolf3dSpriteBufferId(m_view_weapon_shapenum));
+		if (!srcBitmap || srcBitmap->format != PixelFormat::RGBA2222) return;
+
+		const int viewwidth = m_renderer.ViewWidth();
+		const int viewheight = m_renderer.ViewHeight();
+		const int destSize = viewheight + 1;
+		const int left = viewwidth / 2 - destSize / 2;
+		const int top = (viewheight - destSize) / 2;
+		const int clippedLeft = std::max(left, 0);
+		const int clippedRight = std::min(left + destSize, viewwidth);
+		const int clippedTop = std::max(top, 0);
+		const int clippedBottom = std::min(top + destSize, viewheight);
+		const int destWidth = clippedRight - clippedLeft;
+		const int destHeight = clippedBottom - clippedTop;
+		if (destWidth <= 0 || destHeight <= 0) return;
+
+		processor.bufferClear(WOLF3D_SCRATCH_WEAPON_BUFFER_ID);
+		auto scratch = processor.bufferCreate(WOLF3D_SCRATCH_WEAPON_BUFFER_ID,
+			(uint32_t)destWidth * destHeight);
+		if (!scratch) return;
+
+		Wolf3dRenderer::SampleSprite(srcBitmap->data, srcBitmap->width,
+			srcBitmap->height, destSize, destSize, clippedLeft - left,
+			clippedTop - top, scratch->getBuffer(), destWidth, destHeight);
+		processor.createBitmapFromBuffer(WOLF3D_SCRATCH_WEAPON_BUFFER_ID,
+			1 /* RGBA2222 */, destWidth, destHeight);
+		auto weaponBitmap = getBitmap(WOLF3D_SCRATCH_WEAPON_BUFFER_ID);
+		if (weaponBitmap) {
+			canvas->drawBitmap(ViewOriginX() + clippedLeft,
+				ViewOriginY() + clippedTop, weaponBitmap.get());
+			waitPlotCompletion(false);
+		}
+	}
+
 	int ViewOriginX() const {
 		return (WOLF3D_SCREEN_WIDTH - m_renderer.ViewWidth()) / 2;
 	}
@@ -334,19 +410,14 @@ typedef struct tag_Wolf3dControl {
 		}
 	}
 
-	// Compose the complete 320x80 lower panel on every rendered back buffer.
-	// The top half is the exact original 320x40 status bar; the generated
-	// bottom half extends its neutral framing through mode 8's extra rows.
+	// Compose the original 320x40 status panel at mode-8 rows 200..239 on
+	// every rendered back buffer. The extra mode-8 height belongs to the play
+	// surround above; there is no synthetic lower-panel extension.
 	void RenderStatusBar() {
-		auto panel = getBitmap(WOLF3D_HUD_STATUS_PANEL_ID);
-		if (panel) {
-			canvas->drawBitmap(0, WOLF3D_STATUS_Y, panel.get());
-		} else {
-			canvas->setBrushColor(85, 85, 85);
-			canvas->fillRectangle(0, WOLF3D_STATUS_Y,
-				WOLF3D_SCREEN_WIDTH - 1, WOLF3D_STATUS_Y + WOLF3D_STATUS_HEIGHT - 1);
-			DrawHudPic(WOLF3D_HUD_STATUSBAR_CHUNK, 0, 0);
-		}
+		canvas->setBrushColor(85, 85, 85);
+		canvas->fillRectangle(0, WOLF3D_STATUS_Y,
+			WOLF3D_SCREEN_WIDTH - 1, WOLF3D_STATUS_Y + WOLF3D_STATUS_HEIGHT - 1);
+		DrawHudPic(WOLF3D_HUD_STATUSBAR_CHUNK, 0, 0);
 
 		DrawHudNumber(16, 16, 2, m_statusBar.Level());
 		DrawHudNumber(48, 16, 6, m_statusBar.Score());
@@ -379,6 +450,64 @@ typedef struct tag_Wolf3dControl {
 	void draw_face(VDUStreamProcessor& processor)   { m_statusBar.DrawFace(processor.readByte_t()); }
 	void draw_lives(VDUStreamProcessor& processor)  { m_statusBar.DrawLives(processor.readByte_t()); }
 
+	void PlotFizzleUntil(Wolf3dFizzle& fizzle, uint32_t target,
+	                     uint8_t rawRed) {
+		Wolf3dFizzlePixel pixel;
+		const int originX = ViewOriginX();
+		const int originY = ViewOriginY();
+		while (fizzle.EmittedPixels() < target && fizzle.Next(pixel)) {
+			uint8_t *scanline = _VGAController->getScanline(originY + pixel.y);
+			// FabGL's raw scanline bytes are dword-packed in 2,3,0,1 order.
+			scanline[(originX + pixel.x) ^ 2] = rawRed;
+		}
+	}
+
+	// VDU ... &4A, 9, token; -- nonabortable, viewport-only red fizzle.
+	// This handler deliberately owns presentation until the one-second effect
+	// completes. The client must not submit a render while its token is
+	// outstanding. Each cumulative batch is drawn into the hidden buffer,
+	// presented at vertical blank, then replayed into the newly hidden buffer;
+	// consequently both mode-8 surfaces finish byte-identical without C3.
+	void fizzle_to_red(VDUStreamProcessor& processor) {
+		auto token = processor.readWord_t();
+		if (token < 0) return;
+
+		waitPlotCompletion(false);
+		const int originX = ViewOriginX();
+		const int originY = ViewOriginY();
+		const int viewwidth = m_renderer.ViewWidth();
+		const int viewheight = m_renderer.ViewHeight();
+		const bool validSurface = _VGAController
+			&& originX >= 0 && originY >= 0
+			&& originX + viewwidth <= canvasW
+			&& originY + viewheight <= canvasH;
+
+		if (validSurface) {
+			Wolf3dFizzle fizzle((uint16_t)viewwidth, (uint16_t)viewheight);
+			const uint8_t rawRed = _VGAController->createRawPixel(RGB222(2, 0, 0));
+			for (uint16_t frame = 1;
+			     frame <= WOLF3D_FIZZLE_DISPLAY_FRAMES; frame++) {
+				const uint32_t target = Wolf3dFizzle::TargetForFrame(
+					fizzle.TotalPixels(), frame, WOLF3D_FIZZLE_DISPLAY_FRAMES);
+				Wolf3dFizzle replay = fizzle;
+				PlotFizzleUntil(fizzle, target, rawRed);
+				switchBuffer();
+				PlotFizzleUntil(replay, target, rawRed);
+
+				// VDU parsing stays paused by contract, but hardware input packets
+				// must remain responsive throughout this blocking presentation.
+				processor.handleKeyboardAndMouse();
+				processor.processEventQueue();
+			}
+		} else {
+			debug_log("Wolf3D fizzle: unsupported viewport/surface bounds\n\r");
+		}
+
+		m_presentation_sequence++;
+		send_completion(processor, WOLF3D_NOTIFY_FIZZLE_COMPLETE,
+			(uint16_t)token, m_presentation_sequence);
+	}
+
 	// VDU 23, 0, &A0, bufferId; &4A, 41, mode, token;
 	// mode 0 disables notification; mode 1 emits a stock MOS keyboard packet.
 	// Exact mirror of Pingo's set_render_notification (video/pingo_3d.h).
@@ -395,10 +524,8 @@ typedef struct tag_Wolf3dControl {
 		m_render_notify_token = (uint16_t)token;
 	}
 
-	// Publish the completed hidden-buffer sequence after the renderer and HUD
-	// draw queue have drained. The eZ80 callback only records this packet; its
-	// foreground loop owns presentation and submission of the next frame.
-	void send_render_complete(VDUStreamProcessor& processor, uint32_t sequence) {
+	void send_completion(VDUStreamProcessor& processor, uint8_t event,
+	                     uint16_t token, uint32_t sequence) {
 		if (m_render_notify_mode != WOLF3D_RENDER_NOTIFY_KEYCODE) {
 			return;
 		}
@@ -406,13 +533,21 @@ typedef struct tag_Wolf3dControl {
 		uint8_t packet[10] = {
 			'W', '3', 'D', 'R',
 			WOLF3D_RENDER_NOTIFY_VERSION,
-			WOLF3D_RENDER_NOTIFY_COMPLETE,
-			(uint8_t)(m_render_notify_token & 0xFF),
-			(uint8_t)(m_render_notify_token >> 8),
+			event,
+			(uint8_t)(token & 0xFF),
+			(uint8_t)(token >> 8),
 			(uint8_t)(sequence & 0xFF),
 			(uint8_t)((sequence >> 8) & 0xFF),
 		};
 		processor.send_packet(PACKET_KEYCODE, sizeof(packet), packet);
+	}
+
+	// Publish the completed hidden-buffer sequence after the renderer and HUD
+	// draw queue have drained. The eZ80 callback only records this packet; its
+	// foreground loop owns presentation and submission of the next frame.
+	void send_render_complete(VDUStreamProcessor& processor, uint32_t sequence) {
+		send_completion(processor, WOLF3D_NOTIFY_RENDER_COMPLETE,
+			m_render_notify_token, sequence);
 	}
 
 	void handle_subcommand(VDUStreamProcessor& processor, uint8_t subcmd) {
@@ -425,6 +560,8 @@ typedef struct tag_Wolf3dControl {
 			case 5:  remove_actor(processor); break;
 			case 6:  set_static(processor); break;
 			case 7:  render_frame(processor); break;
+			case 8:  set_view_weapon(processor); break;
+			case 9:  fizzle_to_red(processor); break;
 			case 10: draw_health(processor); break;
 			case 11: draw_ammo(processor); break;
 			case 12: draw_keys(processor); break;
