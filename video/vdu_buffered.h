@@ -2,6 +2,7 @@
 #define VDU_BUFFERED_H
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -22,6 +23,7 @@
 #include "vdp_variables.h"
 #include "types.h"
 #include "vdu_stream_processor.h"
+#include "wolf3d.h"
 
 // VDU 23, 0, &A0, bufferId; command: Buffered command support
 //
@@ -249,6 +251,9 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 			auto sourceBufferId = readWord_t();
 			if (sourceBufferId == -1) return;
 			bufferExpandBitmap(bufferId, options, sourceBufferId);
+		}	break;
+		case BUFFERED_WOLF3D: {
+			bufferUseWolf3D(bufferId);
 		}	break;
 		case BUFFERED_ADD_CALLBACK: {
 			auto type = readWord_t(); if (type == -1) return;
@@ -2767,6 +2772,23 @@ void VDUStreamProcessor::bufferCallCallbacks(uint16_t type) {
 	for (const auto & bufferId : callbackBuffers[type]) {
 		bufferCall(bufferId, {});
 	}
+}
+
+// VDU 23, 0, &A0, bufferId; &4A, subcommand: Configure or render Wolf3D scene.
+// Per-bufferId state is intentionally lightweight (no bufferCreate-backed
+// control structure yet) -- there is no scene/render pipeline to configure
+// until video/wolf3d/render/ lands, only the dispatch smoke test (0) and the
+// render-completion callback registration (41, mirroring Pingo's own 41).
+void VDUStreamProcessor::bufferUseWolf3D(uint16_t bufferId) {
+	static std::map<uint16_t, Wolf3dControl> wolf3dControls;
+
+	auto subcommand = readByte_t();
+	if (subcommand < 0) {
+		return;
+	}
+
+	auto &control = wolf3dControls[bufferId];
+	control.handle_subcommand(*this, static_cast<uint8_t>(subcommand));
 }
 
 

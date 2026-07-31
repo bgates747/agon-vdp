@@ -27,6 +27,8 @@ extern void clearVDPVariable(uint16_t flag);
 
 class VDUStreamProcessor {
 	private:
+		friend struct tag_Wolf3dControl;
+
 		std::shared_ptr<Stream> inputStream;
 		std::shared_ptr<Stream> outputStream;
 		std::shared_ptr<Stream> originalOutputStream;
@@ -161,6 +163,7 @@ class VDUStreamProcessor {
 		void bufferExpandBitmap(uint16_t bufferId, uint8_t options, uint16_t sourceBufferId);
 		void bufferAddCallback(uint16_t bufferId, uint16_t type);
 		void bufferRemoveCallback(uint16_t bufferId, uint16_t type);
+		void bufferUseWolf3D(uint16_t bufferId);
 
 		void vdu_sys_updater();
 		void unlock();
