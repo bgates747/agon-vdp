@@ -44,12 +44,25 @@ typedef struct Mesh {
      * constant color through clipping and rasterization.
      */
     uint8_t shading_mode;
+
+    /*
+     * Selects whether this mesh inherits the scene-wide illumination state or
+     * emits its texture/palette colors unchanged. Zero preserves the existing
+     * scene-lit behavior for every mesh created by older applications.
+     */
+    uint8_t illumination_policy;
 } Mesh;
 
 typedef uint8_t MeshShadingMode;
 enum {
     MESH_SHADING_TEXTURED = 0,
     MESH_SHADING_FLAT_PALETTE = 1
+};
+
+typedef uint8_t MeshIlluminationPolicy;
+enum {
+    MESH_ILLUMINATION_INHERIT_SCENE = 0,
+    MESH_ILLUMINATION_SELF_ILLUMINATED = 1
 };
 
 int meshUpdateBounds(Mesh * mesh);

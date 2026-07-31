@@ -1200,7 +1200,8 @@ static void test_runtime_lighting_and_flat_palette_shading(void) {
         .positions_count = 3,
         .texture_coordinates_count = 3,
         .texture_indexes_count = 3,
-        .shading_mode = MESH_SHADING_TEXTURED
+        .shading_mode = MESH_SHADING_TEXTURED,
+        .illumination_policy = MESH_ILLUMINATION_INHERIT_SCENE
     };
     assert(meshUpdateGeometryValidity(&mesh) == 1);
     material = (Material){.texture = &texture};
@@ -1295,7 +1296,23 @@ static void test_runtime_lighting_and_flat_palette_shading(void) {
     assert(captured_pixels > 0);
     assert(captured_minimum_illumination > 2.0f);
     assert(captured_maximum_illumination > 2.0f);
+
+    // A self-illuminated mesh bypasses scene light computation and shading
+    // without changing its independent flat/textured mode. The backend sees
+    // unity and the framebuffer retains the source palette color even while
+    // the scene remains enabled and overdriven.
+    mesh.illumination_policy = MESH_ILLUMINATION_SELF_ILLUMINATED;
+    reset_backend_capture();
+    assert(rendererRender(&renderer) == 0);
+    assert(captured_pixels > 0);
+    assert(captured_minimum_illumination == 1.0f);
+    assert(captured_maximum_illumination == 1.0f);
     backend.drawPixel = 0;
+    assert(rendererRender(&renderer) == 0);
+    assert(
+        count_frame_color(&buffers, 0xEA) ==
+        count_nonzero_frame_pixels(&buffers));
+    mesh.illumination_policy = MESH_ILLUMINATION_INHERIT_SCENE;
 
     // Unity ambient reproduces the native color even with zero directional
     // intensity. Two-times overdrive saturates every RGB channel to white.

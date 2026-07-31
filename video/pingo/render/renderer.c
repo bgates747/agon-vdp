@@ -325,6 +325,12 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     const bool flatShaded =
         o->material != 0 &&
         o->mesh->shading_mode == MESH_SHADING_FLAT_PALETTE;
+#if !PINGO_DISABLE_ILLUMINATION
+    const bool applyIllumination =
+        r->illuminationEnabled &&
+        o->mesh->illumination_policy !=
+            MESH_ILLUMINATION_SELF_ILLUMINATED;
+#endif
 
     for (int i = 0; i + 2 < o->mesh->indexes_count; i += 3) {
 #if PINGO_RENDER_DIAGNOSTICS
@@ -371,7 +377,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         const float diffuseLight = 1.0f;
 #else
         float diffuseLight = 1.0f;
-        if (r->illuminationEnabled) {
+        if (applyIllumination) {
             /* Explicit components avoid aliasing Vec4f storage as Vec3f. */
             Vec3f na = {a.x - b.x, a.y - b.y, a.z - b.z};
             Vec3f nb = {a.x - c.x, a.y - c.y, a.z - c.z};
@@ -624,7 +630,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #else
         PixelShadeLut shadeLutStorage;
         const PixelShadeLut * shadeLut = 0;
-        if (r->illuminationEnabled) {
+        if (applyIllumination) {
             shadeLutStorage = pixelShadeLut(diffuseLight);
             shadeLut = &shadeLutStorage;
         }
