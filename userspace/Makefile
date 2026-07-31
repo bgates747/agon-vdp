@@ -4,8 +4,13 @@ AR ?= ar
 
 FAB_ROOT_INPUT := $(strip $(FAB_ROOT))
 ADAPTER_MAKEFILE := $(lastword $(MAKEFILE_LIST))
+FAB_FREE_GOALS := clean renderer-test
+FAB_REQUIRED_GOALS := $(filter-out $(FAB_FREE_GOALS),$(MAKECMDGOALS))
+ifeq ($(strip $(MAKECMDGOALS)),)
+FAB_REQUIRED_GOALS := all
+endif
 
-ifeq ($(filter clean,$(MAKECMDGOALS)),)
+ifneq ($(strip $(FAB_REQUIRED_GOALS)),)
 ifeq ($(FAB_ROOT_INPUT),)
 $(error Set FAB_ROOT to a Fab Agon Emulator checkout)
 endif
@@ -19,9 +24,10 @@ VDP_GL_SRC := $(FAB_VDP_DIR)/userspace-vdp-gl/src
 BUILD_DIR ?= $(VDP_ROOT)/video/build/userspace
 TARGET ?= $(BUILD_DIR)/vdp_wolf3d.so
 SMOKE_TARGET ?= $(BUILD_DIR)/wolf3d_smoke
+RENDERER_TEST_TARGET ?= $(BUILD_DIR)/wolf3d_renderer_test
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
-ifeq ($(filter clean,$(MAKECMDGOALS)),)
+ifneq ($(strip $(FAB_REQUIRED_GOALS)),)
 ifeq ($(wildcard $(FAB_VDP_DIR)/rust_glue.cpp),)
 $(error FAB_ROOT does not contain src/vdp/rust_glue.cpp)
 endif
@@ -69,6 +75,15 @@ VDP_GL_CXXFLAGS := \
 	-MMD \
 	-MP
 
+RENDERER_TEST_CXXFLAGS := \
+	-I$(VDP_ROOT) \
+	-Wall \
+	-Wextra \
+	-Werror \
+	-O2 \
+	-g \
+	-std=c++17
+
 VDP_GL_CXX_SOURCES := \
 	canvas.cpp \
 	codepages.cpp \
@@ -110,7 +125,7 @@ VDP_OBJECTS := \
 OBJECTS := $(VDP_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
-.PHONY: all clean smoke
+.PHONY: all clean smoke renderer-test
 
 all: $(TARGET)
 
@@ -155,7 +170,17 @@ $(SMOKE_TARGET): wolf3d_smoke.cpp $(ADAPTER_MAKEFILE)
 smoke: $(TARGET) $(SMOKE_TARGET)
 	$(SMOKE_TARGET) $(TARGET)
 
+$(RENDERER_TEST_TARGET): wolf3d_renderer_test.cpp \
+		$(VDP_ROOT)/video/wolf3d/render/wolf3d_draw.h \
+		$(VDP_ROOT)/video/wolf3d/wolf3d_world.h \
+		$(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(RENDERER_TEST_CXXFLAGS) $< -o $@
+
+renderer-test: $(RENDERER_TEST_TARGET)
+	$(RENDERER_TEST_TARGET)
+
 clean:
-	$(RM) $(TARGET) $(SMOKE_TARGET) $(VDP_GL_LIB) $(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
+	$(RM) $(TARGET) $(SMOKE_TARGET) $(RENDERER_TEST_TARGET) $(VDP_GL_LIB) $(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 
 -include $(DEPS)

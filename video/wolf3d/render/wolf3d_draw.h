@@ -296,9 +296,18 @@ public:
 			m_wallSide[col] = (uint8_t)side;
 			// Texture column: fractional tile-crossing position on the
 			// non-stepped axis, scaled from a 16-bit fraction down to a
-			// 0-63 texture column (64px-wide wall textures).
-			m_wallTexU[col] = (side == 0) ? (uint8_t)((interceptY & 0xFFFF) >> 10)
-			                               : (uint8_t)((interceptX & 0xFFFF) >> 10);
+			// 0-63 texture column (64px-wide wall textures). A moving door's
+			// art translates with the panel: the original HitVertDoor/
+			// HitHorizDoor path subtracts doorposition before selecting U.
+			// Jambs are ordinary wall hits and deliberately remain unshifted.
+			uint16_t textureFraction = (side == 0)
+				? (uint16_t)interceptY
+				: (uint16_t)interceptX;
+			if (tileVal >= WOLF3D_TILE_DOOR_FLAG && tileVal <= WOLF3D_TILE_DOOR_MAX) {
+				const Wolf3dDoor& door = m_world.doors[tileVal & WOLF3D_TILE_DOOR_MASK];
+				textureFraction = (uint16_t)(textureFraction - door.position);
+			}
+			m_wallTexU[col] = (uint8_t)(textureFraction >> 10);
 		}
 	}
 
@@ -422,6 +431,33 @@ public:
 				xFrac += xStep;
 			}
 			yFrac += yStep;
+		}
+	}
+
+	// Apply the original ScaleShape wall-occlusion rule to an already-scaled
+	// sprite bitmap. `viewLeft` is the first *visible/clipped* destination
+	// column's X coordinate in the renderer viewport, so dest column zero maps
+	// directly to wallHeights[viewLeft] even when the sprite's unclipped left
+	// edge was off-screen. A sprite column is visible only when the wall's
+	// projected height is strictly less than the sprite's projected height;
+	// equality belongs to the wall. Hidden columns become transparent RGBA2222
+	// (byte zero), retaining one whole-bitmap Canvas draw per sprite.
+	static void MaskSpriteColumnsBehindWalls(uint8_t* dest, int destWidth,
+	                                        int destHeight, int viewLeft,
+	                                        const int* wallHeights, int viewWidth,
+	                                        int spriteHeight) {
+		if (!dest || !wallHeights || destWidth <= 0 || destHeight <= 0
+		    || viewWidth <= 0 || spriteHeight <= 0) return;
+
+		for (int destX = 0; destX < destWidth; destX++) {
+			int viewX = viewLeft + destX;
+			bool visible = viewX >= 0 && viewX < viewWidth
+			            && wallHeights[viewX] < spriteHeight;
+			if (visible) continue;
+
+			for (int y = 0; y < destHeight; y++) {
+				dest[(size_t)y * destWidth + destX] = 0;
+			}
 		}
 	}
 

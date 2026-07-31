@@ -60,10 +60,14 @@ exist, before the next iteration clears and recreates that scratch ID.
 `render_frame` performs a final drain before reporting completion, so its
 wire-level behavior remains synchronous.
 
-Known gap: `RenderSprites()` draws each sprite as one whole-bitmap blit,
-with no per-column occlusion against nearer wall columns (the classic
-"sprite poking through a closer wall" clip that the original's
-`ScaleShape` handles via a saved wall-height buffer). Not ported yet.
+`RenderSprites()` also reproduces the original `ScaleShape` wall-occlusion
+rule without giving up the single whole-bitmap blit. After scaling, it maps
+each scratch column back to its clipped viewport X coordinate and preserves
+that column only when `wallHeight[viewX] < spriteHeight`; equality belongs to
+the wall. Occluded columns are zeroed to transparent RGBA2222 before bitmap
+creation. `userspace/wolf3d_renderer_test.cpp` covers the equality boundary,
+nearer and farther walls, clipped X offsets, and preservation of existing
+transparent sprite pixels.
 
 ## First correct rendering milestone
 
@@ -74,3 +78,20 @@ callback-gated double buffering, and correct half-cell door faces with
 perpendicular jamb geometry. The full development narrative and qualification
 hashes live in the sibling `Wolf3dOrig` repository at
 `agonport/doc/first_correct_render_success_story.md`.
+
+## Moving-door texture regression
+
+Door-plane geometry and the adjacent perpendicular jamb were already correct
+at the first rendering milestone. A partially open door still needs its source
+column to move with the slab, however: for an actual door hit, texture U is the
+non-stepped-axis fraction minus the door's 0.16 position. Jamb and ordinary
+wall hits deliberately keep their unshifted fraction.
+
+`userspace/wolf3d_renderer_test.cpp` exercises the production DDA directly
+without the FabGL runtime. It covers horizontal and vertical moving slabs, the
+exact `fraction == position` pass boundary, both jamb orientations, and the
+parallel neighboring wall faces. Run it with:
+
+```bash
+make -C userspace renderer-test
+```

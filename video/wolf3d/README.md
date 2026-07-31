@@ -1,8 +1,10 @@
 # Wolf3D VDP extension
 
-This directory will hold the Agon VDP support for a clean-sheet, Carmack-style
-Wolf3D renderer (`wolf3Dport`). It's a placeholder — no renderer code exists
-yet; this establishes the layout before implementation starts.
+This directory contains the custom VDP half of the clean-sheet,
+Carmack-style Wolf3D renderer. The eZ80 owns authoritative gameplay state;
+this extension consumes snapshots, performs the column DDA and sprite
+projection, draws the in-game HUD, and reports render completion to the
+callback-gated client.
 
 ## Provenance and status
 
@@ -23,17 +25,17 @@ video/wolf3d/          this directory: renderer/support code, own docs
 video/wolf3d/README.md this file
 ```
 
-Subdirectories (e.g. a `render/` for the column renderer, an `assets/` for
-texture/map decode) will be added as implementation starts, not speculatively
-now.
+`render/` owns view/projection, wall/door DDA, and sprite projection.
+`hud/` owns persistent status values and the stable original-WL1 bitmap-ID
+contract. `wolf3d_world.h` is the wire/state model, while the parent
+`video/wolf3d.h` orchestrates VDP-local bitmap blits and completion.
 
 ## Dispatch plan
 
-Same single-top-level-opcode pattern as Pingo's `BUFFERED_PINGO_3D` (`0x49`):
-one `#define BUFFERED_WOLF3D ... 0x4A` in `video/agon.h` (candidate opcode,
-not yet allocated in code — see devlog item 23), one `#include
-"wolf3d/..."` and one `case BUFFERED_WOLF3D: { ... } break;` added to the
-existing switch in `video/vdu_buffered.h`, mirroring:
+The implemented dispatch follows the same single-top-level-opcode pattern as
+Pingo's `BUFFERED_PINGO_3D` (`0x49`): `BUFFERED_WOLF3D` is `0x4A` in
+`video/agon.h`, with one `case BUFFERED_WOLF3D` in
+`video/vdu_buffered.h`, mirroring:
 
 ```cpp
 case BUFFERED_PINGO_3D: {
@@ -41,12 +43,28 @@ case BUFFERED_PINGO_3D: {
 }       break;
 ```
 
-No changes to `agon.h`/`vdu_buffered.h` have been made yet — this file
-records the plan so implementation follows the established convention
-instead of improvising a new dispatch shape.
-
 Subcommand numbering: subcommand `41` under `BUFFERED_WOLF3D` is reserved
 for the render-done callback (enable/disable + token), mirroring Pingo's
 own subcommand `41` under `BUFFERED_PINGO_3D` for the identical purpose.
 Same number, same job, different top-level opcode — deliberate parity,
 not a coincidence.
+
+## Current play-screen composition
+
+The accepted 256x160 view is centered at `(32,0)` inside the 320x160 play
+area. The side surround and one-pixel bevel mirror the original play border.
+At `y=160`, buffer `$40F0` supplies a 320x80 lower panel: the original 320x40
+shareware status strip followed by a deliberate neutral extension through the
+extra forty rows in Agon mode 8. Individual weapons, keys, digits, and face
+frames use buffers `$4000 + originalChunkId`; the complete status state is
+redrawn into every hidden buffer before render completion is reported.
+
+## Static-object rendering
+
+The eZ80 submits the real level's stable static slots with subcommand 6.
+Decorations and pickups are tile-centered billboards; a negative shapenum is
+the persistent removed sentinel. The renderer transforms all active statics,
+culls them against the view, sorts them with actors far-to-near, and masks
+their scaled columns against the wall-height buffer before one bitmap draw per
+sprite. Collision and pickup effects deliberately remain eZ80 concerns; the
+VDP is a write-only snapshot consumer.

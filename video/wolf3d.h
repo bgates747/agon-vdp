@@ -125,28 +125,51 @@ typedef struct tag_Wolf3dControl {
 		m_world.set_static((uint16_t)index, tilex, tiley, (int16_t)shapenum, flags);
 	}
 
-	// VDU ... &4A, 7: triggers ThreeDRefresh(); completion reported via the
-	// existing subcommand 41 render-notify callback. Currently synchronous
-	// (renders m_world in place, no working/stable double-buffer yet) --
-	// the eZ80 should still treat subcommand 41 as "safe to send the next
-	// render_frame", per the newest-state-wins policy in the handoff doc.
+	// VDU ... &4A, 7: renders synchronously into the hidden mode-8 buffer;
+	// completion is reported through subcommand 41 only after all queued draws
+	// have drained. The eZ80 then presents that buffer and may submit the next
+	// newest-state snapshot.
 	void render_frame(VDUStreamProcessor& processor) {
 		debug_log("Wolf3D render_frame: begin\n\r");
-		// Two VDP-local rectangle fills both clear stale wall columns and
-		// reproduce Wolf3D's inexpensive flat ceiling/floor presentation.
-		// Bounds follow the active projection rather than assuming 256x160,
-		// preserving CalcProjection() as the viewport-scaling hook.
+		// Clear the complete original 320x160 play area, then place the active
+		// view window at its centered Wolf3D origin. Bounds continue to follow
+		// CalcProjection(), preserving the viewport-scaling hook.
 		int viewwidth = m_renderer.ViewWidth();
 		int viewheight = m_renderer.ViewHeight();
 		int horizon = m_renderer.CenterY();
+		int viewX = ViewOriginX();
+		int viewY = ViewOriginY();
+		// Wolf3D's DrawPlayBorder fills the area around a reduced view with
+		// VGA palette index 127.  Its nearest Agon64 colour is dark cyan;
+		// retaining that surround makes the centered 256-pixel view read as
+		// the original play window instead of a shifted full-screen render.
+		canvas->setBrushColor(0, 85, 85);
+		canvas->fillRectangle(0, 0, WOLF3D_SCREEN_WIDTH - 1,
+			WOLF3D_PLAY_AREA_HEIGHT - 1);
 		canvas->setBrushColor(170, 170, 170);
-		canvas->fillRectangle(0, 0, viewwidth - 1, horizon - 1);
+		canvas->fillRectangle(viewX, viewY, viewX + viewwidth - 1,
+			viewY + horizon - 1);
 		canvas->setBrushColor(85, 85, 85);
-		canvas->fillRectangle(0, horizon, viewwidth - 1, viewheight - 1);
+		canvas->fillRectangle(viewX, viewY + horizon, viewX + viewwidth - 1,
+			viewY + viewheight - 1);
+		// Preserve DrawPlayBorder's one-pixel vertical bevel around the
+		// centered window. (At the current full 160-pixel height its top and
+		// bottom bevels fall just outside the play area.)
+		if (viewX > 0) {
+			canvas->setBrushColor(0, 0, 0);
+			canvas->fillRectangle(viewX - 1, viewY, viewX - 1,
+				viewY + viewheight - 1);
+		}
+		if (viewX + viewwidth < WOLF3D_SCREEN_WIDTH) {
+			canvas->setBrushColor(0, 113, 113);
+			canvas->fillRectangle(viewX + viewwidth, viewY, viewX + viewwidth,
+				viewY + viewheight - 1);
+		}
 		waitPlotCompletion(false);
 		m_renderer.ThreeDRefresh();
 		RenderWalls(processor);
 		RenderSprites(processor);
+		RenderStatusBar();
 		// render_frame is synchronous at the wire boundary. Keep that
 		// contract explicit even if a future blit path queues work without
 		// its own scratch-lifetime drain.
@@ -172,6 +195,8 @@ typedef struct tag_Wolf3dControl {
 		auto texU = m_renderer.WallTexU();
 		int viewheight = m_renderer.ViewHeight();
 		int centery = m_renderer.CenterY();
+		int viewX = ViewOriginX();
+		int viewY = ViewOriginY();
 
 		for (int col = 0; col < m_renderer.ViewWidth(); col++) {
 			int fullHeight = heights[col];
@@ -208,7 +233,7 @@ typedef struct tag_Wolf3dControl {
 			processor.createBitmapFromBuffer(WOLF3D_SCRATCH_WALL_BUFFER_ID, 1 /* RGBA2222 */, 1, destHeight);
 			auto columnBitmap = getBitmap(WOLF3D_SCRATCH_WALL_BUFFER_ID);
 			if (columnBitmap) {
-				canvas->drawBitmap(col, clippedTop, columnBitmap.get());
+				canvas->drawBitmap(viewX + col, viewY + clippedTop, columnBitmap.get());
 				// drawBitmap queues a raw Bitmap pointer. Drain it while
 				// this bitmap and its scratch buffer are still alive;
 				// the next column clears and recreates both.
@@ -224,15 +249,16 @@ typedef struct tag_Wolf3dControl {
 	// scratch buffer, wraps it as a bitmap, and draws it -- same
 	// buffer -> bitmap -> Canvas::drawBitmap approach as RenderWalls() above.
 	//
-	// Known simplification: this draws each sprite as a single whole-bitmap
-	// blit with no per-column occlusion against nearer wall columns (the
-	// classic Wolf3D "sprite poking through a closer wall" clip -- the
-	// original's ScaleShape does clip per-column against a saved wall-height
-	// buffer). Not ported yet -- flagging as a follow-up rather than
-	// guessing at a per-column sprite path.
+	// The scaled scratch bitmap is then masked column-by-column against the
+	// saved wall heights using the original ScaleShape depth rule. Fully
+	// occluded columns become transparent before the single bitmap draw, so
+	// correct wall clipping does not require one Canvas operation per column.
 	void RenderSprites(VDUStreamProcessor& processor) {
 		int viewwidth = m_renderer.ViewWidth();
 		int viewheight = m_renderer.ViewHeight();
+		int viewX = ViewOriginX();
+		int viewY = ViewOriginY();
+		const int* wallHeights = m_renderer.WallHeights();
 
 		for (int i = 0; i < m_renderer.VisSpriteCount(); i++) {
 			const auto& vis = m_renderer.VisSprites()[i];
@@ -262,16 +288,86 @@ typedef struct tag_Wolf3dControl {
 			Wolf3dRenderer::SampleSprite(srcBitmap->data, srcBitmap->width, srcBitmap->height,
 			                             destSize, destSize, clippedLeft - left, clippedTop - top,
 			                             scratch->getBuffer(), destWidth, destHeight);
+			Wolf3dRenderer::MaskSpriteColumnsBehindWalls(
+				scratch->getBuffer(), destWidth, destHeight, clippedLeft,
+				wallHeights, viewwidth, destSize);
 
 			processor.createBitmapFromBuffer(WOLF3D_SCRATCH_SPRITE_BUFFER_ID, 1 /* RGBA2222 */, destWidth, destHeight);
 			auto spriteBitmap = getBitmap(WOLF3D_SCRATCH_SPRITE_BUFFER_ID);
 			if (spriteBitmap) {
-				canvas->drawBitmap(clippedLeft, clippedTop, spriteBitmap.get());
+				canvas->drawBitmap(viewX + clippedLeft, viewY + clippedTop, spriteBitmap.get());
 				// Preserve the queued bitmap and backing bytes until
 				// FabGL has consumed them, before scratch reuse.
 				waitPlotCompletion(false);
 			}
 		}
+	}
+
+	int ViewOriginX() const {
+		return (WOLF3D_SCREEN_WIDTH - m_renderer.ViewWidth()) / 2;
+	}
+
+	int ViewOriginY() const {
+		return (WOLF3D_PLAY_AREA_HEIGHT - m_renderer.ViewHeight()) / 2;
+	}
+
+	void DrawHudPic(uint16_t chunkId, int x, int y) {
+		auto bitmap = getBitmap(Wolf3dHudBufferId(chunkId));
+		if (bitmap) canvas->drawBitmap(x, WOLF3D_STATUS_Y + y, bitmap.get());
+	}
+
+	void DrawHudNumber(int x, int y, int width, uint32_t value) {
+		uint32_t modulus = 1;
+		for (int i = 0; i < width; i++) modulus *= 10;
+		value %= modulus;
+		uint32_t divisor = modulus / 10;
+		bool started = false;
+		for (int i = 0; i < width; i++) {
+			uint8_t digit = (uint8_t)(value / divisor);
+			value %= divisor;
+			uint16_t chunk = WOLF3D_HUD_DIGIT0_CHUNK + digit;
+			if (!started && digit == 0 && i != width - 1) {
+				chunk = WOLF3D_HUD_BLANK_CHUNK;
+			} else {
+				started = true;
+			}
+			DrawHudPic(chunk, x + i * 8, y);
+			if (divisor > 1) divisor /= 10;
+		}
+	}
+
+	// Compose the complete 320x80 lower panel on every rendered back buffer.
+	// The top half is the exact original 320x40 status bar; the generated
+	// bottom half extends its neutral framing through mode 8's extra rows.
+	void RenderStatusBar() {
+		auto panel = getBitmap(WOLF3D_HUD_STATUS_PANEL_ID);
+		if (panel) {
+			canvas->drawBitmap(0, WOLF3D_STATUS_Y, panel.get());
+		} else {
+			canvas->setBrushColor(85, 85, 85);
+			canvas->fillRectangle(0, WOLF3D_STATUS_Y,
+				WOLF3D_SCREEN_WIDTH - 1, WOLF3D_STATUS_Y + WOLF3D_STATUS_HEIGHT - 1);
+			DrawHudPic(WOLF3D_HUD_STATUSBAR_CHUNK, 0, 0);
+		}
+
+		DrawHudNumber(16, 16, 2, m_statusBar.Level());
+		DrawHudNumber(48, 16, 6, m_statusBar.Score());
+		DrawHudNumber(112, 16, 1, m_statusBar.Lives());
+
+		uint16_t faceChunk = WOLF3D_HUD_FACE_DEAD_CHUNK;
+		if (m_statusBar.Health() != 0) {
+			uint8_t damageBand = (uint8_t)((100 - std::min<uint8_t>(m_statusBar.Health(), 100)) / 16);
+			faceChunk = WOLF3D_HUD_FACE1A_CHUNK + damageBand * 3 + m_statusBar.FaceFrame();
+		}
+		DrawHudPic(faceChunk, 136, 4);
+		DrawHudNumber(168, 16, 3, m_statusBar.Health());
+		DrawHudNumber(216, 16, 2, m_statusBar.Ammo());
+		DrawHudPic((m_statusBar.KeyFlags() & 1) ? WOLF3D_HUD_GOLDKEY_CHUNK
+			: WOLF3D_HUD_NOKEY_CHUNK, 240, 4);
+		DrawHudPic((m_statusBar.KeyFlags() & 2) ? WOLF3D_HUD_SILVERKEY_CHUNK
+			: WOLF3D_HUD_NOKEY_CHUNK, 240, 20);
+		DrawHudPic(WOLF3D_HUD_KNIFE_CHUNK + std::min<uint8_t>(m_statusBar.Weapon(), 3),
+			256, 8);
 	}
 
 	// VDU ... &4A, 10..17: HUD/status-bar field updates, one per WL_AGENT.C
@@ -301,10 +397,9 @@ typedef struct tag_Wolf3dControl {
 		m_render_notify_token = (uint16_t)token;
 	}
 
-	// Not yet called from anywhere: no render pipeline exists yet (see
-	// video/wolf3d/render/README.md). Wire this up the same way Pingo calls
-	// send_render_complete() from render_to_bitmap() once the column
-	// renderer lands.
+	// Publish the completed hidden-buffer sequence after the renderer and HUD
+	// draw queue have drained. The eZ80 callback only records this packet; its
+	// foreground loop owns presentation and submission of the next frame.
 	void send_render_complete(VDUStreamProcessor& processor, uint32_t sequence) {
 		if (m_render_notify_mode != WOLF3D_RENDER_NOTIFY_KEYCODE) {
 			return;
