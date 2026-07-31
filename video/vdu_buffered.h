@@ -2775,10 +2775,9 @@ void VDUStreamProcessor::bufferCallCallbacks(uint16_t type) {
 }
 
 // VDU 23, 0, &A0, bufferId; &4A, subcommand: Configure or render Wolf3D scene.
-// Per-bufferId state is intentionally lightweight (no bufferCreate-backed
-// control structure yet) -- there is no scene/render pipeline to configure
-// until video/wolf3d/render/ lands, only the dispatch smoke test (0) and the
-// render-completion callback registration (41, mirroring Pingo's own 41).
+// Per-bufferId state (Wolf3dControl) holds the world-state mirror pushed
+// from the eZ80 (video/wolf3d/wolf3d_world.h) plus the renderer and HUD --
+// see video/wolf3d.h for the full subcommand table.
 void VDUStreamProcessor::bufferUseWolf3D(uint16_t bufferId) {
 	static std::map<uint16_t, Wolf3dControl> wolf3dControls;
 

@@ -1,7 +1,15 @@
 # Wolf3D column renderer
 
-Placeholder for the per-column rasterizer — the one piece of the original
-game's rendering pipeline with a real analog on the VDP side.
+`wolf3d_draw.h`'s `Wolf3dRenderer` implements the real per-column raycast
+and billboard projection: `CalcProjection`/`SetupView`/`CalcHeight`/
+`TransformActor`/`CalcRotate` (view math), `WallRefresh` (grid-DDA against
+the tilemap buffer referenced by `Wolf3dWorldState::tilemapBufferId`,
+including door open/closed blocking), and `DrawScaleds` (projects every
+active actor/static via the shared `TransformPoint` helper, culls off-screen/
+behind-camera sprites, depth-sorts far-to-near) are all implemented and
+validated against `agonport/assets/generated/dda_smoke_test_map.bin`.
+`WallRefresh`/`DrawScaleds` fill in per-column/per-sprite output arrays;
+see "Blit stage" below for how those get turned into pixels.
 
 Original id Software equivalent: `WL_DRAW.C`'s raycast column loop, and the
 `WL_SCALE.C`/`CONTIGSC.C`/`OLDSCALE.C` family of compiled column scalers
@@ -10,9 +18,42 @@ Agon only needs one modern implementation). Given a screen column, a
 texture ID + source column, and a top/bottom height, this blits a scaled
 textured vertical strip into the render target.
 
-No code yet. What lives here depends on the still-open eZ80/VDP renderer-
-boundary question (see `agonport/doc/vdp-3d-pipeline-reuse.md`'s open
-questions and `agonport/ARCHITECTURE_PRECIS.md`): if the eZ80 keeps
-computing per-column draw parameters and only sends "draw this column"
-commands, this stays a pure blitter with no ray/wall-distance math of its
-own.
+The texture *asset layout* question is resolved (see `wolf3d_world.h`'s
+`Wolf3dWallBufferId()`/`Wolf3dSpriteBufferId()`): no shared atlas buffer,
+one small VDP bitmap buffer per texture, selected by a fixed buffer-id
+offset from the wall texture id / sprite shapenum already on the wire.
+`WallRefresh`'s output (`WallHeights()`/`WallTiles()`/`WallTexU()`/
+`WallSides()`) and `DrawScaleds`' output (`VisSprites()`/
+`VisSpriteCount()`) are what a blit stage should consume. Also still
+missing: `DrawScaleds` doesn't call `CalcRotate` yet -- that needs a
+per-actor-class `numRotations`/`dirangle` table that isn't modeled in
+`Wolf3dWorldState` yet.
+
+## Blit stage (implemented)
+
+`WallRefresh`/`DrawScaleds` only fill in per-column/per-sprite scratch
+output. The actual pixel blit is a two-part split:
+
+- `Wolf3dRenderer::SampleWallColumn()`/`SampleSprite()` (in this file) do
+  the nearest-neighbor scaling math (mirroring `WL_SCALE.C`'s
+  `ScaleShape`/`SimpleScaleShape` job) into a caller-owned byte buffer.
+  Pure pixel math, no VDP calls.
+- `Wolf3dControl::RenderWalls()`/`RenderSprites()` (`video/wolf3d.h`) do
+  the actual VDP-side orchestration: write into a scratch VDU buffer
+  (`bufferCreate`/`bufferClear`), convert it to a `Bitmap`
+  (`createBitmapFromBuffer()`, format 1 = RGBA2222), and draw it with
+  `Canvas::drawBitmap()`. They live in `Wolf3dControl` rather than
+  `Wolf3dRenderer` because that's where the `VDUStreamProcessor` friend
+  access to those buffer/bitmap calls already exists.
+
+This is the approved method: buffer -> bitmap -> bitmap-plot, not
+per-pixel `Canvas::setPixel()` (ruled out as non-performant during Pingo's
+own development) and not any per-column/per-sprite wire command (rendering
+is entirely VDP-internal). The pipeline is RGBA2222 end to end -- source
+texture bitmaps, the scratch buffers, and the constructed column/sprite
+bitmaps are all format 1.
+
+Known gap: `RenderSprites()` draws each sprite as one whole-bitmap blit,
+with no per-column occlusion against nearer wall columns (the classic
+"sprite poking through a closer wall" clip that the original's
+`ScaleShape` handles via a saved wall-height buffer). Not ported yet.
