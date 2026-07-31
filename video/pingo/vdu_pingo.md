@@ -81,6 +81,14 @@ PDY = DY * F
 PDZ = DZ * F
 VDU ... PDX; PDY; PDZ; ...
 ```
+<br><br><b>lightx, lighty, lightz</b>: Signed 16-bit components of a
+directional-light vector. The components describe a ratio, so they do not need
+a particular fixed-point scale. Pingo normalizes every accepted vector. The
+all-zero vector is invalid and leaves the current direction unchanged.
+<br><br><b>intensity, ambient</b>: Unsigned 8-bit illumination values. A value
+of 127 is unity (`1.0`), 0 is zero, and 255 is approximately `2.008` times
+unity. Values above unity deliberately overdrive the color channels; each
+channel saturates at its maximum rather than wrapping.
 <br>
 
 # VDU Commands for 3D Rendering
@@ -127,7 +135,14 @@ VDU ... PDX; PDY; PDZ; ...
 <b>VDU 23, 0, &A0, sid; &49, 36, distz;</b> :  Set Scene Z Translation Distance<br>
 <b>VDU 23, 0, &A0, sid; &49, 37, distx; disty; distz;</b> :  Set Scene XYZ Translation Distances<br>
 <b>VDU 23, 0, &A0, sid; &49, 38, bmid;</b> :  Render To Bitmap<br>
-<b>VDU 23, 0, &A0, sid; &49, 39</b> :  Delete Control Structure (not implemented yet)<br>
+<b>VDU 23, 0, &A0, sid; &49, 39</b> :  Delete Control Structure<br>
+<b>VDU 23, 0, &A0, sid; &49, 41, mode, token;</b> :  Configure Render-Completion Notification<br>
+<b>Subcommand 42 is reserved and must not be used.</b><br>
+<b>VDU 23, 0, &A0, sid; &49, 43, lightx; lighty; lightz;</b> :  Set Light Direction<br>
+<b>VDU 23, 0, &A0, sid; &49, 44, intensity</b> :  Set Light Intensity<br>
+<b>VDU 23, 0, &A0, sid; &49, 45, ambient</b> :  Set Ambient-Light Floor<br>
+<b>VDU 23, 0, &A0, sid; &49, 46, enabled</b> :  Enable or Disable Illumination<br>
+<b>VDU 23, 0, &A0, sid; &49, 47, mid; mode</b> :  Set Mesh Shading Mode<br>
 
 ## Create Control Structure
 <b>VDU 23, 0, &A0, sid; &49, 0, w; h;</b> :  Create Control Structure<br>
@@ -188,7 +203,8 @@ This command defines a renderable object in terms of its already-defined mesh,
 plus a reference to an existing bitmap that provides its coloring, via the
 texture coordinates used by the mesh. The same mesh can be used multiple times,
 with the same or different bitmaps for coloring. The bitmap must be in the
-RGBA8888 format (4 bytes per pixel).
+RGBA2222 (1 byte per pixel) or RGBA8888 (4 bytes per pixel) format. Pingo's
+native working format is RGBA2222; RGBA8888 remains supported for compatibility.
 
 ## Define Object Texture Coordinates
 <b>VDU 23, 0, &A0, sid; &49, 40, oid; n; u0; v0; ...</b> :  Define Object Texture Coordinates
@@ -381,12 +397,119 @@ onto the specified bitmap. This command must be used in
 order to perform the render operation; it does <i>not</i> happen automatically, when other
 commands change some of the render parameters.
 
+The destination bitmap may use RGBA2222 or RGBA8888. Pingo renders directly to
+an RGBA2222 destination. An RGBA8888 destination uses Pingo's private RGBA2222
+frame and is expanded to RGBA8888 before the render-completion notification is
+sent.
+
 ## Delete Control Structure
-<b>VDU 23, 0, &A0, sid; &49, 39</b> :  Delete Control Structure (not implemented yet)<br>
+<b>VDU 23, 0, &A0, sid; &49, 39</b> :  Delete Control Structure<br>
 
 This command deinitializes an existing control structure,
 assuming that it exists in the designated buffer. The buffer is subsequently
-deleted, as part of processing for this command.
+deleted through the canonical buffered-VDU clear path, releasing the scene's
+owned Pingo resources and buffer metadata.
+
+## Configure Render-Completion Notification
+<b>VDU 23, 0, &A0, sid; &49, 41, mode, token;</b> :  Configure Render-Completion Notification
+
+This command opts a scene into or out of a render-completion callback. Mode 0
+disables notification. Mode 1 emits a stock MOS keyboard-event packet after a
+successful render has been completely written to its destination. Other mode
+values are treated as disabled. The caller-supplied 16-bit token is returned in
+the event, allowing an application to distinguish its own completion messages.
+Notification is disabled by default.
+
+The ten-byte event payload is:
+
+```
+'P', '3', 'D', 'R', version, event, token_lo, token_hi, sequence_lo, sequence_hi
+```
+
+The current protocol uses `version = 1` and `event = 1` for render completion.
+`sequence` is the scene's low 16 bits of its monotonically increasing render
+sequence number.
+
+## Reserved Subcommand 42
+
+Subcommand 42 is reserved for compatibility with historical Pingo branches,
+where it represented `camera_track_object(oid;)`. It is not implemented by this
+firmware and must not be reused or issued. In particular, sending the historical
+payload to current firmware would leave those bytes in the VDU stream.
+
+## Set Light Direction
+<b>VDU 23, 0, &A0, sid; &49, 43, lightx; lighty; lightz;</b> :  Set Light Direction
+
+This command sets the scene-wide directional-light vector. Each component is a
+signed little-endian 16-bit integer. Pingo treats the three values as a ratio
+and normalizes the vector once when the command is received. The all-zero vector
+is rejected without changing the existing direction.
+
+The default direction is normalized `(0, +1, -1)`, placing the light above and
+on the negative-Z side of the scene.
+
+## Set Light Intensity
+<b>VDU 23, 0, &A0, sid; &49, 44, intensity</b> :  Set Light Intensity
+
+This command sets the unsigned 8-bit multiplier applied to the directional
+illumination. The multiplier is `intensity / 127`: 0 is dark, 127 is unity, and
+255 is approximately 2.008. Overdriven color channels saturate at their maximum.
+The default is 127.
+
+## Set Ambient-Light Floor
+<b>VDU 23, 0, &A0, sid; &49, 45, ambient</b> :  Set Ambient-Light Floor
+
+This command sets the scene-wide minimum illumination using the same
+`value / 127` scale as intensity. Ambient light is a floor, not an additive
+term: a face receives at least this much illumination even when its directional
+term is smaller. The default is 0.
+
+With illumination enabled, the per-face shade multiplier is:
+
+```
+directional = clamp((1 + dot(face_normal, light_direction)) / 2, 0, 1)
+shade       = max(ambient / 127, directional * intensity / 127)
+```
+
+## Enable or Disable Illumination
+<b>VDU 23, 0, &A0, sid; &49, 46, enabled</b> :  Enable or Disable Illumination
+
+An `enabled` value of 1 enables scene lighting; 0 disables it. Other values are
+invalid and leave the prior state unchanged. With illumination disabled, Pingo
+skips the normal, dot-product, and shade-table work and writes native texture or
+flat-palette colors. Illumination is enabled by default.
+
+Illumination and mesh shading mode are independent. Flat-palette triangles are
+illuminated normally when illumination is enabled and retain their native
+palette color when it is disabled.
+
+The `esp32dev-pingo-unlit` PlatformIO environment defines
+`PINGO_DISABLE_ILLUMINATION=1`. That diagnostic build removes illumination at
+compile time, so runtime command 46 cannot turn it back on.
+
+## Set Mesh Shading Mode
+<b>VDU 23, 0, &A0, sid; &49, 47, mid; mode</b> :  Set Mesh Shading Mode
+
+This command selects the shading mode for a mesh. The 16-bit mesh ID is followed
+by an unsigned byte:
+
+- Mode 0: perspective-correct textured rendering.
+- Mode 1: flat-palette rendering, with one constant sampled color per source
+  triangle.
+
+Mode 0 is the default. Invalid modes are rejected without changing or creating
+the mesh.
+
+Flat-palette mode samples the first UV of each original source triangle once.
+All triangles generated from that source by frustum clipping retain the same
+sampled color. Geometry clipping, depth testing, span ownership, RGBA2222 output,
+and optional illumination continue through the established Pingo renderer;
+RGBA8888 destinations still receive the normal compatibility expansion.
+
+Asset-build tooling must ensure that all three UVs of a flat-shaded source
+triangle select the same cell in the reference palette; malformed multi-color
+triangles should be rejected before upload. The firmware deliberately does not
+reinterpret or rewrite the UV data.
 
 ## Sample
 

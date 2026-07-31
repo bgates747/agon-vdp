@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "video/pingo_3d.h"
 BUFFERED = ROOT / "video/vdu_buffered.h"
 
-EXPECTED_DISPATCH = set(range(1, 39)) | {40, 41}
+EXPECTED_DISPATCH = set(range(1, 39)) | {40, 41} | set(range(43, 48))
 
 
 def main() -> None:
@@ -34,7 +34,7 @@ def main() -> None:
         raise SystemExit(f"Missing outer lifecycle routes: {absent}")
 
     print(
-        "Pingo scope verified: TurboVega 0-40 plus render notification 41"
+        "Pingo scope verified: TurboVega 0-40 plus local extensions 41, 43-47"
     )
 
 

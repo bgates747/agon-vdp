@@ -36,7 +36,21 @@ typedef struct Mesh {
     Vec3f bounds_min;
     Vec3f bounds_max;
     uint8_t bounds_valid;
+
+    /*
+     * Selects how this mesh interprets its existing texture coordinates.
+     * Zero preserves perspective-correct textured rendering. Flat palette
+     * mode samples the source triangle's first UV once and carries that
+     * constant color through clipping and rasterization.
+     */
+    uint8_t shading_mode;
 } Mesh;
+
+typedef uint8_t MeshShadingMode;
+enum {
+    MESH_SHADING_TEXTURED = 0,
+    MESH_SHADING_FLAT_PALETTE = 1
+};
 
 int meshUpdateBounds(Mesh * mesh);
 int meshUpdateGeometryValidity(Mesh * mesh);

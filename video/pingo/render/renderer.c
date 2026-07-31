@@ -234,7 +234,9 @@ static inline void backendDrawPixel(
 #if PINGO_DISABLE_ILLUMINATION
         r->backEnd->drawPixel(f, pos, color, 1.0f);
 #else
-        r->backEnd->drawPixel(f, pos, color, illumination);
+        r->backEnd->drawPixel(
+            f, pos, color,
+            shadeLut ? illumination : 1.0f);
 #endif
     }
     else {
@@ -242,8 +244,12 @@ static inline void backendDrawPixel(
 #if PINGO_DISABLE_ILLUMINATION
         f->frameBuffer[pixelIndex] = color;
 #else
-        f->frameBuffer[pixelIndex] =
-            pixelMulLut(color, shadeLut);
+        if (!shadeLut) {
+            f->frameBuffer[pixelIndex] = color;
+        } else {
+            f->frameBuffer[pixelIndex] =
+                pixelMulLut(color, shadeLut);
+        }
 #endif
     }
 }
@@ -316,12 +322,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     PingoDepth * const zetaBuffer =
         backEnd->getZetaBuffer(r, backEnd);
 
-#if !PINGO_DISABLE_ILLUMINATION
-    // The light direction is constant for the whole object. Normalizing it
-    // once preserves the existing value while avoiding a square root and
-    // division for every submitted triangle.
-    const Vec3f light = vec3Normalize((Vec3f){-8,-5,5});
-#endif
+    const bool flatShaded =
+        o->material != 0 &&
+        o->mesh->shading_mode == MESH_SHADING_FLAT_PALETTE;
 
     for (int i = 0; i + 2 < o->mesh->indexes_count; i += 3) {
 #if PINGO_RENDER_DIAGNOSTICS
@@ -339,9 +342,20 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
         if (o->material != 0) {
             tca = tex_coords[o->mesh->tex_indices[i+0]];
-            tcb = tex_coords[o->mesh->tex_indices[i+1]];
-            tcc = tex_coords[o->mesh->tex_indices[i+2]];
+            if (flatShaded) {
+                // Texture coordinates are not interpolated in flat mode.
+                // Carrying UV0 through clipping avoids two unused source
+                // loads while preserving one color for every generated fan.
+                tcb = tca;
+                tcc = tca;
+            } else {
+                tcb = tex_coords[o->mesh->tex_indices[i+1]];
+                tcc = tex_coords[o->mesh->tex_indices[i+2]];
+            }
         }
+        const Vec2f flatColorCoordinate = tca;
+        Pixel flatColor = PIXELBLACK;
+        bool flatColorReady = false;
 
         Vec4f a =  { ver1->x, ver1->y, ver1->z, 1 };
         Vec4f b =  { ver2->x, ver2->y, ver2->z, 1 };
@@ -356,11 +370,19 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #if PINGO_DISABLE_ILLUMINATION
         const float diffuseLight = 1.0f;
 #else
-        Vec3f na = vec3fsubV(*((Vec3f*)(&a)), *((Vec3f*)(&b)));
-        Vec3f nb = vec3fsubV(*((Vec3f*)(&a)), *((Vec3f*)(&c)));
-        Vec3f normal = vec3Normalize(vec3Cross(na, nb));
-        float diffuseLight = (1.0 + vec3Dot(normal, light)) *0.5;
-        diffuseLight = MIN(1.0, MAX(diffuseLight, 0));
+        float diffuseLight = 1.0f;
+        if (r->illuminationEnabled) {
+            /* Explicit components avoid aliasing Vec4f storage as Vec3f. */
+            Vec3f na = {a.x - b.x, a.y - b.y, a.z - b.z};
+            Vec3f nb = {a.x - c.x, a.y - c.y, a.z - c.z};
+            Vec3f normal = vec3Normalize(vec3Cross(na, nb));
+            float directional =
+                (1.0f + vec3Dot(normal, r->lightDirection)) * 0.5f;
+            directional = MIN(1.0f, MAX(directional, 0.0f));
+            diffuseLight = MAX(
+                r->ambientLight,
+                directional * r->lightIntensity);
+        }
 #endif
 
         a = mat4MultiplyVec4( &a, &vp);
@@ -515,6 +537,13 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #endif
             continue;
         }
+        if (flatShaded && !flatColorReady) {
+            // Delay the single texture lookup until at least one clipped fan
+            // survives projection, backface, and degeneracy rejection.
+            flatColor = texture_readFInline(
+                o->material->texture, flatColorCoordinate);
+            flatColorReady = true;
+        }
         float areaInverse = 1.0/area;
 
         int32_t A01 = ( a_s.y - b_s.y); //Barycentric coordinates steps
@@ -529,7 +558,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         int32_t w2_row = orient2d( a_s, b_s, minTriangle);
 
         PingoPerspectiveAttributes textureStepX = {0.0f, 0.0f, 0.0f};
-        if (o->material != 0) {
+        if (o->material != 0 && !flatShaded) {
             // a.w/b.w/c.w retain reciprocal clip-space W.
             tca.x *= a.w;
             tca.y *= a.w;
@@ -593,9 +622,12 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #if PINGO_DISABLE_ILLUMINATION
         const PixelShadeLut * shadeLut = 0;
 #else
-        PixelShadeLut shadeLutStorage =
-            pixelShadeLut(diffuseLight);
-        const PixelShadeLut * shadeLut = &shadeLutStorage;
+        PixelShadeLut shadeLutStorage;
+        const PixelShadeLut * shadeLut = 0;
+        if (r->illuminationEnabled) {
+            shadeLutStorage = pixelShadeLut(diffuseLight);
+            shadeLut = &shadeLutStorage;
+        }
 #endif
 
         for (int16_t y = minY; y < maxY; y++, w0_row += B12,w1_row += B20,w2_row += B01) {
@@ -636,7 +668,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             uint32_t textureBlockRemaining = 0u;
             bool textureBlockValid = false;
 
-            if (o->material != 0) {
+            if (o->material != 0 && !flatShaded) {
                 PingoPerspectiveAttributes textureAttributes;
                 textureAttributes.reciprocalW =
                     (w0 * a.w + w1 * b.w + w2 * c.w) *
@@ -656,7 +688,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             for (int32_t x = spanMinX; x < spanMaxX;
                  x++, w0 += A12, w1 += A20, w2 += A01,
                  depth += depthStepX) {
-                if (o->material != 0 &&
+                if (o->material != 0 && !flatShaded &&
                     textureBlockRemaining == 0u) {
                     PingoPerspectiveSpanBlock block;
                     textureBlockValid =
@@ -688,6 +720,14 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                             zetaBuffer, pixelIndex, 1-depth )) {
 #if PINGO_RENDER_DIAGNOSTICS
                         fragmentsDepthTestRejected++;
+#endif
+                    } else if (flatShaded) {
+                        backendDrawPixel(
+                            r, &r->frameBuffer, (Vec2i){x,y},
+                            pixelIndex, flatColor, diffuseLight, shadeLut);
+
+#if PINGO_RENDER_DIAGNOSTICS
+                        fragmentsShaded++;
 #endif
                     } else if (o->material != 0) {
                         /*
@@ -742,7 +782,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                  * Attribute position follows covered X, not visibility.
                  * Depth rejection must not freeze the texture mapper.
                  */
-                if (o->material != 0) {
+                if (o->material != 0 && !flatShaded) {
                     textCoordx += textCoordStepX;
                     textCoordy += textCoordStepY;
                     textureBlockRemaining--;
@@ -779,6 +819,13 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     r->clearColor = PIXELBLACK;
     r->backEnd = backEnd;
     r->frustumCulling = 1;
+    /* Exact normalized default; avoid a square root on every render setup. */
+    r->lightDirection = (Vec3f){
+        0.0f, 0.7071067811865475244f, -0.7071067811865475244f
+    };
+    r->lightIntensity = 1.0f;
+    r->ambientLight = 0.0f;
+    r->illuminationEnabled = 1;
 
 #if PINGO_RENDER_DIAGNOSTICS
     r->diagnostics_clock = 0;
@@ -798,6 +845,39 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
 void rendererSetFrustumCulling(Renderer * r, int enabled) {
     if (r) {
         r->frustumCulling = enabled != 0;
+    }
+}
+
+int rendererSetLightDirection(Renderer * r, Vec3f direction) {
+    if (!r ||
+        !isfinite(direction.x) ||
+        !isfinite(direction.y) ||
+        !isfinite(direction.z)) {
+        return 1;
+    }
+    float magnitudeSquared = vec3Dot(direction, direction);
+    if (!(magnitudeSquared > 0.0f) || !isfinite(magnitudeSquared)) {
+        return 1;
+    }
+    r->lightDirection = vec3Normalize(direction);
+    return 0;
+}
+
+void rendererSetLightIntensity(Renderer * r, uint8_t intensity) {
+    if (r) {
+        r->lightIntensity = (float)intensity / 127.0f;
+    }
+}
+
+void rendererSetAmbientLight(Renderer * r, uint8_t ambient) {
+    if (r) {
+        r->ambientLight = (float)ambient / 127.0f;
+    }
+}
+
+void rendererSetIlluminationEnabled(Renderer * r, int enabled) {
+    if (r) {
+        r->illuminationEnabled = enabled != 0;
     }
 }
 

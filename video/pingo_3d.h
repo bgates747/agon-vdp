@@ -16,6 +16,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <limits.h>
+#include <math.h>
 #include <agon.h>
 #include <map>
 #include <memory>
@@ -411,6 +412,10 @@ typedef struct tag_Pingo3dControl {
     uint32_t            m_render_sequence;  // Diagnostic sequence for render timing records
     uint8_t             m_render_notify_mode;   // Opt-in render-completion transport
     uint16_t            m_render_notify_token;  // Caller-supplied completion token
+    p3d::Vec3f          m_light_direction;  // Scene-wide normalized directional light
+    uint8_t             m_light_intensity;  // 127 is unity; 128..255 overdrive
+    uint8_t             m_ambient_light;    // Minimum shade; 127 is unity
+    uint8_t             m_illumination_enabled; // Zero writes native texture colors
 
     void show_free_ram() {
         debug_log("Free PSRAM: %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -469,6 +474,12 @@ typedef struct tag_Pingo3dControl {
         m_objects = objects;
         m_camera.initialize();
         m_scene.initialize();
+        m_light_direction = (p3d::Vec3f){
+            0.0f, 0.7071067811865475244f, -0.7071067811865475244f
+        };
+        m_light_intensity = 127;
+        m_ambient_light = 0;
+        m_illumination_enabled = 1;
 
         m_backend.init = &static_init;
         m_backend.beforeRender = &static_before_render;
@@ -583,6 +594,11 @@ typedef struct tag_Pingo3dControl {
             case 37: set_scene_xyz_translation_distances(); break;
             case 38: render_to_bitmap(); break;
             case 41: set_render_notification(); break;
+            case 43: set_light_direction(); break;
+            case 44: set_light_intensity(); break;
+            case 45: set_ambient_light(); break;
+            case 46: set_illumination_enabled(); break;
+            case 47: set_mesh_shading_mode(); break;
         }
     }
 
@@ -618,6 +634,78 @@ typedef struct tag_Pingo3dControl {
             (uint8_t)((sequence >> 8) & 0xFF),
         };
         m_proc->send_packet(PACKET_KEYCODE, sizeof(packet), packet);
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 43, x; y; z;
+    // Signed 16-bit components describe a direction ratio and are normalized
+    // once here. A zero vector is rejected without changing the current light.
+    void set_light_direction() {
+        auto x = m_proc->readWord_t();
+        if (x < 0) {
+            return;
+        }
+        auto y = m_proc->readWord_t();
+        if (y < 0) {
+            return;
+        }
+        auto z = m_proc->readWord_t();
+        if (z < 0) {
+            return;
+        }
+        p3d::Vec3f candidate = {
+            (p3d::F_TYPE)(int16_t)(uint16_t)x,
+            (p3d::F_TYPE)(int16_t)(uint16_t)y,
+            (p3d::F_TYPE)(int16_t)(uint16_t)z
+        };
+        float magnitude_squared = p3d::vec3Dot(candidate, candidate);
+        if (!(magnitude_squared > 0.0f) || !isfinite(magnitude_squared)) {
+            return;
+        }
+        m_light_direction = p3d::vec3Normalize(candidate);
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 44, intensity
+    // 127 is unity; larger values deliberately overdrive toward saturation.
+    void set_light_intensity() {
+        auto intensity = m_proc->readByte_t();
+        if (intensity >= 0) {
+            m_light_intensity = (uint8_t)intensity;
+        }
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 45, ambient
+    // Ambient is a minimum shade floor using the same 127-unity scale.
+    void set_ambient_light() {
+        auto ambient = m_proc->readByte_t();
+        if (ambient >= 0) {
+            m_ambient_light = (uint8_t)ambient;
+        }
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 46, enabled
+    void set_illumination_enabled() {
+        auto enabled = m_proc->readByte_t();
+        if (enabled == 0 || enabled == 1) {
+            m_illumination_enabled = (uint8_t)enabled;
+        }
+    }
+
+    // VDU 23, 0, &A0, sid; &49, 47, mesh_id; mode
+    // Mode 0 is perspective-textured; mode 1 is one palette color per face.
+    void set_mesh_shading_mode() {
+        auto mesh_id = m_proc->readWord_t();
+        if (mesh_id < 0) {
+            return;
+        }
+        auto mode = m_proc->readByte_t();
+        if (mode != p3d::MESH_SHADING_TEXTURED &&
+            mode != p3d::MESH_SHADING_FLAT_PALETTE) {
+            return;
+        }
+        auto mesh = establish_mesh((uint16_t)mesh_id);
+        if (mesh) {
+            mesh->shading_mode = (uint8_t)mode;
+        }
     }
 
     p3d::Mesh* establish_mesh(uint16_t mid) {
@@ -1497,6 +1585,12 @@ typedef struct tag_Pingo3dControl {
         auto size = p3d::Vec2i{(p3d::I_TYPE)m_width, (p3d::I_TYPE)m_height};
         p3d::Renderer renderer;
         rendererInit(&renderer, size, &m_backend );
+        /* Control state is normalized transactionally when command 43 lands. */
+        renderer.lightDirection = m_light_direction;
+        p3d::rendererSetLightIntensity(&renderer, m_light_intensity);
+        p3d::rendererSetAmbientLight(&renderer, m_ambient_light);
+        p3d::rendererSetIlluminationEnabled(
+            &renderer, m_illumination_enabled);
 #if PINGO_RENDER_DIAGNOSTICS
         renderer.diagnostics_clock = pingo_render_diagnostics_clock_ticks;
         renderer.diagnostics_clock_hz =
@@ -1796,6 +1890,7 @@ extern "C" bool pingo_userspace_get_upload_state_hash(
     PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.x);
     PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.y);
     PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.z);
+    PINGO_HASH_UPLOAD_FIELD(mesh.shading_mode);
     PINGO_HASH_UPLOAD_FIELD(object.textCoord_count);
     PINGO_HASH_UPLOAD_FIELD(object.texture_mapping_valid);
 #undef PINGO_HASH_UPLOAD_FIELD
@@ -1844,6 +1939,36 @@ extern "C" bool pingo_userspace_get_object_texture_pixel(
             (p3d::I_TYPE)(pixel_index % (uint32_t)bitmap->width),
             (p3d::I_TYPE)(pixel_index / (uint32_t)bitmap->width)
         }).c;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_lighting_state(
+        uint16_t buffer_id, float * direction,
+        uint8_t * intensity, uint8_t * ambient, uint8_t * enabled) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !direction || !intensity || !ambient || !enabled) {
+        return false;
+    }
+    direction[0] = control->m_light_direction.x;
+    direction[1] = control->m_light_direction.y;
+    direction[2] = control->m_light_direction.z;
+    *intensity = control->m_light_intensity;
+    *ambient = control->m_ambient_light;
+    *enabled = control->m_illumination_enabled;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_mesh_shading_mode(
+        uint16_t buffer_id, uint16_t mesh_id, uint8_t * mode) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !mode) {
+        return false;
+    }
+    auto mesh = control->m_meshes->find(mesh_id);
+    if (mesh == control->m_meshes->end()) {
+        return false;
+    }
+    *mode = mesh->second.shading_mode;
     return true;
 }
 #endif
