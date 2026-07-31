@@ -43,3 +43,8 @@ commands, the coordinate contract, fixtures, and remaining work. The optional
 compile-time renderer-attribution build and its hardware capture workflow are
 documented in
 [docs/pingo-render-diagnostics.md](docs/pingo-render-diagnostics.md).
+
+The authoritative Pingo assembly applications, hardware test fixtures, source
+assets, benchmark harnesses, and project-local emulator profiles live in the
+separate `~/Agon/mystuff/pingoasm` repository. They are not maintained in this
+firmware repository or in `~/Agon/pingoasm`.

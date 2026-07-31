@@ -278,8 +278,8 @@ make -C ~/Agon/mystuff/agon-vdp/userspace \
   diagnostics-smoke
 ```
 
-The ordinary portion of that target includes three candidate-specific native
-checks:
+The ordinary portion of that target includes seven direct native tests. Three
+are especially specific to the current correctness candidate:
 
 1. `pingo_depth_test` verifies endpoint and representative `[0,1]` depth
    quantization, rejects nonfinite and out-of-range inputs, and cross-checks
@@ -298,6 +298,12 @@ source/generated conservation laws. These deterministic checks establish
 native invariants; the combined candidate subsequently passed focused
 emulator visual review and Olimex hardware qualification on 2026-07-29.
 
+The full-module `pingo_bridge_robustness_test` additionally drives the real VDU
+byte stream through atomic initialization, texture lifetime, complete
+teardown, opaque-control isolation, deterministic allocation failures, and
+bounded truncated-upload recovery. It runs in both ordinary and diagnostic
+smoke targets.
+
 The isolated diagnostic module is:
 
 ```text
@@ -306,10 +312,12 @@ The isolated diagnostic module is:
 
 `diagnostics-smoke` performs:
 
-1. the one-byte pixel and dual-format texture test;
+1. all seven direct texture, math, span, depth, mesh, and clipping tests;
 2. the native shared-module ABI and command-path smoke test, including
    RGBA2222 and RGBA8888 render targets and render-completion behavior; and
-3. `pingo_renderer_diagnostics_test`, which uses an injected deterministic
+3. the full VDU bridge robustness harness under a 30-second outer timeout;
+   and
+4. `pingo_renderer_diagnostics_test`, which uses an injected deterministic
    clock and an 8×8 fake backend.
 
 The direct renderer test covers:
@@ -368,6 +376,9 @@ make -C ~/Agon/mystuff/agon-vdp/userspace \
 Native tests establish structure, arithmetic, state reset, command plumbing,
 and ABI loading. They do not visually qualify a render and do not qualify
 hardware timing.
+
+For the full bridge ASan/UBSan command and its narrowly scoped Fab host-adapter
+exceptions, see `userspace/README.md`.
 
 ## Silent emulator benchmarking
 
