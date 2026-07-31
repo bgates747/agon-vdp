@@ -27,7 +27,7 @@ make -C userspace \
   smoke
 ```
 
-The smoke target first runs:
+The smoke target first runs seven direct native tests:
 
 1. `pingo_texture_test`, which verifies the one-byte Pingo working pixel, all
    256 RGBA2222 packed values, RGBA8888-to-RGBA2222 quantization and stride,
@@ -53,9 +53,29 @@ The smoke target first runs:
    homogeneous clip planes, bounded output, interpolated UVs, and safe
    rejection of nonfinite input.
 
-It then loads the module with immediate symbol resolution, starts the native
-VDP, creates 64×64 RGBA2222 and RGBA8888 target bitmaps, renders an empty scene
-to both, and verifies that Fab exposes a live framebuffer.
+It then runs two full-module harnesses. `pingo_smoke` loads the module with
+immediate symbol resolution, starts the native VDP, creates 64×64 RGBA2222 and
+RGBA8888 target bitmaps, renders an empty scene to both, and verifies that Fab
+exposes a live framebuffer.
+
+`pingo_bridge_robustness_test` drives the real VDU byte stream and covers:
+
+1. object and scene single-axis Z-scale subcommands;
+2. invalid dimensions and deterministic failures at every initialization
+   allocation;
+3. texture pinning across bitmap clear and same-ID replacement, failed and
+   successful explicit rebinding, and subsequent rendering;
+4. explicit, generic single-buffer, global, repeated, and populated control
+   teardown with exact owned-allocation accounting;
+5. rejection of copied or aliased control bytes, generic call/jump execution,
+   control-backed bitmaps/render targets, and unsafe generic mutation;
+6. complete-payload draining after allocation rejection; and
+7. bounded recovery from truncated uploads, including the maximum legal
+   16-bit element count, followed by an immediately valid command.
+
+The bridge harness has a 30-second outer timeout. General-poll and
+render-completion packets provide command barriers; the test does not infer
+success from sleeps alone.
 
 Build the compile-time diagnostic variant and run its deterministic renderer
 counter tests with:
@@ -95,12 +115,38 @@ workflow.
 This is an ABI and command-path smoke test, not visual qualification. It does
 not inspect the Pingo target bitmap. After hardware passes, qualify a copied
 module in a fresh Fab process with the strict `cube` and `heavytank` fixtures
-from `pingoasm/apps/turbovega`, using the isolated profile documented in
-`pingoasm/README.md`.
+from `~/Agon/mystuff/pingoasm/apps/turbovega`, using the isolated profile
+documented in `~/Agon/mystuff/pingoasm/README.md`. That separate repository is
+the canonical home of all Pingo assembly test fixtures; this VDP repository
+contains firmware and native-module qualification code only.
 
 The persistent comparison emulator must snapshot the resulting shared object.
 It must not symlink directly to this build output, because later
 `pingo-codex` builds will replace that file.
+
+## Bridge robustness sanitizer
+
+Run the full VDU module and bridge harness under ASan and UBSan with:
+
+```bash
+make -C userspace \
+  FAB_ROOT=~/Agon/mystuff/fab-agon-emulator \
+  bridge-sanitizer-test
+```
+
+This uses the isolated ignored directory
+`video/build/userspace-bridge-sanitizer`, instruments both the shared module
+and harness, and retains the 30-second outer timeout. Two narrowly scoped host
+adapter exceptions are required by the current Fab checkout:
+
+1. `userspace/bridge_ubsan.supp` suppresses only the pre-existing invalid-bool
+   load in `dispdrivers/vgabasecontroller.cpp`; and
+2. `alloc_dealloc_mismatch=0` tolerates Fab's pre-existing userspace PSRAM
+   `malloc`/`delete[]` mismatch.
+
+Neither exception suppresses Pingo ownership checks. The harness separately
+counts every Pingo-owned allocation and requires return to the exact baseline
+after failure, teardown, isolation, and truncation cases.
 
 ## Exact render-target comparison
 

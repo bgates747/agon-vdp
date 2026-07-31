@@ -345,6 +345,12 @@ void redefineCharacter(uint8_t c, uint8_t * data) {
 }
 
 std::shared_ptr<fabgl::FontInfo> createFontFromBuffer(uint16_t bufferId, uint8_t width, uint8_t height, uint8_t ascent, uint8_t flags) {
+	if (isPingo3dControlBuffer(bufferId)) {
+		debug_log(
+			"createFontFromBuffer: refusing live Pingo control %d as font data\n\r",
+			bufferId);
+		return nullptr;
+	}
 	if (bufferId == 65535 || (buffers.find(bufferId) == buffers.end())) {
 		debug_log("createFontFromBuffer: buffer %d not found\n\r", bufferId);
 		return nullptr;
@@ -411,6 +417,12 @@ void setFontInfo(uint16_t bufferId, uint8_t field, uint16_t value) {
 			font->flags = (uint8_t) value;
 		} break;
 		case FONT_INFO_CHARPTRS_BUFFER: {
+			if (isPingo3dControlBuffer(value)) {
+				debug_log(
+					"setFontInfo: refusing live Pingo control %d as character pointer data\n\r",
+					value);
+				return;
+			}
 			if (buffers.find(value) == buffers.end()) {
 				debug_log("setFontInfo: buffer %d for character pointers not found\n\r", value);
 				return;

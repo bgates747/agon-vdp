@@ -15,9 +15,13 @@
 
 #include <stdint.h>
 #include <string.h>
+#include <limits.h>
 #include <agon.h>
 #include <map>
+#include <memory>
+#include <new>
 #ifdef USERSPACE
+#include <atomic>
 #include <chrono>
 #if PINGO_RENDER_TARGET_DUMP
 #include <stdio.h>
@@ -30,7 +34,85 @@
 #endif
 #endif
 #include "esp_heap_caps.h"
+#include "buffer_stream.h"
 #include "sprites.h"
+
+#ifdef USERSPACE
+static std::atomic<int32_t> pingo_userspace_allocation_failure_countdown{-1};
+static std::atomic<uint32_t> pingo_userspace_owned_allocations{0};
+
+extern "C" void pingo_userspace_fail_allocation_after(
+        int32_t successful_allocations) {
+    pingo_userspace_allocation_failure_countdown.store(
+        successful_allocations);
+}
+
+extern "C" uint32_t pingo_userspace_get_owned_allocation_count() {
+    return pingo_userspace_owned_allocations.load();
+}
+#endif
+
+static bool pingo_allocation_permitted() {
+#ifdef USERSPACE
+    auto countdown = pingo_userspace_allocation_failure_countdown.load();
+    if (countdown < 0) {
+        return true;
+    }
+    if (countdown == 0) {
+        return false;
+    }
+    pingo_userspace_allocation_failure_countdown.fetch_sub(1);
+#endif
+    return true;
+}
+
+static void * pingo_owned_malloc(size_t size) {
+    if (!pingo_allocation_permitted()) {
+        return nullptr;
+    }
+    void * allocation = heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
+#ifdef USERSPACE
+    if (allocation) {
+        pingo_userspace_owned_allocations.fetch_add(1);
+    }
+#endif
+    return allocation;
+}
+
+static void pingo_owned_free(void * allocation) {
+    if (!allocation) {
+        return;
+    }
+    heap_caps_free(allocation);
+#ifdef USERSPACE
+    pingo_userspace_owned_allocations.fetch_sub(1);
+#endif
+}
+
+template<typename T>
+static T * pingo_owned_new() {
+    if (!pingo_allocation_permitted()) {
+        return nullptr;
+    }
+    T * allocation = new (std::nothrow) T;
+#ifdef USERSPACE
+    if (allocation) {
+        pingo_userspace_owned_allocations.fetch_add(1);
+    }
+#endif
+    return allocation;
+}
+
+template<typename T>
+static void pingo_owned_delete(T * allocation) {
+    if (!allocation) {
+        return;
+    }
+    delete allocation;
+#ifdef USERSPACE
+    pingo_userspace_owned_allocations.fetch_sub(1);
+#endif
+}
 
 static uint64_t pingo_render_clock_us() {
 #ifdef USERSPACE
@@ -254,11 +336,22 @@ typedef struct tag_Transformable {
     }
 } Transformable;
 
+typedef struct tag_PingoTextureBinding {
+    /*
+     * VDP bitmaps normally borrow their pixels from a BufferStream. Retain
+     * both owners: keeping only the Bitmap wrapper alive would not keep its
+     * non-owning data pointer valid after the source buffer is cleared.
+     */
+    std::shared_ptr<Bitmap> m_bitmap;
+    std::shared_ptr<BufferStream> m_storage;
+} PingoTextureBinding;
+
 typedef struct tag_TexObject : public Transformable {
     p3d::Object     m_object;
     p3d::Texture    m_texture;
     p3d::Material   m_material;
     uint16_t        m_oid;
+    PingoTextureBinding* m_texture_binding;
 
     void bind() {
         m_object.material = &m_material;
@@ -324,31 +417,58 @@ typedef struct tag_Pingo3dControl {
     }
 
     // VDU 23, 0, &A0, sid; &48, 0, 1 :  Initialize Control Structure
-    void initialize(VDUStreamProcessor& processor, uint16_t width, uint16_t height) {
+    bool initialize(VDUStreamProcessor& processor, uint16_t width, uint16_t height) {
         debug_log("initialize: pingo creating control structure for %ux%u scene\n", width, height);
         memset(this, 0, sizeof(tag_Pingo3dControl));
-        m_tag = PINGO_3D_CONTROL_TAG;
-        m_size = sizeof(tag_Pingo3dControl);
+
+        /*
+         * Bitmap dimensions are signed 16-bit in vdp-gl. Reject values that
+         * cannot be represented there, and check every byte-size multiply
+         * before allocating. In particular, a valid uint16_t width*height can
+         * still overflow when multiplied by the 32-bit depth element size.
+         */
+        if (!width || !height || width > INT16_MAX || height > INT16_MAX) {
+            debug_log("initialize: invalid dimensions %ux%u\n", width, height);
+            return false;
+        }
+        size_t frame_size = (size_t)width * (size_t)height;
+        if (frame_size > SIZE_MAX / sizeof(p3d::Pixel) ||
+            frame_size > SIZE_MAX / sizeof(p3d::PingoDepth) ||
+            frame_size * sizeof(p3d::Pixel) > UINT32_MAX ||
+            frame_size * sizeof(p3d::PingoDepth) > UINT32_MAX) {
+            debug_log("initialize: dimensions %ux%u overflow buffer sizes\n",
+                width, height);
+            return false;
+        }
+
+        size_t frame_bytes = frame_size * sizeof(p3d::Pixel);
+        size_t zeta_bytes = frame_size * sizeof(p3d::PingoDepth);
+        auto frame = (p3d::Pixel*)pingo_owned_malloc(frame_bytes);
+        auto zeta = (p3d::PingoDepth*)pingo_owned_malloc(zeta_bytes);
+        auto meshes = pingo_owned_new<std::map<uint16_t, p3d::Mesh>>();
+        auto objects = pingo_owned_new<std::map<uint16_t, TexObject>>();
+
+        if (!frame || !zeta || !meshes || !objects) {
+            debug_log(
+                "initialize: failed to allocate control resources for %ux%u\n",
+                width, height);
+            show_free_ram();
+            pingo_owned_delete(objects);
+            pingo_owned_delete(meshes);
+            pingo_owned_free(zeta);
+            pingo_owned_free(frame);
+            return false;
+        }
+
         m_width = width;
         m_height = height;
-        m_camera.initialize_scale();
-        m_scene.initialize_scale();
-
-        auto frame_size = (uint32_t) width * (uint32_t) height;
-
-        auto size = sizeof(p3d::Pixel) * frame_size;
-        m_frame = (p3d::Pixel*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-        if (!m_frame) {
-            debug_log("initialize: failed to allocate %u bytes for frame\n", size);
-            show_free_ram();
-        }
-
-        size = sizeof(p3d::PingoDepth) * frame_size;
-        m_zeta = (p3d::PingoDepth*) heap_caps_malloc(size, MALLOC_CAP_SPIRAM);
-        if (!m_zeta) {
-            debug_log("initialize: failed to allocate %u bytes for zeta\n", size);
-            show_free_ram();
-        }
+        m_proc = &processor;
+        m_frame = frame;
+        m_zeta = zeta;
+        m_meshes = meshes;
+        m_objects = objects;
+        m_camera.initialize();
+        m_scene.initialize();
 
         m_backend.init = &static_init;
         m_backend.beforeRender = &static_before_render;
@@ -358,17 +478,65 @@ typedef struct tag_Pingo3dControl {
         m_backend.drawPixel = NULL;
         m_backend.clientCustomData = (void*) this;
 
-        m_meshes = new std::map<uint16_t, p3d::Mesh>;
-        m_objects = new std::map<uint16_t, TexObject>;
+        // Publish validity only after every owned resource is ready.
+        m_size = sizeof(tag_Pingo3dControl);
+        m_tag = PINGO_3D_CONTROL_TAG;
+        return true;
     }
 
     // VDU 23, 0, &A0, sid; &48, 0, 0 :  Deinitialize Control Structure
     void deinitialize(VDUStreamProcessor& processor) {
+        (void)processor;
+
+        // Invalidate first so a repeated teardown is harmless.
+        m_tag = 0;
+        m_size = 0;
+
+        if (m_objects) {
+            for (auto& entry : *m_objects) {
+                pingo_owned_free(entry.second.m_object.textCoord);
+                entry.second.m_object.textCoord = nullptr;
+                entry.second.m_object.textCoord_count = 0;
+                pingo_owned_delete(entry.second.m_texture_binding);
+                entry.second.m_texture_binding = nullptr;
+            }
+        }
+
+        if (m_meshes) {
+            for (auto& entry : *m_meshes) {
+                auto& mesh = entry.second;
+                pingo_owned_free(mesh.positions);
+                pingo_owned_free(mesh.pos_indices);
+                pingo_owned_free(mesh.textCoord);
+                pingo_owned_free(mesh.tex_indices);
+                memset(&mesh, 0, sizeof(mesh));
+            }
+        }
+
+        pingo_owned_delete(m_objects);
+        pingo_owned_delete(m_meshes);
+        pingo_owned_free(m_zeta);
+        pingo_owned_free(m_frame);
+
+        m_objects = nullptr;
+        m_meshes = nullptr;
+        m_zeta = nullptr;
+        m_frame = nullptr;
+        m_width = 0;
+        m_height = 0;
+        m_proc = nullptr;
+        memset(&m_backend, 0, sizeof(m_backend));
     }
 
     bool validate() {
         return (m_tag == PINGO_3D_CONTROL_TAG &&
-                m_size == sizeof(tag_Pingo3dControl));
+                m_size == sizeof(tag_Pingo3dControl) &&
+                m_width && m_height && m_frame && m_zeta &&
+                m_meshes && m_objects);
+    }
+
+    bool is_registered_as(uint16_t buffer_id) {
+        return m_proc && isPingo3dControlBuffer(buffer_id);
     }
 
     void handle_subcommand(VDUStreamProcessor& processor, uint8_t subcmd) {
@@ -521,6 +689,30 @@ typedef struct tag_Pingo3dControl {
         }
     }
 
+    bool checked_upload_size(
+            uint32_t count, size_t element_size, size_t * byte_count) {
+        if (!byte_count || (count && element_size > SIZE_MAX / count)) {
+            return false;
+        }
+        *byte_count = (size_t)count * element_size;
+        return true;
+    }
+
+    /*
+     * Structurally invalid or allocation-failed commands still consume a
+     * complete declared payload to preserve alignment. A truncated payload,
+     * however, stops after the first timeout; repeatedly waiting for every
+     * absent element could otherwise hold the VDP task for hours.
+     */
+    bool drain_upload_words(uint32_t count) {
+        for (uint32_t i = 0; i < count; i++) {
+            if (m_proc->readWord_t() < 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     // VDU 23, 0, &A0, sid; &48, 1, mid; n; x0; y0; z0; ... :  Define Mesh Vertices
     void define_mesh_vertices() {
         auto mesh = get_mesh();
@@ -533,48 +725,54 @@ typedef struct tag_Pingo3dControl {
         }
         auto n = (uint32_t)vertex_count;
         p3d::Vec3f* replacement = NULL;
-        bool complete = true;
+        size_t size = 0;
+        if (!checked_upload_size(n, sizeof(p3d::Vec3f), &size)) {
+            debug_log("define_mesh_vertices: size overflow for %u vertices\n", n);
+            drain_upload_words(n * 3U);
+            return;
+        }
         if (n > 0) {
-            auto size = n*sizeof(p3d::Vec3f);
-            replacement = (p3d::Vec3f*)heap_caps_malloc(
-                size, MALLOC_CAP_SPIRAM);
+            replacement = (p3d::Vec3f*)pingo_owned_malloc(size);
             if (!replacement) {
-                complete = false;
-                debug_log("define_mesh_vertices: failed to allocate %u bytes\n", size);
+                debug_log(
+                    "define_mesh_vertices: failed to allocate %u bytes\n",
+                    (uint32_t)size);
                 show_free_ram();
+                drain_upload_words(n * 3U);
+                return;
             }
             debug_log("Reading %u vertices\n", n);
             for (uint32_t i = 0; i < n; i++) {
                 auto x = m_proc->readWord_t();
-                auto y = m_proc->readWord_t();
-                auto z = m_proc->readWord_t();
-                if (x < 0 || y < 0 || z < 0) {
-                    complete = false;
+                if (x < 0) {
+                    pingo_owned_free(replacement);
+                    return;
                 }
-                if (replacement && x >= 0 && y >= 0 && z >= 0) {
-                    replacement[i].x =
-                        convert_position_value((uint16_t)x);
-                    replacement[i].y =
-                        convert_position_value((uint16_t)y);
-                    replacement[i].z =
-                        convert_position_value((uint16_t)z);
-                    if (!(i & 0x1F)) {
-                        debug_log(
-                            "%u %f %f %f\n", i,
-                            replacement[i].x,
-                            replacement[i].y,
-                            replacement[i].z);
-                    }
+                auto y = m_proc->readWord_t();
+                if (y < 0) {
+                    pingo_owned_free(replacement);
+                    return;
+                }
+                auto z = m_proc->readWord_t();
+                if (z < 0) {
+                    pingo_owned_free(replacement);
+                    return;
+                }
+                replacement[i].x =
+                    convert_position_value((uint16_t)x);
+                replacement[i].y =
+                    convert_position_value((uint16_t)y);
+                replacement[i].z =
+                    convert_position_value((uint16_t)z);
+                if (!(i & 0x1F)) {
+                    debug_log(
+                        "%u %f %f %f\n", i,
+                        replacement[i].x,
+                        replacement[i].y,
+                        replacement[i].z);
                 }
             }
             debug_log("\n");
-        }
-
-        if (!complete) {
-            if (replacement) {
-                heap_caps_free(replacement);
-            }
-            return;
         }
 
         auto previous = mesh->positions;
@@ -585,7 +783,7 @@ typedef struct tag_Pingo3dControl {
             p3d::meshUpdateBounds(mesh);
         }
         if (previous) {
-            heap_caps_free(previous);
+            pingo_owned_free(previous);
         }
         refresh_mesh_dependents(mesh);
     }
@@ -601,51 +799,50 @@ typedef struct tag_Pingo3dControl {
             return;
         }
         auto n = (uint32_t)index_count;
-        bool complete = (n % 3U) == 0;
         uint16_t* replacement = NULL;
-        if (!complete) {
+        if ((n % 3U) != 0) {
             debug_log(
                 "set_mesh_vertex_indexes: count %u is not a triangle triplet\n",
                 n);
+            drain_upload_words(n);
+            return;
+        }
+        size_t size = 0;
+        if (!checked_upload_size(n, sizeof(uint16_t), &size)) {
+            debug_log("set_mesh_vertex_indexes: size overflow for %u indexes\n", n);
+            drain_upload_words(n);
+            return;
         }
         if (n > 0) {
-            auto size = n*sizeof(uint16_t);
-            if (complete) {
-                replacement = (uint16_t*)heap_caps_malloc(
-                    size, MALLOC_CAP_SPIRAM);
-            }
-            if (complete && !replacement) {
-                complete = false;
-                debug_log("set_mesh_vertex_indexes: failed to allocate %u bytes\n", size);
+            replacement = (uint16_t*)pingo_owned_malloc(size);
+            if (!replacement) {
+                debug_log(
+                    "set_mesh_vertex_indexes: failed to allocate %u bytes\n",
+                    (uint32_t)size);
                 show_free_ram();
+                drain_upload_words(n);
+                return;
             }
             debug_log("Reading %u vertex indexes\n", n);
             for (uint32_t i = 0; i < n; i++) {
                 auto index = m_proc->readWord_t();
                 if (index < 0) {
-                    complete = false;
-                } else if (replacement) {
-                    replacement[i] = (uint16_t)index;
+                    pingo_owned_free(replacement);
+                    return;
                 }
-                if (!(i & 0x1F) && index >= 0) {
+                replacement[i] = (uint16_t)index;
+                if (!(i & 0x1F)) {
                     debug_log("%u %hu\n", i, (uint16_t)index);
                 }
             }
             debug_log("\n");
         }
 
-        if (!complete) {
-            if (replacement) {
-                heap_caps_free(replacement);
-            }
-            return;
-        }
-
         auto previous = mesh->pos_indices;
         mesh->pos_indices = replacement;
         mesh->indexes_count = (int)n;
         if (previous) {
-            heap_caps_free(previous);
+            pingo_owned_free(previous);
         }
         refresh_mesh_dependents(mesh);
     }
@@ -662,43 +859,48 @@ typedef struct tag_Pingo3dControl {
         }
         auto n = (uint32_t)coordinate_count;
         p3d::Vec2f* replacement = NULL;
-        bool complete = true;
+        size_t size = 0;
+        if (!checked_upload_size(n, sizeof(p3d::Vec2f), &size)) {
+            debug_log(
+                "define_mesh_texture_coordinates: size overflow for %u coordinates\n",
+                n);
+            drain_upload_words(n * 2U);
+            return;
+        }
         if (n > 0) {
-            auto size = n*sizeof(p3d::Vec2f);
-            replacement = (p3d::Vec2f*)heap_caps_malloc(
-                size, MALLOC_CAP_SPIRAM);
+            replacement = (p3d::Vec2f*)pingo_owned_malloc(size);
             if (!replacement) {
-                complete = false;
-                debug_log("define_mesh_texture_coordinates: failed to allocate %u bytes\n", size);
+                debug_log(
+                    "define_mesh_texture_coordinates: failed to allocate %u bytes\n",
+                    (uint32_t)size);
                 show_free_ram();
+                drain_upload_words(n * 2U);
+                return;
             }
             debug_log("Reading %u texture coordinates\n", n);
             for (uint32_t i = 0; i < n; i++) {
                 auto u = m_proc->readWord_t();
-                auto v = m_proc->readWord_t();
-                if (u < 0 || v < 0) {
-                    complete = false;
-                } else if (replacement) {
-                    replacement[i].x =
-                        convert_texture_coordinate_value((uint16_t)u);
-                    replacement[i].y =
-                        convert_texture_coordinate_value((uint16_t)v);
+                if (u < 0) {
+                    pingo_owned_free(replacement);
+                    return;
                 }
+                auto v = m_proc->readWord_t();
+                if (v < 0) {
+                    pingo_owned_free(replacement);
+                    return;
+                }
+                replacement[i].x =
+                    convert_texture_coordinate_value((uint16_t)u);
+                replacement[i].y =
+                    convert_texture_coordinate_value((uint16_t)v);
             }
-        }
-
-        if (!complete) {
-            if (replacement) {
-                heap_caps_free(replacement);
-            }
-            return;
         }
 
         auto previous = mesh->textCoord;
         mesh->textCoord = replacement;
         mesh->texture_coordinates_count = n;
         if (previous) {
-            heap_caps_free(previous);
+            pingo_owned_free(previous);
         }
         refresh_mesh_dependents(mesh);
     }
@@ -715,43 +917,48 @@ typedef struct tag_Pingo3dControl {
         }
         auto n = (uint32_t)coordinate_count;
         p3d::Vec2f* replacement = NULL;
-        bool complete = true;
+        size_t size = 0;
+        if (!checked_upload_size(n, sizeof(p3d::Vec2f), &size)) {
+            debug_log(
+                "define_object_texture_coordinates: size overflow for %u coordinates\n",
+                n);
+            drain_upload_words(n * 2U);
+            return;
+        }
         if (n > 0) {
-            auto size = n*sizeof(p3d::Vec2f);
-            replacement = (p3d::Vec2f*)heap_caps_malloc(
-                size, MALLOC_CAP_SPIRAM);
+            replacement = (p3d::Vec2f*)pingo_owned_malloc(size);
             if (!replacement) {
-                complete = false;
-                debug_log("define_object_texture_coordinates: failed to allocate %u bytes\n", size);
+                debug_log(
+                    "define_object_texture_coordinates: failed to allocate %u bytes\n",
+                    (uint32_t)size);
                 show_free_ram();
+                drain_upload_words(n * 2U);
+                return;
             }
             debug_log("Reading %u texture coordinates\n", n);
             for (uint32_t i = 0; i < n; i++) {
                 auto u = m_proc->readWord_t();
-                auto v = m_proc->readWord_t();
-                if (u < 0 || v < 0) {
-                    complete = false;
-                } else if (replacement) {
-                    replacement[i].x =
-                        convert_texture_coordinate_value((uint16_t)u);
-                    replacement[i].y =
-                        convert_texture_coordinate_value((uint16_t)v);
+                if (u < 0) {
+                    pingo_owned_free(replacement);
+                    return;
                 }
+                auto v = m_proc->readWord_t();
+                if (v < 0) {
+                    pingo_owned_free(replacement);
+                    return;
+                }
+                replacement[i].x =
+                    convert_texture_coordinate_value((uint16_t)u);
+                replacement[i].y =
+                    convert_texture_coordinate_value((uint16_t)v);
             }
-        }
-
-        if (!complete) {
-            if (replacement) {
-                heap_caps_free(replacement);
-            }
-            return;
         }
 
         auto previous = object->m_object.textCoord;
         object->m_object.textCoord = replacement;
         object->m_object.textCoord_count = n;
         if (previous) {
-            heap_caps_free(previous);
+            pingo_owned_free(previous);
         }
         p3d::objectUpdateTextureMappingValidity(&object->m_object);
     }
@@ -767,50 +974,51 @@ typedef struct tag_Pingo3dControl {
             return;
         }
         auto n = (uint32_t)index_count;
-        bool complete = (n % 3U) == 0;
         uint16_t* replacement = NULL;
-        if (!complete) {
+        if ((n % 3U) != 0) {
             debug_log(
                 "set_texture_coordinate_indexes: count %u is not a triangle triplet\n",
                 n);
+            drain_upload_words(n);
+            return;
+        }
+        size_t size = 0;
+        if (!checked_upload_size(n, sizeof(uint16_t), &size)) {
+            debug_log(
+                "set_texture_coordinate_indexes: size overflow for %u indexes\n",
+                n);
+            drain_upload_words(n);
+            return;
         }
         if (n > 0) {
-            auto size = n*sizeof(uint16_t);
-            if (complete) {
-                replacement = (uint16_t*)heap_caps_malloc(
-                    size, MALLOC_CAP_SPIRAM);
-            }
-            if (complete && !replacement) {
-                complete = false;
-                debug_log("set_texture_coordinate_indexes: failed to allocate %u bytes\n", size);
+            replacement = (uint16_t*)pingo_owned_malloc(size);
+            if (!replacement) {
+                debug_log(
+                    "set_texture_coordinate_indexes: failed to allocate %u bytes\n",
+                    (uint32_t)size);
                 show_free_ram();
+                drain_upload_words(n);
+                return;
             }
             debug_log("Reading %u texture coordinate indexes\n", n);
             for (uint32_t i = 0; i < n; i++) {
                 auto index = m_proc->readWord_t();
                 if (index < 0) {
-                    complete = false;
-                } else if (replacement) {
-                    replacement[i] = (uint16_t)index;
+                    pingo_owned_free(replacement);
+                    return;
                 }
-                if (!(i & 0x1F) && index >= 0) {
+                replacement[i] = (uint16_t)index;
+                if (!(i & 0x1F)) {
                     debug_log("%u %hu\n", i, (uint16_t)index);
                 }
             }
-        }
-
-        if (!complete) {
-            if (replacement) {
-                heap_caps_free(replacement);
-            }
-            return;
         }
 
         auto previous = mesh->tex_indices;
         mesh->tex_indices = replacement;
         mesh->texture_indexes_count = n;
         if (previous) {
-            heap_caps_free(previous);
+            pingo_owned_free(previous);
         }
         refresh_mesh_dependents(mesh);
     }
@@ -821,11 +1029,40 @@ typedef struct tag_Pingo3dControl {
         auto mesh = get_mesh();
         auto bmid = m_proc->readWord_t();
         if (object && mesh && bmid) {
+            if (isPingo3dControlBuffer((uint16_t)bmid)) {
+                debug_log(
+                    "create_object: refusing live Pingo control %u as texture\n",
+                    bmid);
+                return;
+            }
             debug_log("Creating 3D object %u with bitmap %u\n", object->m_oid, bmid);
             auto stored_bitmap = getBitmap(bmid);
             if (stored_bitmap) {
                 auto bitmap = stored_bitmap.get();
                 if (bitmap) {
+                    if (bitmap->width <= 0 || bitmap->height <= 0 ||
+                        !bitmap->data) {
+                        debug_log(
+                            "Creating 3D object %u failed: bitmap %u has invalid dimensions or data\n",
+                            object->m_oid, bmid);
+                        return;
+                    }
+                    std::shared_ptr<BufferStream> bitmap_storage;
+                    if (!bitmap->dataAllocated) {
+                        auto storage_iter = buffers.find(bmid);
+                        if (storage_iter == buffers.end() ||
+                            storage_iter->second.size() != 1 ||
+                            !storage_iter->second.front() ||
+                            storage_iter->second.front()->getBuffer() !=
+                                bitmap->data) {
+                            debug_log(
+                                "Creating 3D object %u failed: bitmap %u backing storage is unavailable\n",
+                                object->m_oid, bmid);
+                            return;
+                        }
+                        bitmap_storage = storage_iter->second.front();
+                    }
+
                     p3d::TextureFormat texture_format;
                     switch (bitmap->format) {
                         case PixelFormat::RGBA8888:
@@ -840,16 +1077,41 @@ typedef struct tag_Pingo3dControl {
                             return;
                     }
                     auto size = p3d::Vec2i{(p3d::I_TYPE)bitmap->width, (p3d::I_TYPE)bitmap->height};
-                    object->bind();
+                    p3d::Texture replacement_texture = {};
                     if (p3d::texture_init_format(
-                            &object->m_texture, size, bitmap->data, texture_format)) {
+                            &replacement_texture, size, bitmap->data,
+                            texture_format)) {
                         debug_log("Creating 3D object %u failed: invalid texture bitmap %u\n",
                             object->m_oid, bmid);
                         return;
                     }
+
+                    auto replacement_binding =
+                        pingo_owned_new<PingoTextureBinding>();
+                    if (!replacement_binding) {
+                        debug_log(
+                            "Creating 3D object %u failed: could not retain bitmap %u\n",
+                            object->m_oid, bmid);
+                        show_free_ram();
+                        return;
+                    }
+                    replacement_binding->m_bitmap = stored_bitmap;
+                    replacement_binding->m_storage = bitmap_storage;
+
+                    /*
+                     * Pin the bitmap metadata and its separately owned pixels
+                     * before publishing the raw Texture pointer. Clearing or
+                     * replacing bmid now leaves this binding valid until the
+                     * object is explicitly rebound or its control is deleted.
+                     */
+                    auto previous_binding = object->m_texture_binding;
+                    object->m_texture_binding = replacement_binding;
+                    object->m_texture = replacement_texture;
+                    object->bind();
                     object->m_object.mesh = mesh;
                     p3d::objectUpdateTextureMappingValidity(
                         &object->m_object);
+                    pingo_owned_delete(previous_binding);
                     auto pixel = p3d::texture_read(
                         &object->m_texture, p3d::Vec2i{0, 0});
                     debug_log("Texture format %u data: %02hX\n",
@@ -918,7 +1180,7 @@ typedef struct tag_Pingo3dControl {
         auto object = get_object();
         auto value = m_proc->readWord_t();
         if (object && (value >= 0)) {
-            object->m_scale.y = convert_scale_value(value);
+            object->m_scale.z = convert_scale_value(value);
             object->m_modified = true;
         }
     }
@@ -1111,7 +1373,7 @@ typedef struct tag_Pingo3dControl {
     void set_scene_z_scale_factor() {
         auto value = m_proc->readWord_t();
         if (value >= 0) {
-            m_scene.m_scale.y = convert_scale_value(value);
+            m_scene.m_scale.z = convert_scale_value(value);
             m_scene.m_modified = true;
         }
     }
@@ -1200,6 +1462,12 @@ typedef struct tag_Pingo3dControl {
 #endif
         auto bmid = m_proc->readWord_t();
         if (bmid < 0) {
+            return;
+        }
+        if (isPingo3dControlBuffer((uint16_t)bmid)) {
+            debug_log(
+                "render_to_bitmap: refusing live Pingo control %u as output\n",
+                bmid);
             return;
         }
 
@@ -1422,6 +1690,163 @@ typedef struct tag_Pingo3dControl {
     }
 
 } Pingo3dControl;
+
+#ifdef USERSPACE
+static Pingo3dControl * pingo_userspace_get_control(uint16_t buffer_id) {
+    auto buffer_iter = buffers.find(buffer_id);
+    if (buffer_iter == buffers.end()) {
+        return nullptr;
+    }
+    auto& blocks = buffer_iter->second;
+    if (blocks.size() != 1 || !blocks.front() ||
+        blocks.front()->size() < sizeof(Pingo3dControl) ||
+        !blocks.front()->getBuffer()) {
+        return nullptr;
+    }
+    auto control = reinterpret_cast<Pingo3dControl *>(
+        blocks.front()->getBuffer());
+    return control->validate() && control->is_registered_as(buffer_id)
+        ? control
+        : nullptr;
+}
+
+extern "C" bool pingo_userspace_control_exists(uint16_t buffer_id) {
+    return pingo_userspace_get_control(buffer_id) != nullptr;
+}
+
+extern "C" uint32_t pingo_userspace_control_size() {
+    return sizeof(Pingo3dControl);
+}
+
+extern "C" bool pingo_userspace_get_object_scale(
+        uint16_t buffer_id, uint16_t object_id, float * scale) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !scale) {
+        return false;
+    }
+    auto object = control->m_objects->find(object_id);
+    if (object == control->m_objects->end()) {
+        return false;
+    }
+    scale[0] = object->second.m_scale.x;
+    scale[1] = object->second.m_scale.y;
+    scale[2] = object->second.m_scale.z;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_scene_scale(
+        uint16_t buffer_id, float * scale) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !scale) {
+        return false;
+    }
+    scale[0] = control->m_scene.m_scale.x;
+    scale[1] = control->m_scene.m_scale.y;
+    scale[2] = control->m_scene.m_scale.z;
+    return true;
+}
+
+static uint64_t pingo_userspace_hash_upload_bytes(
+        uint64_t hash, const void * data, size_t size) {
+    auto bytes = static_cast<const uint8_t *>(data);
+    for (size_t i = 0; i < size; i++) {
+        hash ^= bytes[i];
+        hash *= 1099511628211ULL;
+    }
+    return hash;
+}
+
+extern "C" bool pingo_userspace_get_upload_state_hash(
+        uint16_t buffer_id, uint16_t mesh_id, uint16_t object_id,
+        uint64_t * state_hash) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !state_hash) {
+        return false;
+    }
+    auto mesh_iter = control->m_meshes->find(mesh_id);
+    auto object_iter = control->m_objects->find(object_id);
+    if (mesh_iter == control->m_meshes->end() ||
+        object_iter == control->m_objects->end()) {
+        return false;
+    }
+
+    auto& mesh = mesh_iter->second;
+    auto& object = object_iter->second.m_object;
+    if ((mesh.positions_count && !mesh.positions) ||
+        (mesh.indexes_count && !mesh.pos_indices) ||
+        (mesh.texture_coordinates_count && !mesh.textCoord) ||
+        (mesh.texture_indexes_count && !mesh.tex_indices) ||
+        (object.textCoord_count && !object.textCoord)) {
+        return false;
+    }
+
+    uint64_t hash = 14695981039346656037ULL;
+#define PINGO_HASH_UPLOAD_FIELD(field) \
+    hash = pingo_userspace_hash_upload_bytes( \
+        hash, &(field), sizeof(field))
+    PINGO_HASH_UPLOAD_FIELD(mesh.positions_count);
+    PINGO_HASH_UPLOAD_FIELD(mesh.indexes_count);
+    PINGO_HASH_UPLOAD_FIELD(mesh.texture_coordinates_count);
+    PINGO_HASH_UPLOAD_FIELD(mesh.texture_indexes_count);
+    PINGO_HASH_UPLOAD_FIELD(mesh.geometry_valid);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_valid);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_min.x);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_min.y);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_min.z);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.x);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.y);
+    PINGO_HASH_UPLOAD_FIELD(mesh.bounds_max.z);
+    PINGO_HASH_UPLOAD_FIELD(object.textCoord_count);
+    PINGO_HASH_UPLOAD_FIELD(object.texture_mapping_valid);
+#undef PINGO_HASH_UPLOAD_FIELD
+    hash = pingo_userspace_hash_upload_bytes(
+        hash, mesh.positions,
+        (size_t)mesh.positions_count * sizeof(*mesh.positions));
+    hash = pingo_userspace_hash_upload_bytes(
+        hash, mesh.pos_indices,
+        (size_t)mesh.indexes_count * sizeof(*mesh.pos_indices));
+    hash = pingo_userspace_hash_upload_bytes(
+        hash, mesh.textCoord,
+        (size_t)mesh.texture_coordinates_count * sizeof(*mesh.textCoord));
+    hash = pingo_userspace_hash_upload_bytes(
+        hash, mesh.tex_indices,
+        (size_t)mesh.texture_indexes_count * sizeof(*mesh.tex_indices));
+    hash = pingo_userspace_hash_upload_bytes(
+        hash, object.textCoord,
+        (size_t)object.textCoord_count * sizeof(*object.textCoord));
+    *state_hash = hash;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_object_texture_pixel(
+        uint16_t buffer_id, uint16_t object_id, uint32_t pixel_index,
+        uint8_t * pixel) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !pixel) {
+        return false;
+    }
+    auto object = control->m_objects->find(object_id);
+    if (object == control->m_objects->end() ||
+        !object->second.m_texture_binding ||
+        !object->second.m_texture_binding->m_bitmap ||
+        !object->second.m_texture.frameBuffer) {
+        return false;
+    }
+    auto bitmap = object->second.m_texture_binding->m_bitmap;
+    uint32_t pixel_count =
+        (uint32_t)bitmap->width * (uint32_t)bitmap->height;
+    if (pixel_index >= pixel_count) {
+        return false;
+    }
+    *pixel = p3d::texture_read(
+        &object->second.m_texture,
+        p3d::Vec2i{
+            (p3d::I_TYPE)(pixel_index % (uint32_t)bitmap->width),
+            (p3d::I_TYPE)(pixel_index / (uint32_t)bitmap->width)
+        }).c;
+    return true;
+}
+#endif
 
 extern "C" {
 

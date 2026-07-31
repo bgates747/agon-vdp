@@ -35,9 +35,11 @@ correctness tranche. Later review items remain separate work.
 
    Native validation and bridge smoke tests cover malformed triplets,
    out-of-range indices, absent UV data, safe non-renderability, complete
-   payload consumption, and recovery after later valid uploads. Deterministic
-   allocator-failure injection remains a worthwhile test-harness enhancement,
-   but the production failure path is transactional and fail-closed.
+   payload consumption, and recovery after later valid uploads. The
+   2026-07-31 bridge harness adds deterministic allocator-failure injection
+   for initialization and all five staged upload handlers, and proves the
+   previous state and owned-allocation count survive every rejected
+   replacement.
 
 2. [x] Clip triangles that cross the near/eye plane before perspective
    division.
@@ -168,13 +170,24 @@ endpoint corrections.
 These were discovered while auditing the reviewed paths but are not part of
 the accepted clipping tranche:
 
-1. [ ] Define texture-bitmap ownership or invalidate bound Pingo objects when
-   a backing bitmap is cleared or replaced.
-2. [ ] Bound the time spent draining a declared but truncated upload; repeated
-   per-word serial timeouts can otherwise make malformed large payloads very
-   slow to abandon.
-3. [ ] Complete Pingo control teardown for owned arrays, maps, framebuffers,
-   and z-buffers.
-4. [ ] Add deterministic bridge-level allocator-failure injection.
+1. [x] Define texture-bitmap ownership. A Pingo object now pins both the
+   bitmap wrapper and its exact backing `BufferStream`; clear or same-ID
+   replacement leaves the bound snapshot valid until an explicit successful
+   rebind or control teardown.
+2. [x] Bound truncated-upload abandonment. A rejected but complete declared
+   payload is drained to preserve alignment, while the first missing word
+   ends the command after one communications timeout rather than repeating a
+   timeout for every absent element. All legal 16-bit counts remain accepted.
+3. [x] Complete idempotent Pingo control teardown for owned arrays, maps,
+   texture bindings, framebuffers, and z-buffers, and invoke it before generic
+   buffer mutation, destruction, or zero-copy alias publication.
+4. [x] Add deterministic bridge-level allocator-failure injection covering
+   every initialization allocation and each staged upload replacement.
 5. [ ] Add the separately planned shared-edge and near-coplanar depth fixture
    before changing depth precision or edge ownership.
+
+On 2026-07-31 the bridge-hardening tranche passed the ordinary and diagnostic
+native suites, renderer and full-bridge ASan/UBSan runs, the command-surface
+guard, and clean ordinary and diagnostic ESP32 builds. Emulator visual review
+and physical hardware qualification remain separate gates; native success
+does not satisfy either one.

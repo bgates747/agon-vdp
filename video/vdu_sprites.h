@@ -310,6 +310,12 @@ void VDUStreamProcessor::createEmptyBitmap2222(uint16_t bufferId, uint16_t width
 }
 
 void VDUStreamProcessor::createBitmapFromBuffer(uint16_t bufferId, uint8_t format, uint16_t width, uint16_t height) {
+	if (isPingo3dControlBuffer(bufferId)) {
+		debug_log(
+			"vdu_sys_sprites: refusing to expose live Pingo control %d as bitmap data\n\r",
+			bufferId);
+		return;
+	}
 	clearBitmap(bufferId);
 	// TODO unmap bitmap from characters for all contexts
 	context->unmapBitmapFromChars(bufferId);

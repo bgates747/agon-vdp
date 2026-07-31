@@ -28,6 +28,7 @@ endif
 BUILD_DIR ?= $(DEFAULT_BUILD_DIR)
 TARGET ?= $(BUILD_DIR)/vdp_pingo.so
 SMOKE_TARGET ?= $(BUILD_DIR)/pingo_smoke
+BRIDGE_ROBUSTNESS_TEST_TARGET ?= $(BUILD_DIR)/pingo_bridge_robustness_test
 TEXTURE_TEST_TARGET ?= $(BUILD_DIR)/pingo_texture_test
 MATH_TEST_TARGET ?= $(BUILD_DIR)/pingo_math_test
 SPAN_TEST_TARGET ?= $(BUILD_DIR)/pingo_triangle_span_test
@@ -37,6 +38,12 @@ MESH_VALIDATION_TEST_TARGET ?= $(BUILD_DIR)/pingo_mesh_validation_test
 CLIP_TEST_TARGET ?= $(BUILD_DIR)/pingo_clip_test
 DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
 SANITIZER_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_sanitizer_test
+BRIDGE_SANITIZER_BUILD_DIR := $(VDP_ROOT)/video/build/userspace-bridge-sanitizer
+BRIDGE_SANITIZER_FLAGS := \
+	-fno-omit-frame-pointer \
+	-fsanitize=address,undefined,float-divide-by-zero,float-cast-overflow
+BRIDGE_UBSAN_SUPPRESSIONS := $(abspath $(CURDIR)/bridge_ubsan.supp)
+BRIDGE_TEST_TIMEOUT ?= 30s
 VDP_GL_LIB := $(BUILD_DIR)/libvdp-gl.a
 
 ifeq ($(filter clean,$(MAKECMDGOALS)),)
@@ -161,7 +168,8 @@ DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
 .PHONY: all clean smoke texture-test math-test span-test \
 	perspective-span-test depth-test mesh-validation-test \
-	clip-test diagnostics-test diagnostics-smoke sanitizer-test
+	clip-test diagnostics-test diagnostics-smoke sanitizer-test \
+	bridge-sanitizer-test
 
 all: $(TARGET)
 
@@ -193,7 +201,14 @@ $(BUILD_DIR)/fabgl/%.o: $(VDP_GL_SRC)/%.cpp $(ADAPTER_MAKEFILE)
 
 $(SMOKE_TARGET): pingo_smoke.cpp $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
-	$(CXX) -Wall -Werror -O2 -g -std=c++17 $< -ldl -pthread -o $@
+	$(CXX) $(CXXFLAGS) -Wall -Werror -O2 -g -std=c++17 \
+		$< $(LDFLAGS) -ldl -pthread -o $@
+
+$(BRIDGE_ROBUSTNESS_TEST_TARGET): pingo_bridge_robustness_test.cpp \
+		$(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CXXFLAGS) -Wall -Werror -O2 -g -std=c++17 \
+		$< $(LDFLAGS) -ldl -pthread -o $@
 
 $(TEXTURE_TEST_TARGET): pingo_texture_test.c \
 		$(VDP_ROOT)/video/pingo/render/pixel.c \
@@ -295,9 +310,12 @@ mesh-validation-test: $(MESH_VALIDATION_TEST_TARGET)
 clip-test: $(CLIP_TEST_TARGET)
 	$(CLIP_TEST_TARGET)
 
-smoke: $(TARGET) $(SMOKE_TARGET) texture-test math-test span-test \
+smoke: $(TARGET) $(SMOKE_TARGET) $(BRIDGE_ROBUSTNESS_TEST_TARGET) \
+		texture-test math-test span-test \
 		perspective-span-test depth-test mesh-validation-test clip-test
 	$(SMOKE_TARGET) $(TARGET)
+	timeout $(BRIDGE_TEST_TIMEOUT) \
+		$(BRIDGE_ROBUSTNESS_TEST_TARGET) $(TARGET)
 
 ifeq ($(DIAGNOSTICS),0)
 diagnostics-test:
@@ -315,8 +333,23 @@ sanitizer-test: $(SANITIZER_TEST_TARGET)
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 	$(SANITIZER_TEST_TARGET)
 
+bridge-sanitizer-test:
+	$(MAKE) \
+		BUILD_DIR=$(BRIDGE_SANITIZER_BUILD_DIR) \
+		CFLAGS="$(BRIDGE_SANITIZER_FLAGS)" \
+		CXXFLAGS="$(BRIDGE_SANITIZER_FLAGS)" \
+		LDFLAGS="$(BRIDGE_SANITIZER_FLAGS)" \
+		$(BRIDGE_SANITIZER_BUILD_DIR)/vdp_pingo.so \
+		$(BRIDGE_SANITIZER_BUILD_DIR)/pingo_bridge_robustness_test
+	ASAN_OPTIONS=detect_leaks=0:halt_on_error=1:alloc_dealloc_mismatch=0 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1:suppressions=$(BRIDGE_UBSAN_SUPPRESSIONS) \
+	timeout $(BRIDGE_TEST_TIMEOUT) \
+		$(BRIDGE_SANITIZER_BUILD_DIR)/pingo_bridge_robustness_test \
+		$(BRIDGE_SANITIZER_BUILD_DIR)/vdp_pingo.so
+
 clean:
 	$(RM) $(TARGET) $(SMOKE_TARGET) $(TEXTURE_TEST_TARGET) $(MATH_TEST_TARGET) \
+		$(BRIDGE_ROBUSTNESS_TEST_TARGET) \
 		$(SPAN_TEST_TARGET) \
 		$(PERSPECTIVE_SPAN_TEST_TARGET) \
 		$(DEPTH_TEST_TARGET) \
