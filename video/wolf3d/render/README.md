@@ -53,7 +53,24 @@ is entirely VDP-internal). The pipeline is RGBA2222 end to end -- source
 texture bitmaps, the scratch buffers, and the constructed column/sprite
 bitmaps are all format 1.
 
+FabGL queues only a raw pointer when `Canvas::drawBitmap()` is called.
+Consequently, each scratch blit is drained with
+`waitPlotCompletion(false)` while its `Bitmap` and backing VDU buffer still
+exist, before the next iteration clears and recreates that scratch ID.
+`render_frame` performs a final drain before reporting completion, so its
+wire-level behavior remains synchronous.
+
 Known gap: `RenderSprites()` draws each sprite as one whole-bitmap blit,
 with no per-column occlusion against nearer wall columns (the classic
 "sprite poking through a closer wall" clip that the original's
 `ScaleShape` handles via a saved wall-height buffer). Not ported yet.
+
+## First correct rendering milestone
+
+The `first-correct-render` tag marks the first emulator- and hardware-verified
+pass of the real shareware level: correct quarter-pixel projection scaling,
+VDP-local floor/ceiling clear, synchronous scratch-bitmap lifetime, 30 Hz
+callback-gated double buffering, and correct half-cell door faces with
+perpendicular jamb geometry. The full development narrative and qualification
+hashes live in the sibling `Wolf3dOrig` repository at
+`agonport/doc/first_correct_render_success_story.md`.

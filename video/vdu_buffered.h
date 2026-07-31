@@ -2786,6 +2786,8 @@ void VDUStreamProcessor::bufferUseWolf3D(uint16_t bufferId) {
 		return;
 	}
 
+	debug_log("bufferUseWolf3D: buffer %d, subcommand %d\n\r",
+		bufferId, subcommand);
 	auto &control = wolf3dControls[bufferId];
 	control.handle_subcommand(*this, static_cast<uint8_t>(subcommand));
 }

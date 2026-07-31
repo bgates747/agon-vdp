@@ -347,6 +347,7 @@ void VDUStreamProcessor::vdu_sys_video() {
 			vdu_sys_layers();
 		}	break;
 		case VDP_SWITCHBUFFER: {		// VDU 23, 0, &C3
+			debug_log("vdu_sys: switch buffer\n\r");
 			switchBuffer();
 		}	break;
 		case VDP_COPPER: {				// VDU 23, 0, &C4, command, [<args>]

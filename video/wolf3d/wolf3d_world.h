@@ -36,6 +36,11 @@
 #define WOLF3D_TILE_DOOR_MASK  0x7F
 #define WOLF3D_TILE_RESERVED_MIN 0xC0      // 192-255: reserved, block conservatively (not a door)
 
+// Door art uses fixed texture IDs outside the shareware level's ordinary
+// wall range. The jamb is rendered on the perpendicular wall face beside
+// every door, independent of that door's lock/face texture.
+#define WOLF3D_DOOR_JAMB_TEXTURE_ID 122
+
 // Wall/door and actor/static sprite textures are NOT packed into one shared
 // atlas buffer -- real texture usage per level is sparse (most of the
 // 1-127 possible wall texture ids are never referenced by a given map), so

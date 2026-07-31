@@ -41,6 +41,9 @@
 #define WOLF3D_FINEANGLES  3600                            // WL_DEF.H FINEANGLES
 #define WOLF3D_MAXVIEWWIDTH 320                            // WL_DEF.H MAXVIEWWIDTH (upper bound for column arrays)
 #define WOLF3D_TEX_SIZE     64                              // WL_DEF.H TEXTURESIZE: wall/sprite source bitmaps are 64x64
+#define WOLF3D_DEFAULT_VIEWWIDTH  256                       // Original gameplay viewport; configurable projection hook
+#define WOLF3D_DEFAULT_VIEWHEIGHT 160                       // Original gameplay viewport; configurable projection hook
+#define WOLF3D_DEFAULT_FOCALLENGTH 0x5700L                  // Original WL_MAIN.C focal length
 
 class Wolf3dRenderer {
 public:
@@ -49,7 +52,8 @@ public:
 	// decided (see video/wolf3d/render/README.md).
 	Wolf3dRenderer(Wolf3dWorldState& world) : m_world(world) {
 		BuildTables();
-		CalcProjection(256, 160, 0x5700L);
+		CalcProjection(WOLF3D_DEFAULT_VIEWWIDTH, WOLF3D_DEFAULT_VIEWHEIGHT,
+			WOLF3D_DEFAULT_FOCALLENGTH);
 	}
 
 	// Mirrors WL_MAIN.C's CalcProjection(): derives scale/heightnumerator/
@@ -64,7 +68,11 @@ public:
 		int halfview = viewwidth / 2;
 		long viewglobal = WOLF3D_TILEGLOBAL * 2;      // WL_DEF.H VIEWGLOBAL
 		m_scale = (int)(halfview * facedist / (viewglobal / 2));
-		m_heightNumerator = ((long)WOLF3D_TILEGLOBAL * m_scale) >> 6;
+		// Wolf3D stores projected heights in quarter-pixel units; the
+		// original scaler converts them with height >> 2. Fold that
+		// conversion into the cached numerator so walls and sprites are
+		// pixel-sized without adding work to the per-column render loop.
+		m_heightNumerator = ((long)WOLF3D_TILEGLOBAL * m_scale) >> 8;
 		m_centerx = viewwidth / 2 - 1;
 		m_viewwidth = viewwidth;
 		m_viewheight = viewheight;
@@ -236,22 +244,43 @@ public:
 						}
 					}
 
-					if (resolved && fraction <= door.position) continue; // open enough -- ray passes through
+					// A door occupies only its half-cell center plane, not
+					// the gridline where the DDA entered its tile. If that
+					// plane falls outside this tile, keep tracing: the next
+					// crossing may be the perpendicular wall face/jamb. This
+					// is the original renderer's continuevert/continuehoriz
+					// behavior; treating an unresolved plane as solid creates
+					// a false door-textured panel on the entry gridline.
+					if (!resolved) continue;
+					if (fraction <= door.position) continue; // open enough -- ray passes through
 
-					// Blocked, or the plane couldn't be resolved (ray
-					// parallel to it, or the intersection fell outside this
-					// door's own tile) -- fall back to solid, same
-					// conservative rule the eZ80 uses for reserved tiles.
-					// `side` picks the texture-U axis below; a door's own
-					// orientation (not whichever axis the DDA happened to
-					// step on entry) decides it once resolved.
-					if (resolved) side = door.vertical ? 0 : 1;
+					// A resolved, closed portion of the center plane blocks.
+					// `side` picks the texture-U axis below; the door's own
+					// orientation decides it rather than whichever axis the
+					// DDA happened to step on entry.
+					side = door.vertical ? 0 : 1;
 					tileVal = tile;
 					hit = true;
 				} else {
 					// Ordinary walls and reserved 0xC0-0xFF tiles both
-					// render as solid at the DDA's entry gridline.
+					// render as solid at the DDA's entry gridline. A plain
+					// wall face entered directly from a door tile is that
+					// door's perpendicular jamb, so retain the wall geometry
+					// but select the dedicated frame texture. Checking the
+					// door orientation reproduces SpawnDoor's original choice
+					// of which two neighboring wall cells were side-marked.
 					tileVal = tile;
+					if (tile >= WOLF3D_TILE_WALL_MIN && tile <= WOLF3D_TILE_WALL_MAX) {
+						int previousX = mapX - (side == 0 ? stepX : 0);
+						int previousY = mapY - (side == 1 ? stepY : 0);
+						uint8_t previousTile = GetTile(previousX, previousY);
+						if (previousTile >= WOLF3D_TILE_DOOR_FLAG && previousTile <= WOLF3D_TILE_DOOR_MAX) {
+							const Wolf3dDoor& previousDoor = m_world.doors[previousTile & WOLF3D_TILE_DOOR_MASK];
+							bool perpendicularJamb = (side == 1 && previousDoor.vertical)
+							                     || (side == 0 && !previousDoor.vertical);
+							if (perpendicularJamb) tileVal = WOLF3D_DOOR_JAMB_TEXTURE_ID;
+						}
+					}
 					hit = true;
 				}
 				break;

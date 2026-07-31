@@ -131,11 +131,30 @@ typedef struct tag_Wolf3dControl {
 	// the eZ80 should still treat subcommand 41 as "safe to send the next
 	// render_frame", per the newest-state-wins policy in the handoff doc.
 	void render_frame(VDUStreamProcessor& processor) {
+		debug_log("Wolf3D render_frame: begin\n\r");
+		// Two VDP-local rectangle fills both clear stale wall columns and
+		// reproduce Wolf3D's inexpensive flat ceiling/floor presentation.
+		// Bounds follow the active projection rather than assuming 256x160,
+		// preserving CalcProjection() as the viewport-scaling hook.
+		int viewwidth = m_renderer.ViewWidth();
+		int viewheight = m_renderer.ViewHeight();
+		int horizon = m_renderer.CenterY();
+		canvas->setBrushColor(170, 170, 170);
+		canvas->fillRectangle(0, 0, viewwidth - 1, horizon - 1);
+		canvas->setBrushColor(85, 85, 85);
+		canvas->fillRectangle(0, horizon, viewwidth - 1, viewheight - 1);
+		waitPlotCompletion(false);
 		m_renderer.ThreeDRefresh();
 		RenderWalls(processor);
 		RenderSprites(processor);
+		// render_frame is synchronous at the wire boundary. Keep that
+		// contract explicit even if a future blit path queues work without
+		// its own scratch-lifetime drain.
+		waitPlotCompletion(false);
 		m_render_sequence++;
 		send_render_complete(processor, m_render_sequence);
+		debug_log("Wolf3D render_frame: complete, sequence %u\n\r",
+			m_render_sequence);
 	}
 
 	// Actual wall-column blit: for each screen column with a hit
@@ -188,7 +207,13 @@ typedef struct tag_Wolf3dControl {
 
 			processor.createBitmapFromBuffer(WOLF3D_SCRATCH_WALL_BUFFER_ID, 1 /* RGBA2222 */, 1, destHeight);
 			auto columnBitmap = getBitmap(WOLF3D_SCRATCH_WALL_BUFFER_ID);
-			if (columnBitmap) canvas->drawBitmap(col, clippedTop, columnBitmap.get());
+			if (columnBitmap) {
+				canvas->drawBitmap(col, clippedTop, columnBitmap.get());
+				// drawBitmap queues a raw Bitmap pointer. Drain it while
+				// this bitmap and its scratch buffer are still alive;
+				// the next column clears and recreates both.
+				waitPlotCompletion(false);
+			}
 		}
 	}
 
@@ -240,7 +265,12 @@ typedef struct tag_Wolf3dControl {
 
 			processor.createBitmapFromBuffer(WOLF3D_SCRATCH_SPRITE_BUFFER_ID, 1 /* RGBA2222 */, destWidth, destHeight);
 			auto spriteBitmap = getBitmap(WOLF3D_SCRATCH_SPRITE_BUFFER_ID);
-			if (spriteBitmap) canvas->drawBitmap(clippedLeft, clippedTop, spriteBitmap.get());
+			if (spriteBitmap) {
+				canvas->drawBitmap(clippedLeft, clippedTop, spriteBitmap.get());
+				// Preserve the queued bitmap and backing bytes until
+				// FabGL has consumed them, before scratch reuse.
+				waitPlotCompletion(false);
+			}
 		}
 	}
 
