@@ -44,3 +44,9 @@ case BUFFERED_PINGO_3D: {
 No changes to `agon.h`/`vdu_buffered.h` have been made yet — this file
 records the plan so implementation follows the established convention
 instead of improvising a new dispatch shape.
+
+Subcommand numbering: subcommand `41` under `BUFFERED_WOLF3D` is reserved
+for the render-done callback (enable/disable + token), mirroring Pingo's
+own subcommand `41` under `BUFFERED_PINGO_3D` for the identical purpose.
+Same number, same job, different top-level opcode — deliberate parity,
+not a coincidence.
