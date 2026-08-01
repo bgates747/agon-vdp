@@ -463,6 +463,14 @@ public:
 		}
 	}
 
+#ifdef USERSPACE
+	// Exercise the renderer's real tile lookup from native integration tests;
+	// this avoids inferring shared-buffer type safety from framebuffer pixels.
+	uint8_t UserspaceGetTile(int tilex, int tiley) const {
+		return GetTile(tilex, tiley);
+	}
+#endif
+
 private:
 	// Mirrors WL_DRAW.C's FixedByFrac(): 16.16 fixed-point multiply.
 	static wolf3d_fixed_t FixedByFrac(wolf3d_fixed_t a, wolf3d_fixed_t b) {

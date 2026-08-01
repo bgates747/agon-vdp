@@ -29,16 +29,6 @@
 #define WOLF3D_NOTIFY_RENDER_COMPLETE 1
 #define WOLF3D_NOTIFY_FIZZLE_COMPLETE 2
 
-// Internal VDP-side scratch buffer ids used by RenderWalls()/RenderSprites()/
-// RenderViewWeapon() below to stage one resampled image before it's converted to a
-// bitmap and drawn. These never cross the wire and are never referenced by
-// the eZ80 -- picked well clear of the wall/sprite asset id ranges
-// (Wolf3dWallBufferId()/Wolf3dSpriteBufferId() in wolf3d_world.h use
-// 0x1000-0x107F/0x2000-0x3FFF) and of any eZ80-supplied tilemapBufferId.
-#define WOLF3D_SCRATCH_WALL_BUFFER_ID   0xFFFE
-#define WOLF3D_SCRATCH_SPRITE_BUFFER_ID 0xFFFD
-#define WOLF3D_SCRATCH_WEAPON_BUFFER_ID 0xFFFC
-
 typedef struct tag_Wolf3dControl {
 	uint8_t             m_render_notify_mode = WOLF3D_RENDER_NOTIFY_DISABLED; // Opt-in completion transport
 	uint16_t            m_render_notify_token = 0;
@@ -51,32 +41,40 @@ typedef struct tag_Wolf3dControl {
 
 	// VDU 23, 0, &A0, bufferId; &4A, 0: dispatch smoke test, no scene/render
 	// state exists yet -- this just proves the opcode/subcommand plumbing.
-	void hello_world(VDUStreamProcessor& processor) {
+	bool hello_world(VDUStreamProcessor& processor) {
 		debug_log("Wolf3D: Hello from Castle Wolfenstein 3D!\n\r");
+		return true;
 	}
 
 	// Composes a 32-bit value from two wire words (low word first), since
 	// VDUStreamProcessor has no native 32-bit reader.
-	static int32_t read_long(VDUStreamProcessor& processor) {
+	static bool read_long(VDUStreamProcessor& processor, int32_t& value) {
 		int32_t lo = processor.readWord_t();
 		int32_t hi = processor.readWord_t();
-		return (int32_t)(((uint32_t)hi << 16) | (uint16_t)lo);
+		if (lo < 0 || hi < 0) return false;
+		value = (int32_t)(((uint32_t)hi << 16) | (uint16_t)lo);
+		return true;
 	}
 
 	// VDU ... &4A, 1, tilemapBufferId; -- wall/sprite textures are per-texture
 	// buffers, not associated here, see Wolf3dWallBufferId()/
 	// Wolf3dSpriteBufferId() in wolf3d_world.h.
-	void init_level(VDUStreamProcessor& processor) {
+	bool init_level(VDUStreamProcessor& processor) {
 		auto tilemapBufferId = processor.readWord_t();
+		if (tilemapBufferId < 0) return false;
 		m_world.init_level(tilemapBufferId);
+		return true;
 	}
 
 	// VDU ... &4A, 2, x; x; y; y; angle;  (x/y are 32-bit fixed, low word first)
-	void set_player_pose(VDUStreamProcessor& processor) {
-		auto x = read_long(processor);
-		auto y = read_long(processor);
+	bool set_player_pose(VDUStreamProcessor& processor) {
+		int32_t x;
+		int32_t y;
+		if (!read_long(processor, x) || !read_long(processor, y)) return false;
 		auto angle = processor.readWord_t();
+		if (angle < 0) return false;
 		m_world.set_player_pose(x, y, (int16_t)angle);
+		return true;
 	}
 
 	// VDU ... &4A, 3, doornum, tilex, tiley, vertical, lock, action, position; position; textureId
@@ -85,7 +83,7 @@ typedef struct tag_Wolf3dControl {
 	// index, not a texture id too, so unlike plain walls (tile byte == texture
 	// id) the door's wall texture id has to be carried here instead -- see
 	// Wolf3dDoor::textureId in wolf3d_world.h.
-	void set_door(VDUStreamProcessor& processor) {
+	bool set_door(VDUStreamProcessor& processor) {
 		auto doornum = processor.readByte_t();
 		auto tilex = processor.readByte_t();
 		auto tiley = processor.readByte_t();
@@ -94,54 +92,72 @@ typedef struct tag_Wolf3dControl {
 		auto action = processor.readByte_t();
 		auto position = processor.readWord_t();
 		auto textureId = processor.readByte_t();
+		if (doornum < 0 || tilex < 0 || tiley < 0 || vertical < 0 ||
+				lock < 0 || action < 0 || position < 0 || textureId < 0) {
+			return false;
+		}
 		m_world.set_door(doornum, tilex, tiley, vertical != 0, lock, action, position, textureId);
+		return true;
 	}
 
 	// VDU ... &4A, 4, actorId; shapenum; x; x; y; y; facingAngle; rotations
 	// actorId/shapenum/facingAngle are words; x/y are 32-bit fixed, low word
 	// first; rotations is the exact frame count 0, 2, or 8. The eZ80 resolves
 	// gameplay state to this render-only record and sends it only when dirty.
-	void set_actor(VDUStreamProcessor& processor) {
+	bool set_actor(VDUStreamProcessor& processor) {
 		auto actorId = processor.readWord_t();
 		auto shapenum = processor.readWord_t();
-		auto x = read_long(processor);
-		auto y = read_long(processor);
+		int32_t x;
+		int32_t y;
+		if (actorId < 0 || shapenum < 0 ||
+				!read_long(processor, x) || !read_long(processor, y)) {
+			return false;
+		}
 		auto facingAngle = processor.readWord_t();
 		auto rotations = processor.readByte_t();
+		if (facingAngle < 0 || rotations < 0) return false;
 		m_world.set_actor((uint16_t)actorId, (int16_t)shapenum, x, y,
 			(int16_t)facingAngle, rotations);
+		return true;
 	}
 
 	// VDU ... &4A, 5, actorId; actorId;
-	void remove_actor(VDUStreamProcessor& processor) {
+	bool remove_actor(VDUStreamProcessor& processor) {
 		auto actorId = processor.readWord_t();
+		if (actorId < 0) return false;
 		m_world.remove_actor((uint16_t)actorId);
+		return true;
 	}
 
 	// VDU ... &4A, 6, index; index; tilex, tiley, shapenum; shapenum; flags;
-	void set_static(VDUStreamProcessor& processor) {
+	bool set_static(VDUStreamProcessor& processor) {
 		auto index = processor.readWord_t();
 		auto tilex = processor.readByte_t();
 		auto tiley = processor.readByte_t();
 		auto shapenum = processor.readWord_t();
 		auto flags = processor.readByte_t();
+		if (index < 0 || tilex < 0 || tiley < 0 || shapenum < 0 || flags < 0) {
+			return false;
+		}
 		m_world.set_static((uint16_t)index, tilex, tiley, (int16_t)shapenum, flags);
+		return true;
 	}
 
 	// VDU ... &4A, 8, shapenum; -- persistent first-person view shape.
 	// A wire value of 0xFFFF casts to the -1 sentinel and suppresses the
 	// overlay, independently of the HUD weapon icon set by subcommand 13.
-	void set_view_weapon(VDUStreamProcessor& processor) {
+	bool set_view_weapon(VDUStreamProcessor& processor) {
 		auto shapenum = processor.readWord_t();
-		if (shapenum < 0) return;
+		if (shapenum < 0) return false;
 		m_view_weapon_shapenum = (int16_t)(uint16_t)shapenum;
+		return true;
 	}
 
 	// VDU ... &4A, 7: renders synchronously into the hidden mode-8 buffer;
 	// completion is reported through subcommand 41 only after all queued draws
 	// have drained. The eZ80 then presents that buffer and may submit the next
 	// newest-state snapshot.
-	void render_frame(VDUStreamProcessor& processor) {
+	bool render_frame(VDUStreamProcessor& processor) {
 		debug_log("Wolf3D render_frame: begin\n\r");
 		// Clear the complete mode-8 320x200 play surround, then place the active
 		// view window at its centered Wolf3D origin. Bounds continue to follow
@@ -210,18 +226,16 @@ typedef struct tag_Wolf3dControl {
 		send_render_complete(processor, m_render_sequence);
 		debug_log("Wolf3D render_frame: complete, sequence %u\n\r",
 			m_render_sequence);
+		return true;
 	}
 
 	// Actual wall-column blit: for each screen column with a hit
 	// (WallHeights()[col] > 0), resamples the hit wall/door texture's column
-	// into a scratch buffer (Wolf3dRenderer::SampleWallColumn(), nearest-
-	// neighbor vertical scale), wraps that scratch buffer as a 1xN RGBA2222
-	// bitmap (createBitmapFromBuffer()), and draws it with
-	// Canvas::drawBitmap() -- the approved method (buffer -> bitmap -> bitmap
-	// plot), not per-pixel Canvas::setPixel() or any per-column wire command
-	// (rendering is entirely VDP-internal -- the eZ80 never issues draw
-	// commands over the wire).
-	void RenderWalls(VDUStreamProcessor& processor) {
+	// into private scratch storage (Wolf3dRenderer::SampleWallColumn(),
+	// nearest-neighbor vertical scale), wraps that storage in a local 1xN
+	// RGBA2222 bitmap, and draws it with Canvas::drawBitmap(). No application-
+	// visible buffer ID is consumed or cleared by this internal work.
+	void RenderWalls(VDUStreamProcessor&) {
 		auto heights = m_renderer.WallHeights();
 		auto tiles = m_renderer.WallTiles();
 		auto texU = m_renderer.WallTexU();
@@ -254,23 +268,19 @@ typedef struct tag_Wolf3dControl {
 			int destHeight = clippedBottom - clippedTop;
 			if (destHeight <= 0) continue;
 
-			processor.bufferClear(WOLF3D_SCRATCH_WALL_BUFFER_ID);
-			auto scratch = processor.bufferCreate(WOLF3D_SCRATCH_WALL_BUFFER_ID, destHeight);
-			if (!scratch) continue;
+			BufferStream scratch(destHeight);
+			if (!scratch.getBuffer()) continue;
 
 			const uint8_t* srcColumn = srcBitmap->data + texU[col];
 			Wolf3dRenderer::SampleWallColumn(srcColumn, srcBitmap->width, fullHeight,
-			                                 clippedTop - top, scratch->getBuffer(), destHeight);
+			                                 clippedTop - top, scratch.getBuffer(), destHeight);
 
-			processor.createBitmapFromBuffer(WOLF3D_SCRATCH_WALL_BUFFER_ID, 1 /* RGBA2222 */, 1, destHeight);
-			auto columnBitmap = getBitmap(WOLF3D_SCRATCH_WALL_BUFFER_ID);
-			if (columnBitmap) {
-				canvas->drawBitmap(viewX + col, viewY + clippedTop, columnBitmap.get());
-				// drawBitmap queues a raw Bitmap pointer. Drain it while
-				// this bitmap and its scratch buffer are still alive;
-				// the next column clears and recreates both.
-				waitPlotCompletion(false);
-			}
+			Bitmap columnBitmap(1, destHeight, scratch.getBuffer(),
+				PixelFormat::RGBA2222);
+			canvas->drawBitmap(viewX + col, viewY + clippedTop, &columnBitmap);
+			// drawBitmap queues raw pointers. Drain the queue before either
+			// the local bitmap or its private backing storage leaves scope.
+			waitPlotCompletion(false);
 		}
 	}
 
@@ -278,14 +288,14 @@ typedef struct tag_Wolf3dControl {
 	// already depth-sorted far-to-near by DrawScaleds()), resamples the
 	// whole sprite bitmap to its projected on-screen size
 	// (Wolf3dRenderer::SampleSprite(), nearest-neighbor 2D scale) into a
-	// scratch buffer, wraps it as a bitmap, and draws it -- same
-	// buffer -> bitmap -> Canvas::drawBitmap approach as RenderWalls() above.
+	// private scratch buffer, wraps it as a local bitmap, and draws it -- the
+	// same caller-owned Bitmap -> Canvas::drawBitmap path as RenderWalls().
 	//
 	// The scaled scratch bitmap is then masked column-by-column against the
 	// saved wall heights using the original ScaleShape depth rule. Fully
 	// occluded columns become transparent before the single bitmap draw, so
 	// correct wall clipping does not require one Canvas operation per column.
-	void RenderSprites(VDUStreamProcessor& processor) {
+	void RenderSprites(VDUStreamProcessor&) {
 		int viewwidth = m_renderer.ViewWidth();
 		int viewheight = m_renderer.ViewHeight();
 		int viewX = ViewOriginX();
@@ -313,25 +323,23 @@ typedef struct tag_Wolf3dControl {
 			int destHeight = clippedBottom - clippedTop;
 			if (destWidth <= 0 || destHeight <= 0) continue;
 
-			processor.bufferClear(WOLF3D_SCRATCH_SPRITE_BUFFER_ID);
-			auto scratch = processor.bufferCreate(WOLF3D_SCRATCH_SPRITE_BUFFER_ID, (uint32_t)destWidth * destHeight);
-			if (!scratch) continue;
+			BufferStream scratch((uint32_t)destWidth * destHeight);
+			if (!scratch.getBuffer()) continue;
 
 			Wolf3dRenderer::SampleSprite(srcBitmap->data, srcBitmap->width, srcBitmap->height,
 			                             destSize, destSize, clippedLeft - left, clippedTop - top,
-			                             scratch->getBuffer(), destWidth, destHeight);
+			                             scratch.getBuffer(), destWidth, destHeight);
 			Wolf3dRenderer::MaskSpriteColumnsBehindWalls(
-				scratch->getBuffer(), destWidth, destHeight, clippedLeft,
+				scratch.getBuffer(), destWidth, destHeight, clippedLeft,
 				wallHeights, viewwidth, destSize);
 
-			processor.createBitmapFromBuffer(WOLF3D_SCRATCH_SPRITE_BUFFER_ID, 1 /* RGBA2222 */, destWidth, destHeight);
-			auto spriteBitmap = getBitmap(WOLF3D_SCRATCH_SPRITE_BUFFER_ID);
-			if (spriteBitmap) {
-				canvas->drawBitmap(viewX + clippedLeft, viewY + clippedTop, spriteBitmap.get());
-				// Preserve the queued bitmap and backing bytes until
-				// FabGL has consumed them, before scratch reuse.
-				waitPlotCompletion(false);
-			}
+			Bitmap spriteBitmap(destWidth, destHeight, scratch.getBuffer(),
+				PixelFormat::RGBA2222);
+			canvas->drawBitmap(viewX + clippedLeft, viewY + clippedTop,
+				&spriteBitmap);
+			// Preserve the queued bitmap and backing bytes until FabGL has
+			// consumed them.
+			waitPlotCompletion(false);
 		}
 	}
 
@@ -340,7 +348,7 @@ typedef struct tag_Wolf3dControl {
 	// world wall heights must not mask it. SimpleScaleShape uses viewheight+1
 	// as the uniform scale and centers the shape at viewwidth/2; C++ integer
 	// division also leaves the single excess row clipped at the bottom.
-	void RenderViewWeapon(VDUStreamProcessor& processor) {
+	void RenderViewWeapon(VDUStreamProcessor&) {
 		if (m_view_weapon_shapenum < 0) return;
 
 		auto srcBitmap = getBitmap(Wolf3dSpriteBufferId(m_view_weapon_shapenum));
@@ -359,22 +367,17 @@ typedef struct tag_Wolf3dControl {
 		const int destHeight = clippedBottom - clippedTop;
 		if (destWidth <= 0 || destHeight <= 0) return;
 
-		processor.bufferClear(WOLF3D_SCRATCH_WEAPON_BUFFER_ID);
-		auto scratch = processor.bufferCreate(WOLF3D_SCRATCH_WEAPON_BUFFER_ID,
-			(uint32_t)destWidth * destHeight);
-		if (!scratch) return;
+		BufferStream scratch((uint32_t)destWidth * destHeight);
+		if (!scratch.getBuffer()) return;
 
 		Wolf3dRenderer::SampleSprite(srcBitmap->data, srcBitmap->width,
 			srcBitmap->height, destSize, destSize, clippedLeft - left,
-			clippedTop - top, scratch->getBuffer(), destWidth, destHeight);
-		processor.createBitmapFromBuffer(WOLF3D_SCRATCH_WEAPON_BUFFER_ID,
-			1 /* RGBA2222 */, destWidth, destHeight);
-		auto weaponBitmap = getBitmap(WOLF3D_SCRATCH_WEAPON_BUFFER_ID);
-		if (weaponBitmap) {
-			canvas->drawBitmap(ViewOriginX() + clippedLeft,
-				ViewOriginY() + clippedTop, weaponBitmap.get());
-			waitPlotCompletion(false);
-		}
+			clippedTop - top, scratch.getBuffer(), destWidth, destHeight);
+		Bitmap weaponBitmap(destWidth, destHeight, scratch.getBuffer(),
+			PixelFormat::RGBA2222);
+		canvas->drawBitmap(ViewOriginX() + clippedLeft,
+			ViewOriginY() + clippedTop, &weaponBitmap);
+		waitPlotCompletion(false);
 	}
 
 	int ViewOriginX() const {
@@ -441,14 +444,54 @@ typedef struct tag_Wolf3dControl {
 
 	// VDU ... &4A, 10..17: HUD/status-bar field updates, one per WL_AGENT.C
 	// Draw*() analog (see wolf3d/hud/wolf3d_status.h).
-	void draw_health(VDUStreamProcessor& processor) { m_statusBar.DrawHealth(processor.readByte_t()); }
-	void draw_ammo(VDUStreamProcessor& processor)   { m_statusBar.DrawAmmo(processor.readByte_t()); }
-	void draw_keys(VDUStreamProcessor& processor)   { m_statusBar.DrawKeys(processor.readByte_t()); }
-	void draw_weapon(VDUStreamProcessor& processor) { m_statusBar.DrawWeapon(processor.readByte_t()); }
-	void draw_score(VDUStreamProcessor& processor)  { m_statusBar.DrawScore((uint32_t)read_long(processor)); }
-	void draw_level(VDUStreamProcessor& processor)  { m_statusBar.DrawLevel(processor.readByte_t()); }
-	void draw_face(VDUStreamProcessor& processor)   { m_statusBar.DrawFace(processor.readByte_t()); }
-	void draw_lives(VDUStreamProcessor& processor)  { m_statusBar.DrawLives(processor.readByte_t()); }
+	bool draw_health(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawHealth((uint8_t)value);
+		return true;
+	}
+	bool draw_ammo(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawAmmo((uint8_t)value);
+		return true;
+	}
+	bool draw_keys(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawKeys((uint8_t)value);
+		return true;
+	}
+	bool draw_weapon(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawWeapon((uint8_t)value);
+		return true;
+	}
+	bool draw_score(VDUStreamProcessor& processor) {
+		int32_t value;
+		if (!read_long(processor, value)) return false;
+		m_statusBar.DrawScore((uint32_t)value);
+		return true;
+	}
+	bool draw_level(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawLevel((uint8_t)value);
+		return true;
+	}
+	bool draw_face(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawFace((uint8_t)value);
+		return true;
+	}
+	bool draw_lives(VDUStreamProcessor& processor) {
+		auto value = processor.readByte_t();
+		if (value < 0) return false;
+		m_statusBar.DrawLives((uint8_t)value);
+		return true;
+	}
 
 	void PlotFizzleUntil(Wolf3dFizzle& fizzle, uint32_t target,
 	                     uint8_t rawRed) {
@@ -468,9 +511,9 @@ typedef struct tag_Wolf3dControl {
 	// outstanding. Each cumulative batch is drawn into the hidden buffer,
 	// presented at vertical blank, then replayed into the newly hidden buffer;
 	// consequently both mode-8 surfaces finish byte-identical without C3.
-	void fizzle_to_red(VDUStreamProcessor& processor) {
+	bool fizzle_to_red(VDUStreamProcessor& processor) {
 		auto token = processor.readWord_t();
-		if (token < 0) return;
+		if (token < 0) return false;
 
 		waitPlotCompletion(false);
 		const int originX = ViewOriginX();
@@ -506,22 +549,24 @@ typedef struct tag_Wolf3dControl {
 		m_presentation_sequence++;
 		send_completion(processor, WOLF3D_NOTIFY_FIZZLE_COMPLETE,
 			(uint16_t)token, m_presentation_sequence);
+		return true;
 	}
 
 	// VDU 23, 0, &A0, bufferId; &4A, 41, mode, token;
 	// mode 0 disables notification; mode 1 emits a stock MOS keyboard packet.
 	// Exact mirror of Pingo's set_render_notification (video/pingo_3d.h).
-	void set_render_notification(VDUStreamProcessor& processor) {
+	bool set_render_notification(VDUStreamProcessor& processor) {
 		auto mode = processor.readByte_t();
 		auto token = processor.readWord_t();
 		if (mode < 0 || token < 0) {
-			return;
+			return false;
 		}
 		m_render_notify_mode =
 			mode == WOLF3D_RENDER_NOTIFY_KEYCODE
 				? WOLF3D_RENDER_NOTIFY_KEYCODE
 				: WOLF3D_RENDER_NOTIFY_DISABLED;
 		m_render_notify_token = (uint16_t)token;
+		return true;
 	}
 
 	void send_completion(VDUStreamProcessor& processor, uint8_t event,
@@ -550,28 +595,29 @@ typedef struct tag_Wolf3dControl {
 			m_render_notify_token, sequence);
 	}
 
-	void handle_subcommand(VDUStreamProcessor& processor, uint8_t subcmd) {
+	bool handle_subcommand(VDUStreamProcessor& processor, uint8_t subcmd) {
 		switch (subcmd) {
-			case 0:  hello_world(processor); break;
-			case 1:  init_level(processor); break;
-			case 2:  set_player_pose(processor); break;
-			case 3:  set_door(processor); break;
-			case 4:  set_actor(processor); break;
-			case 5:  remove_actor(processor); break;
-			case 6:  set_static(processor); break;
-			case 7:  render_frame(processor); break;
-			case 8:  set_view_weapon(processor); break;
-			case 9:  fizzle_to_red(processor); break;
-			case 10: draw_health(processor); break;
-			case 11: draw_ammo(processor); break;
-			case 12: draw_keys(processor); break;
-			case 13: draw_weapon(processor); break;
-			case 14: draw_score(processor); break;
-			case 15: draw_level(processor); break;
-			case 16: draw_face(processor); break;
-			case 17: draw_lives(processor); break;
-			case 41: set_render_notification(processor); break;
+			case 0:  return hello_world(processor);
+			case 1:  return init_level(processor);
+			case 2:  return set_player_pose(processor);
+			case 3:  return set_door(processor);
+			case 4:  return set_actor(processor);
+			case 5:  return remove_actor(processor);
+			case 6:  return set_static(processor);
+			case 7:  return render_frame(processor);
+			case 8:  return set_view_weapon(processor);
+			case 9:  return fizzle_to_red(processor);
+			case 10: return draw_health(processor);
+			case 11: return draw_ammo(processor);
+			case 12: return draw_keys(processor);
+			case 13: return draw_weapon(processor);
+			case 14: return draw_score(processor);
+			case 15: return draw_level(processor);
+			case 16: return draw_face(processor);
+			case 17: return draw_lives(processor);
+			case 41: return set_render_notification(processor);
 		}
+		return false;
 	}
 } Wolf3dControl;
 
