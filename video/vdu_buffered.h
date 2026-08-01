@@ -2,6 +2,7 @@
 #define VDU_BUFFERED_H
 
 #include <algorithm>
+#include <map>
 #include <memory>
 #include <vector>
 #include <unordered_map>
@@ -22,6 +23,8 @@
 #include "vdp_variables.h"
 #include "types.h"
 #include "vdu_stream_processor.h"
+#include "pingo_3d.h"
+#include "wolf3d.h"
 
 // VDU 23, 0, &A0, bufferId; command: Buffered command support
 //
@@ -250,6 +253,12 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 			if (sourceBufferId == -1) return;
 			bufferExpandBitmap(bufferId, options, sourceBufferId);
 		}	break;
+		case BUFFERED_PINGO_3D: {
+			bufferUsePingo3D(bufferId);
+		}	break;
+		case BUFFERED_WOLF3D: {
+			bufferUseWolf3D(bufferId);
+		}	break;
 		case BUFFERED_ADD_CALLBACK: {
 			auto type = readWord_t(); if (type == -1) return;
 			bufferAddCallback(bufferId, type);
@@ -260,10 +269,14 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 		}	break;
 		case BUFFERED_DEBUG_INFO: {
 			// force_debug_log("vdu_sys_buffered: debug info stack highwater %d\n\r",uxTaskGetStackHighWaterMark(nullptr));
-			force_debug_log("vdu_sys_buffered: buffer %d, %d streams stored\n\r", bufferId, buffers[bufferId].size());
-			if (buffers[bufferId].empty()) {
+			auto bufferIter = buffers.find(bufferId);
+			if (bufferIter == buffers.end()) {
+				force_debug_log("vdu_sys_buffered: buffer %d not found\n\r", bufferId);
 				return;
 			}
+			auto &bufferStreams = bufferIter->second;
+			force_debug_log("vdu_sys_buffered: buffer %d, %d streams stored\n\r", bufferId, bufferStreams.size());
+			if (bufferStreams.empty()) return;
 			auto matrixSize = getMatrixSize(bufferId);
 			if (matrixSize.value != 0) {
 				float transform[matrixSize.size()];
@@ -279,7 +292,7 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 				}
 			}
 			// output contents of buffer stream 0
-			auto buffer = buffers[bufferId][0];
+			auto buffer = bufferStreams[0];
 			auto bufferLength = buffer->size();
 			for (auto i = 0; i < bufferLength; i++) {
 				auto data = buffer->getBuffer()[i];
@@ -315,6 +328,16 @@ uint32_t VDUStreamProcessor::bufferWrite(uint16_t bufferId, uint32_t length) {
 		return remaining;
 	}
 
+	// Appending a block repurposes the ID as ordinary buffered storage. Pingo
+	// controls use their first ordinary block as in-place object storage, so a
+	// successful replacement must remove that block instead of appending the
+	// caller's bytes behind it. Preserve the normal multi-block append behavior
+	// for IDs that were already ordinary buffers.
+	if (isPingo3dControlBuffer(bufferId)) {
+		bufferClear(bufferId);
+	} else {
+		bufferDeinitializeWolf3D(bufferId);
+	}
 	buffers[bufferId].push_back(std::move(bufferStream));
 	debug_log("bufferWrite: stored stream in buffer %d, length %d, %d streams stored\n\r", bufferId, length, buffers[bufferId].size());
 	return remaining;
@@ -329,6 +352,12 @@ void VDUStreamProcessor::bufferCall(uint16_t callBufferId, AdvancedOffset offset
 	auto bufferId = resolveBufferId(callBufferId, id);
 	if (bufferId == -1) {
 		debug_log("bufferCall: no buffer ID\n\r");
+		return;
+	}
+	if (isPingo3dControlBuffer(bufferId)) {
+		debug_log(
+			"bufferCall: refusing to execute live Pingo control %d\n\r",
+			bufferId);
 		return;
 	}
 	AdvancedOffset returnOffset;
@@ -383,6 +412,8 @@ void VDUStreamProcessor::bufferCall(uint16_t callBufferId, AdvancedOffset offset
 }
 
 void VDUStreamProcessor::bufferRemoveUsers(uint16_t bufferId) {
+	bufferDeinitializePingo3D(bufferId);
+	bufferDeinitializeWolf3D(bufferId);
 	// remove all users of the given buffer
 	context->unmapBitmapFromChars(bufferId);
 	clearBitmap(bufferId);
@@ -391,6 +422,99 @@ void VDUStreamProcessor::bufferRemoveUsers(uint16_t bufferId) {
 	clearMouseCursor(bufferId);
 }
 
+void VDUStreamProcessor::bufferDeinitializePingo3D(uint16_t bufferId) {
+	auto registered = pingo3dControlBuffers.find(bufferId);
+	if (registered == pingo3dControlBuffers.end()) {
+		return;
+	}
+
+	// Unregister first so this operation is idempotent even if the buffer was
+	// independently damaged after successful Pingo initialization.
+	pingo3dControlBuffers.erase(registered);
+	auto bufferIter = buffers.find(bufferId);
+	if (bufferIter == buffers.end()) {
+		return;
+	}
+	auto &blocks = bufferIter->second;
+	if (blocks.empty() || !blocks.front() ||
+			blocks.front()->size() < sizeof(Pingo3dControl) ||
+			!blocks.front()->getBuffer()) {
+		debug_log("bufferDeinitializePingo3D: buffer %d has an invalid layout\n\r", bufferId);
+		return;
+	}
+
+	auto control = reinterpret_cast<Pingo3dControl *>(blocks.front()->getBuffer());
+	if (!control->validate()) {
+		debug_log("bufferDeinitializePingo3D: buffer %d is invalid\n\r", bufferId);
+		return;
+	}
+	control->deinitialize(*this);
+	control->~Pingo3dControl();
+}
+
+using Wolf3dControlRegistry =
+	std::map<uint16_t, std::shared_ptr<Wolf3dControl>>;
+
+static Wolf3dControlRegistry& wolf3dControlRegistry() {
+	static Wolf3dControlRegistry controls;
+	return controls;
+}
+
+static bool isKnownWolf3dSubcommand(uint8_t subcommand) {
+	return subcommand <= 17 || subcommand == 41;
+}
+
+void VDUStreamProcessor::bufferDeinitializeWolf3D(uint16_t bufferId) {
+	wolf3dControlRegistry().erase(bufferId);
+}
+
+#ifdef USERSPACE
+extern "C" bool wolf3d_userspace_control_exists(uint16_t bufferId) {
+	return wolf3dControlRegistry().count(bufferId) != 0;
+}
+
+extern "C" uint32_t wolf3d_userspace_control_count() {
+	return static_cast<uint32_t>(wolf3dControlRegistry().size());
+}
+
+extern "C" int32_t wolf3d_userspace_get_tile(
+		uint16_t bufferId, int tilex, int tiley) {
+	auto control = wolf3dControlRegistry().find(bufferId);
+	if (control == wolf3dControlRegistry().end()) {
+		return -1;
+	}
+	return control->second->m_renderer.UserspaceGetTile(tilex, tiley);
+}
+
+extern "C" uint32_t buffer_userspace_block_count(uint16_t bufferId) {
+	auto buffer = buffers.find(bufferId);
+	return buffer == buffers.end()
+		? 0
+		: static_cast<uint32_t>(buffer->second.size());
+}
+
+extern "C" int32_t buffer_userspace_block_size(
+		uint16_t bufferId, uint32_t blockIndex) {
+	auto buffer = buffers.find(bufferId);
+	if (buffer == buffers.end() || blockIndex >= buffer->second.size() ||
+			!buffer->second[blockIndex]) {
+		return -1;
+	}
+	return static_cast<int32_t>(buffer->second[blockIndex]->size());
+}
+
+extern "C" int32_t buffer_userspace_block_byte(
+		uint16_t bufferId, uint32_t blockIndex, uint32_t byteIndex) {
+	auto buffer = buffers.find(bufferId);
+	if (buffer == buffers.end() || blockIndex >= buffer->second.size() ||
+			!buffer->second[blockIndex] ||
+			byteIndex >= buffer->second[blockIndex]->size()) {
+		return -1;
+	}
+	return buffer->second[blockIndex]->getBuffer()[byteIndex];
+}
+#endif
+
 // VDU 23, 0, &A0, bufferId; 2: Clear buffer
 // Removes all streams stored against the given bufferId
 // sending a bufferId of 65535 (i.e. -1) clears all buffers
@@ -398,6 +522,10 @@ void VDUStreamProcessor::bufferRemoveUsers(uint16_t bufferId) {
 void VDUStreamProcessor::bufferClear(uint16_t bufferId) {
 	debug_log("bufferClear: buffer %d\n\r", bufferId);
 	if (bufferId == 65535) {
+		while (!pingo3dControlBuffers.empty()) {
+			bufferDeinitializePingo3D(*pingo3dControlBuffers.begin());
+		}
+		wolf3dControlRegistry().clear();
 		buffers.clear();
 		matrixMetadata.clear();
 		resetMouseCursors();
@@ -409,6 +537,8 @@ void VDUStreamProcessor::bufferClear(uint16_t bufferId) {
 		resetSamples();
 		return;
 	}
+	bufferDeinitializePingo3D(bufferId);
+	bufferDeinitializeWolf3D(bufferId);
 	auto bufferIter = buffers.find(bufferId);
 	if (bufferIter == buffers.end()) {
 		debug_log("bufferClear: buffer %d not found\n\r", bufferId);
@@ -432,11 +562,17 @@ std::shared_ptr<WritableBufferStream> VDUStreamProcessor::bufferCreate(uint16_t 
 		debug_log("bufferCreate: buffer %d already exists\n\r", bufferId);
 		return nullptr;
 	}
+	// Allocate privately before replacing a typed-only occupant. A failed
+	// allocation must not erase a live Wolf control (and this ordering also
+	// protects any future typed control that does not use ordinary backing).
 	auto buffer = make_shared_psram<WritableBufferStream>(size);
-	if (!buffer) {
+	if (!buffer || !buffer->getBuffer()) {
 		debug_log("bufferCreate: failed to create buffer %d\n\r", bufferId);
 		return nullptr;
 	}
+	// A control without ordinary backing still occupies this global ID.
+	bufferDeinitializePingo3D(bufferId);
+	bufferDeinitializeWolf3D(bufferId);
 	buffers[bufferId].push_back(buffer);
 	debug_log("bufferCreate: created buffer %d, size %d\n\r", bufferId, size);
 	return buffer;
@@ -466,6 +602,9 @@ void VDUStreamProcessor::setOutputStream(uint16_t bufferId) {
 	}
 	auto &output = bufferIter->second.front();
 	if (output->isWritable()) {
+		// Redirected writes would overwrite the control structure itself.
+		bufferDeinitializePingo3D(bufferId);
+		bufferDeinitializeWolf3D(bufferId);
 		outputStream = output;
 	} else {
 		debug_log("setOutputStream: buffer %d is not writable\n\r", bufferId);
@@ -924,6 +1063,7 @@ void VDUStreamProcessor::bufferAdjust(uint16_t adjustBufferId) {
 			operandBuffer = &instream->tellBuffer(operandOffset.blockOffset, operandOffset.blockIndex);
 		}
 	}
+
 	if (!useMultiTarget) {
 		// we have a singular target value
 		targetSpan = getBufferSpan(buffer, offset);
@@ -932,7 +1072,15 @@ void VDUStreamProcessor::bufferAdjust(uint16_t adjustBufferId) {
 			return;
 		}
 		sourceValue = targetSpan.front();
+	} else if (getBufferSpan(buffer, offset).empty()) {
+		debug_log("bufferAdjust: invalid target offset\n\r");
+		return;
 	}
+
+	// All validation and inline operand reads are complete; the operation is
+	// now committed to mutating this buffer.
+	bufferDeinitializePingo3D(bufferId);
+	bufferDeinitializeWolf3D(bufferId);
 
 	debug_log("bufferAdjust: command %d, offset %d:%d, count %d, operandBufferId %d, operandOffset %d:%d, sourceValue %d, operandValue %d\n\r",
 		command, (int)offset.blockIndex, offset.blockOffset, count, operandBufferId, (int)operandOffset.blockIndex, operandOffset.blockOffset, sourceValue, operandValue);
@@ -1181,6 +1329,12 @@ void VDUStreamProcessor::bufferJump(uint16_t bufferId, AdvancedOffset offset) {
 		instream->seekTo(offset.blockOffset, offset.blockIndex);
 		return;
 	}
+	if (isPingo3dControlBuffer(bufferId)) {
+		debug_log(
+			"bufferJump: refusing to execute live Pingo control %d\n\r",
+			bufferId);
+		return;
+	}
 	auto bufferIter = buffers.find(bufferId);
 	if (bufferIter == buffers.end()) {
 		debug_log("bufferJump: buffer %d not found\n\r", bufferId);
@@ -1385,10 +1539,13 @@ void VDUStreamProcessor::bufferSpreadInto(uint16_t bufferId, tcb::span<uint16_t>
 		debug_log("bufferSpreadInto: buffer %d not found\n\r", bufferId);
 		return;
 	}
-	auto &buffer = bufferIter->second;
+	// Spread shares block references with its targets. An active control must
+	// surrender its external resources before any alias can be published.
+	bufferDeinitializePingo3D(bufferId);
+	bufferDeinitializeWolf3D(bufferId);
 	// swap the source buffer contents into a local vector so it can be iterated safely even if it's a target
 	BufferVector localBuffer;
-	localBuffer.swap(buffer);
+	localBuffer.swap(bufferIter->second);
 	if (!iterate) {
 		clearTargets(newBufferIds);
 	}
@@ -1403,8 +1560,11 @@ void VDUStreamProcessor::bufferSpreadInto(uint16_t bufferId, tcb::span<uint16_t>
 		iterate = updateTarget(newBufferIds, targetIter, iterate);
 	}
 	// if the source buffer is still empty, move the original contents back
-	if (buffer.empty()) {
-		buffer = std::move(localBuffer);
+	// Reacquire by ID: clearing a target equal to the source erases the map
+	// node and invalidates the original iterator/reference.
+	auto &sourceBuffer = buffers[bufferId];
+	if (sourceBuffer.empty()) {
+		sourceBuffer = std::move(localBuffer);
 	}
 }
 
@@ -1415,6 +1575,8 @@ void VDUStreamProcessor::bufferSpreadInto(uint16_t bufferId, tcb::span<uint16_t>
 void VDUStreamProcessor::bufferReverseBlocks(uint16_t bufferId) {
 	auto bufferIter = buffers.find(bufferId);
 	if (bufferIter != buffers.end()) {
+		bufferDeinitializePingo3D(bufferId);
+		bufferDeinitializeWolf3D(bufferId);
 		// reverse the order of the streams
 		auto &buffer = bufferIter->second;
 		std::reverse(buffer.begin(), buffer.end());
@@ -1479,6 +1641,8 @@ void VDUStreamProcessor::bufferReverse(uint16_t bufferId, uint8_t options) {
 		}
 	}
 
+	bufferDeinitializePingo3D(bufferId);
+	bufferDeinitializeWolf3D(bufferId);
 	debug_log("bufferReverse: reversing buffer %d, value size %d, chunk size %d\n\r", bufferId, valueSize, chunkSize);
 
 	for (const auto &block : buffer) {
@@ -1525,6 +1689,12 @@ void VDUStreamProcessor::bufferCopyRef(uint16_t bufferId, tcb::span<const uint16
 			debug_log("bufferCopyRef: skipping buffer %d as it's the target\n\r", sourceId);
 			continue;
 		}
+		if (isPingo3dControlBuffer(sourceId)) {
+			debug_log(
+				"bufferCopyRef: refusing reference to live Pingo control %d\n\r",
+				sourceId);
+			continue;
+		}
 		auto sourceBufferIter = buffers.find(sourceId);
 		if (sourceBufferIter != buffers.end()) {
 			// buffer ID exists
@@ -1566,10 +1736,13 @@ void VDUStreamProcessor::bufferCopyAndConsolidate(uint16_t bufferId, tcb::span<c
 		}
 	}
 
+	// This command always overwrites its target, even when it can reuse the
+	// existing block.
+	bufferRemoveUsers(bufferId);
+
 	// Ensure the buffer has 1 block of the correct size
 	auto &buffer = buffers[bufferId];
 	if (buffer.size() != 1 || buffer.front()->size() != length) {
-		bufferRemoveUsers(bufferId);
 		buffer.clear();
 		auto bufferStream = make_shared_psram<BufferStream>(length);
 		if (!bufferStream || !bufferStream->getBuffer()) {
@@ -2078,6 +2251,12 @@ void VDUStreamProcessor::bufferTransformBitmap(uint16_t bufferId, uint8_t option
 		debug_log("bufferTransformBitmap: buffer %d not found\n\r", transformBufferId);
 		return;
 	}
+	if (isPingo3dControlBuffer(transformBufferId)) {
+		debug_log(
+			"bufferTransformBitmap: buffer %d is a live Pingo control, not a transform\n\r",
+			transformBufferId);
+		return;
+	}
 	auto &transformBuffer = transformBufferIter->second;
 	if (!checkTransformBuffer(transformBuffer)) {
 		debug_log("bufferTransformBitmap: buffer %d not a 2d transform matrix\n\r", transformBufferId);
@@ -2407,12 +2586,16 @@ void VDUStreamProcessor::bufferReadVariable(uint16_t bufferId) {
 		if (useBigEndian) {
 			value = value << 8 | (value >> 8);
 		}
+		bufferDeinitializePingo3D(bufferId);
+		bufferDeinitializeWolf3D(bufferId);
 		target.front() = value & 0xFF;
 		if (use16Bit) {
 			target[1] = value >> 8;
 		}
 	} else if (useDefault) {
 		// flag doesn't exist, so write the default value to the buffer
+		bufferDeinitializePingo3D(bufferId);
+		bufferDeinitializeWolf3D(bufferId);
 		target.front() = defaultValue & 0xFF;
 		if (use16Bit) {
 			target[1] = defaultValue >> 8;
@@ -2764,9 +2947,170 @@ void VDUStreamProcessor::bufferRemoveCallback(uint16_t bufferId, uint16_t type) 
 }
 
 void VDUStreamProcessor::bufferCallCallbacks(uint16_t type) {
-	for (const auto & bufferId : callbackBuffers[type]) {
+	auto callbacks = callbackBuffers.find(type);
+	if (callbacks == callbackBuffers.end()) {
+		return;
+	}
+	// A called buffer may remove itself (or another callback) while it runs.
+	// Iterate a snapshot so those valid mutations cannot invalidate this loop.
+	std::vector<uint16_t> callbackIds(
+		callbacks->second.begin(), callbacks->second.end());
+	for (const auto bufferId : callbackIds) {
 		bufferCall(bufferId, {});
 	}
+}
+
+// VDU 23, 0, &A0, bufferId; &49, subcommand: Configure or render with Pingo 3D.
+void VDUStreamProcessor::bufferUsePingo3D(uint16_t bufferId) {
+	auto subcommand = readByte_t();
+	if (subcommand < 0) {
+		return;
+	}
+
+	if (subcommand == 0) {
+		auto width = readWord_t();
+		if (width < 0) {
+			debug_log("bufferUsePingo3D: buffer %d missing width\n\r", bufferId);
+			return;
+		}
+
+		auto height = readWord_t();
+		if (height < 0) {
+			debug_log("bufferUsePingo3D: buffer %d missing height\n\r", bufferId);
+			return;
+		}
+
+		// Consume the complete dimensions payload before validating it, so a
+		// malformed create cannot leave bytes behind as fresh VDU commands.
+		if (bufferId == 65535 || width == 0 || height == 0 ||
+				width > INT16_MAX || height > INT16_MAX) {
+			debug_log(
+				"bufferUsePingo3D: invalid buffer/dimensions %d, %dx%d\n\r",
+				bufferId, width, height);
+			return;
+		}
+
+		// Construct and initialize the replacement entirely in private storage.
+		// The current ordinary, Pingo, or Wolf occupant remains valid unless all
+		// allocation and initialization work for the replacement succeeds.
+		auto storage =
+			make_shared_psram<WritableBufferStream>(sizeof(Pingo3dControl));
+		if (!storage || !storage->getBuffer()) {
+			debug_log(
+				"bufferUsePingo3D: failed to stage control %d\n\r", bufferId);
+			return;
+		}
+
+		// BufferStream owns raw bytes; placement-new formally begins the C++
+		// lifetime of the in-place control before any member function is called.
+		auto control = new (storage->getBuffer()) Pingo3dControl();
+		if (!control->initialize(
+				*this, static_cast<uint16_t>(width),
+				static_cast<uint16_t>(height))) {
+			control->~Pingo3dControl();
+			return;
+		}
+
+		// Commit after success: canonical teardown removes every previous user,
+		// then publish the staged backing as Pingo's sole block and register it.
+		bufferClear(bufferId);
+		buffers[bufferId].push_back(std::move(storage));
+		pingo3dControlBuffers.insert(bufferId);
+		return;
+	}
+
+	if (!isPingo3dControlBuffer(bufferId)) {
+		debug_log(
+			"bufferUsePingo3D: buffer %d is not a registered Pingo control\n\r",
+			bufferId);
+		return;
+	}
+
+	auto bufferIter = buffers.find(bufferId);
+	if (bufferIter == buffers.end()) {
+		debug_log("bufferUsePingo3D: buffer %d not found\n\r", bufferId);
+		return;
+	}
+
+	auto &blocks = bufferIter->second;
+	if (blocks.size() != 1 || !blocks.front() ||
+			blocks.front()->size() < sizeof(Pingo3dControl) ||
+			!blocks.front()->getBuffer()) {
+		debug_log("bufferUsePingo3D: buffer %d has an invalid layout\n\r", bufferId);
+		return;
+	}
+
+	auto control = reinterpret_cast<Pingo3dControl *>(blocks.front()->getBuffer());
+	if (!control->validate()) {
+		debug_log("bufferUsePingo3D: buffer %d is invalid\n\r", bufferId);
+		return;
+	}
+
+	if (subcommand == 39) {
+		// Use the canonical clear path so any future typed users and metadata
+		// associated with this buffer ID are released as well.
+		bufferClear(bufferId);
+		return;
+	}
+
+	control->handle_subcommand(*this, static_cast<uint8_t>(subcommand));
+}
+
+// VDU 23, 0, &A0, bufferId; &4A, subcommand: Configure or render Wolf3D scene.
+// Per-bufferId state (Wolf3dControl) holds the world-state mirror pushed
+// from the eZ80 (video/wolf3d/wolf3d_world.h) plus the renderer and HUD --
+// see video/wolf3d.h for the full subcommand table.
+void VDUStreamProcessor::bufferUseWolf3D(uint16_t bufferId) {
+	auto subcommand = readByte_t();
+	if (subcommand < 0) {
+		return;
+	}
+	if (bufferId == 65535) {
+		debug_log("bufferUseWolf3D: buffer 65535 is reserved\n\r");
+		return;
+	}
+	if (!isKnownWolf3dSubcommand(static_cast<uint8_t>(subcommand))) {
+		debug_log("bufferUseWolf3D: unknown subcommand %d for buffer %d\n\r",
+			subcommand, bufferId);
+		return;
+	}
+
+	debug_log("bufferUseWolf3D: buffer %d, subcommand %d\n\r",
+		bufferId, subcommand);
+	auto& controls = wolf3dControlRegistry();
+	auto controlIter = controls.find(bufferId);
+	if (controlIter != controls.end()) {
+		// Keep the object alive if a buffered event clears or repurposes this ID
+		// while a long-running handler (notably fizzle) pumps the event queue.
+		auto control = controlIter->second;
+		if (!control->handle_subcommand(
+				*this, static_cast<uint8_t>(subcommand))) {
+			debug_log("bufferUseWolf3D: truncated subcommand %d for buffer %d\n\r",
+				subcommand, bufferId);
+		}
+		return;
+	}
+
+	// Build and parse new state privately. Only a complete command may claim
+	// the application-selected ID or tear down an ordinary/Pingo occupant.
+	auto control = make_shared_psram<Wolf3dControl>();
+	if (!control) {
+		debug_log("bufferUseWolf3D: failed to allocate control %d\n\r",
+			bufferId);
+		return;
+	}
+	if (!control->handle_subcommand(
+			*this, static_cast<uint8_t>(subcommand))) {
+		debug_log("bufferUseWolf3D: truncated subcommand %d for buffer %d\n\r",
+			subcommand, bufferId);
+		return;
+	}
+
+	// Control IDs share the global buffered-resource namespace. The first
+	// complete Wolf command claims this ID and releases any prior ordinary or
+	// typed user; a later Pingo/ordinary creation reciprocally releases Wolf.
+	bufferClear(bufferId);
+	controls.emplace(bufferId, std::move(control));
 }
 
 

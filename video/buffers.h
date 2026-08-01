@@ -16,6 +16,15 @@ using BufferVector = std::vector<std::shared_ptr<BufferStream>, psram_allocator<
 std::unordered_map<uint16_t, BufferVector, std::hash<uint16_t>, std::equal_to<uint16_t>, psram_allocator<std::pair<const uint16_t, BufferVector>>> buffers;
 std::unordered_map<uint16_t, std::unordered_set<uint16_t>> callbackBuffers;
 
+// Pingo controls live in ordinary buffers but own resources outside those
+// buffers. Register only controls that completed initialization so every
+// processor can reject copied control bytes and run teardown before mutation.
+std::unordered_set<uint16_t> pingo3dControlBuffers;
+
+inline bool isPingo3dControlBuffer(uint16_t bufferId) {
+	return pingo3dControlBuffers.count(bufferId) != 0;
+}
+
 struct AdvancedOffset {
 	uint32_t blockOffset = 0;
 	size_t blockIndex = 0;

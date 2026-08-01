@@ -33,3 +33,32 @@ The AGON documentation can now be found on the [Community Documentation](https:/
 This project makes use of [PlatformIO](https://platformio.org) to build the firmware.  Using the PlatformIO IDE with Visual Studio Code is recommended, but it is also possible to use the PlatformIO CLI.
 
 Previously, it was also possible to use the Arduino IDE to build the firmware, but this is no longer supported.  This is because this project makes use of an updated version of vdp-gl, which is not directly able to be used with the Arduino IDE.  (It is technically still possible to use the Arduino IDE, but it is not recommended, as you would need to manually download the applicable vdp-gl version.)
+
+### Combined Pingo and Wolf3DOrig variant
+
+The `pingowolf` branch integrates the separately qualified Pingo and
+Wolf3DOrig VDP extensions on the exact Agon Platform VDP 2.16.0 release. It
+preserves the upstream identity and reports each subsystem on its own boot
+line. The reproducible source manifest, ownership boundaries, collision
+resolutions, and qualification gates are recorded in
+[docs/wolf-pingo-integration.md](docs/wolf-pingo-integration.md).
+
+The two source branches remain independent regression and rollback points;
+this combined branch is the only integration worktree.
+
+### Pingo lineage
+
+The `pingo-v2.16-promotion` branch is the qualified Pingo 2.16.0 Alpha 1
+variant. It replays the qualified Pingo history onto the exact Agon VDP
+2.16.0 release and contains no Wolf subsystem code. See
+[docs/pingo-v2.16-promotion.md](docs/pingo-v2.16-promotion.md) for the promotion
+contract, compatibility changes, and qualification record. The previously
+qualified 2.15 line remains the reference described by
+[docs/tv-port.md](docs/tv-port.md). The optional compile-time
+renderer-attribution build and its hardware capture workflow are documented in
+[docs/pingo-render-diagnostics.md](docs/pingo-render-diagnostics.md).
+
+The authoritative Pingo assembly applications, hardware test fixtures, source
+assets, benchmark harnesses, and project-local emulator profiles live in the
+separate `~/Agon/mystuff/pingoasm` repository. They are not maintained in this
+firmware repository or in `~/Agon/pingoasm`.

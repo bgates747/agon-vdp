@@ -865,6 +865,14 @@ void Context::drawBitmap(uint16_t x, uint16_t y, bool compensateHeight, bool for
 		if (bitmapTransform != 65535) {
 			auto transformBufferIter = buffers.find(bitmapTransform);
 			if (transformBufferIter != buffers.end()) {
+				if (isPingo3dControlBuffer(bitmapTransform)) {
+					debug_log(
+						"drawBitmap: buffer %d is a live Pingo control, not a transform\n\r",
+						bitmapTransform);
+					bitmapTransform = 65535;
+					canvas->drawBitmap(x, yPos, bitmap.get());
+					return;
+				}
 				auto &transformBuffer = transformBufferIter->second;
 				if (!checkTransformBuffer(transformBuffer)) {
 					debug_log("drawBitmap: transform buffer %d is invalid\n\r", bitmapTransform);

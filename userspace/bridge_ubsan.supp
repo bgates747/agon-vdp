@@ -1,0 +1,4 @@
+# The Fab userspace VGA adapter reads this member before its host-side
+# constructor initializes it. Keep this exact upstream source suppressed so
+# the Pingo bridge can retain every other UBSan check, including bool checks.
+bool:*/dispdrivers/vgabasecontroller.cpp

@@ -824,7 +824,13 @@ void VDUStreamProcessor::vdu_sys_layers_tilelayer_init(uint8_t tileLayerNum, uin
 
 
 			if (tileLayer0Buffer != nullptr) {
+#ifdef USERSPACE
+				// heap_caps_get_allocated_size() is ESP-IDF-only; approximate
+				// with the requested size for the host build's diagnostics.
+				size_t actualSize = tileLayer0BufferSize;
+#else
 				size_t actualSize = heap_caps_get_allocated_size(tileLayer0Buffer);
+#endif
 				debug_log("Allocated size: %zu bytes\r\n", actualSize);
 			} else {
 				debug_log("Memory allocation failed\r\n");

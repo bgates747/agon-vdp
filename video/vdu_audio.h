@@ -260,6 +260,12 @@ uint8_t VDUStreamProcessor::loadSample(uint16_t bufferId, uint32_t length) {
 // Create a sample from a buffer
 //
 uint8_t VDUStreamProcessor::createSampleFromBuffer(uint16_t bufferId, uint8_t format, uint16_t sampleRate) {
+	if (isPingo3dControlBuffer(bufferId)) {
+		debug_log(
+			"vdu_sys_audio: refusing live Pingo control %d as sample data\n\r",
+			bufferId);
+		return 0;
+	}
 	if (buffers.find(bufferId) == buffers.end()) {
 		debug_log("vdu_sys_audio: buffer %d not found\n\r", bufferId);
 		return 0;

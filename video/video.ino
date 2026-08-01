@@ -170,6 +170,8 @@ void boot_screen() {
 		printFmt(" Build %s", VERSION_BUILD);
 	#endif
 	printFmt("\n\r");
+	printFmt("Pingo %s\n\r", PINGO_VERSION);
+	printFmt("Wolf3DOrig %s\n\r", WOLF3DORIG_VERSION);
 }
 
 // Debug printf to PC
@@ -201,7 +203,12 @@ void force_debug_log(const char *format, ...) {
 		va_start(ap, format);
 		char buf[size + 1];
 		vsnprintf(buf, size, format, ap);
+		#ifdef USERSPACE
+		fputs(buf, stderr);
+		fflush(stderr);
+		#else
 		DBGSerial.print(buf);
+		#endif
 	}
 	va_end(ap);
 }

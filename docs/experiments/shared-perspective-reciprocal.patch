@@ -1,0 +1,15 @@
+diff --git a/video/pingo/render/renderer.c b/video/pingo/render/renderer.c
+--- a/video/pingo/render/renderer.c
++++ b/video/pingo/render/renderer.c
+@@ -429,8 +429,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
+                     }
++                    float perspectiveScale = areaInverse / oneOverW;
+                     float textCoordx =
+                         (w0 * tca.x + w1 * tcb.x + w2 * tcc.x)
+-                        * areaInverse / oneOverW;
++                        * perspectiveScale;
+                     float textCoordy =
+                         (w0 * tca.y + w1 * tcb.y + w2 * tcc.y)
+-                        * areaInverse / oneOverW;
++                        * perspectiveScale;
+ 
