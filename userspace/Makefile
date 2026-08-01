@@ -63,7 +63,9 @@ COMMON_INCLUDES := \
 	-I$(VDP_GL_SRC)/comdrivers \
 	-I$(VDP_GL_SRC)/dispdrivers \
 	-I$(VDP_GL_SRC)/userspace-platform \
-	-I$(VDP_GL_SRC)/userspace-platform/matrix
+	-I$(VDP_GL_SRC)/userspace-platform/matrix \
+	-I$(VDP_ROOT)/.pio/libdeps/esp32dev/CRC/src \
+	-I$(VDP_ROOT)/.pio/libdeps/esp32dev/ESP32Time
 
 PINGO_CFLAGS := \
 	-DUSERSPACE \
@@ -162,7 +164,10 @@ PINGO_OBJECTS := $(addprefix $(BUILD_DIR)/pingo/,$(PINGO_C_SOURCES:.c=.o))
 VDP_GL_OBJECTS := $(addprefix $(BUILD_DIR)/fabgl/,$(VDP_GL_CXX_SOURCES:.cpp=.o))
 VDP_OBJECTS := \
 	$(BUILD_DIR)/vdp_pingo.o \
-	$(BUILD_DIR)/rust_glue.o
+	$(BUILD_DIR)/rust_glue.o \
+	$(BUILD_DIR)/CRC16.o \
+	$(BUILD_DIR)/CRC32.o \
+	$(BUILD_DIR)/CrcFastReverse.o
 OBJECTS := $(VDP_OBJECTS) $(PINGO_OBJECTS)
 DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 
@@ -188,6 +193,18 @@ $(BUILD_DIR)/vdp_pingo.o: vdp_pingo.cpp $(ADAPTER_MAKEFILE)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -c $< -o $@
 
 $(BUILD_DIR)/rust_glue.o: $(FAB_VDP_DIR)/rust_glue.cpp $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -c $< -o $@
+
+$(BUILD_DIR)/CRC16.o: $(VDP_ROOT)/.pio/libdeps/esp32dev/CRC/src/CRC16.cpp $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -include $(CURDIR)/arduino_yield_shim.h -c $< -o $@
+
+$(BUILD_DIR)/CRC32.o: $(VDP_ROOT)/.pio/libdeps/esp32dev/CRC/src/CRC32.cpp $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -include $(CURDIR)/arduino_yield_shim.h -c $< -o $@
+
+$(BUILD_DIR)/CrcFastReverse.o: $(VDP_ROOT)/.pio/libdeps/esp32dev/CRC/src/CrcFastReverse.cpp $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) $(VDP_CXXFLAGS) -c $< -o $@
 

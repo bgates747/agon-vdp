@@ -271,13 +271,13 @@ const char * MOS_YmodemSession::getFiledata(size_t index) {
   return files[index].buffer;
 }
 
-size_t MOS_YmodemSession::getFilesize(unsigned index) {
+size_t MOS_YmodemSession::getFilesize(size_t index) {
   if(index >= _filecount) return 0;
 
   return files[index].filesize;
 }
 
-const char * MOS_YmodemSession::getFilename(unsigned index) {
+const char * MOS_YmodemSession::getFilename(size_t index) {
   if(index >= _filecount) return NULL;
 
   return files[index].filename;
