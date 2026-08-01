@@ -60,10 +60,10 @@ REVIEWED_EMULATOR_FILES = {
         "4e7e03b4b91f7b3f818883bfc37585b82ec0b38ef0f903a135701cd54f7b14cd"
     ),
     "scripts/run_combined_emulator.sh": (
-        "7a4380346bd50863c7398847ff5cf183e83b59f428b2717424b8eeba0830bc3a"
+        "b398985505693b4bf6d6c1e3deeabadc365b20bef2e9a96da61c824ab5133fbd"
     ),
     "scripts/setup_combined_emulator.py": (
-        "b6f775e5e1e1bdb6311efa2da43d2dae8b6da862f89e851912697fa67a2485ff"
+        "725f7b7ac8e2faeb80ab9dd95c286ab71614eea1a9a8464af2e2fb5d74301474"
     ),
     "userspace/combined_emulator_exit.asm": (
         "66e40cd06f1986f62b0843b2d129bd8e8ff0496bf34cfe2ef17c4c10e8d779ed"
@@ -865,7 +865,7 @@ def check_reviewed_emulator_profile(preflight: Preflight, repo: Path) -> None:
         '"hud.agnb": "1848900559fe9f684dbfc8ae80b0416132db5414bc1ab41f9dad47a5ab26a74d"',
         '"sfx.agnb": "f294c1152bedca56e726e115ce1d1dc2f5aa6191e340a96a79b1e845296f1cd4"',
         'b"SET KEYBOARD 1\\r\\n"',
-        'b"cd /mystuff/pingoasm/apps/earth-party-flat-local/tgt\\r\\n"',
+        'b"cd /mystuff/pingoasm/apps/earth-party-flat/tgt\\r\\n"',
         'b"cd /wolf3d\\r\\n"',
         '"--refresh-autoexec"',
         "if not path.exists() or refresh:",
@@ -903,7 +903,7 @@ def check_reviewed_emulator_profile(preflight: Preflight, repo: Path) -> None:
         'launch_artifacts="${run_root}/launch-artifacts"',
         '"${launch_artifacts}/vdp_combined.so"',
         '"${launch_artifacts}/mos_console8.map"',
-        '"${profile_sd}/mystuff/pingoasm/apps/earth-party-flat-local/tgt"',
+        '"${profile_sd}/mystuff/pingoasm/apps/earth-party-flat/tgt"',
         '"${profile_sd}/pingo/cube-rgba2222/tgt"',
         '"${profile_sd}/wolf3d" "${sdcard}/wolf3d"',
         '"${profile_sd}/combined-smoke" "${sdcard}/combined-smoke"',

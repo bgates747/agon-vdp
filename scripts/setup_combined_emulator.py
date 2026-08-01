@@ -37,7 +37,7 @@ NOMINATED_WOLF_HASHES = {
 
 VISUAL_AUTOEXEC = (
     b"SET KEYBOARD 1\r\n"
-    b"cd /mystuff/pingoasm/apps/earth-party-flat-local/tgt\r\n"
+    b"cd /mystuff/pingoasm/apps/earth-party-flat/tgt\r\n"
     b"load earth-party-flat.bin\r\n"
     b"run\r\n"
     b"cd /wolf3d\r\n"
@@ -265,7 +265,7 @@ def main() -> None:
     shared_sd = fab_root / "sdcard"
     pingo_apps = pingoasm_root / "apps"
     pingo_visual = (
-        pingo_apps / "earth-party-flat-local/tgt/earth-party-flat.bin"
+        pingo_apps / "earth-party-flat/tgt/earth-party-flat.bin"
     )
     pingo_benchmarks = pingoasm_root / "benchmarks/render-spin/fixtures"
     pingo_smoke_dir = pingo_benchmarks / "cube-rgba2222/tgt"

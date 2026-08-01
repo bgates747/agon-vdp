@@ -363,8 +363,8 @@ mos_bin="${launch_artifacts}/mos_console8.bin"
 sdcard="${run_root}/sdcard"
 mkdir -p -- "${sdcard}"
 snapshot_fixture_directory \
-    "${profile_sd}/mystuff/pingoasm/apps/earth-party-flat-local/tgt" \
-    "${sdcard}/mystuff/pingoasm/apps/earth-party-flat-local/tgt" \
+    "${profile_sd}/mystuff/pingoasm/apps/earth-party-flat/tgt" \
+    "${sdcard}/mystuff/pingoasm/apps/earth-party-flat/tgt" \
     'Pingo Earth Party Flat'
 snapshot_fixture_directory \
     "${profile_sd}/pingo/cube-rgba2222/tgt" \
