@@ -16,6 +16,33 @@
 typedef struct tag_Scene Scene;
 typedef struct tag_BackEnd BackEnd;
 
+enum {
+    PINGO_FLAT_PATTERN_WIDTH = 4,
+    PINGO_FLAT_PATTERN_HEIGHT = 4,
+    PINGO_FLAT_PATTERN_PIXELS =
+        PINGO_FLAT_PATTERN_WIDTH * PINGO_FLAT_PATTERN_HEIGHT,
+    PINGO_FLAT_PATTERN_MAX_PATTERNS = 256
+};
+
+/*
+ * Borrowed, renderer-facing view of a precomputed flat-pattern resource.
+ *
+ * `patterns` contains pattern_count consecutive 4x4 opaque native RGBA2222
+ * images. `lookup` is material-major and contains one uint8 pattern ID for
+ * every material/illumination-band pair; at least two endpoint-inclusive
+ * bands are required. The renderer never owns either allocation; both must
+ * remain stable for every render using this binding.
+ */
+typedef struct tag_PingoFlatPatternLibrary {
+    const uint8_t * patterns;
+    uint32_t patterns_size;
+    const uint8_t * lookup;
+    uint32_t lookup_size;
+    uint16_t pattern_count;
+    uint8_t material_count;
+    uint8_t illumination_band_count;
+} PingoFlatPatternLibrary;
+
 #if PINGO_RENDER_DIAGNOSTICS
 typedef uint32_t (*RendererDiagnosticsClock)(void);
 
@@ -71,6 +98,9 @@ typedef struct tag_Renderer{
     float ambientLight;
     int illuminationEnabled;
 
+    PingoFlatPatternLibrary flatPatternLibrary;
+    uint8_t flatPatternLibraryValid;
+
 #if PINGO_RENDER_DIAGNOSTICS
     /*
      * The bridge supplies a cheap wrapping tick counter and its frequency.
@@ -106,3 +136,11 @@ extern void rendererSetLightIntensity(Renderer *r, uint8_t intensity);
 extern void rendererSetAmbientLight(Renderer *r, uint8_t ambient);
 
 extern void rendererSetIlluminationEnabled(Renderer *r, int enabled);
+
+/*
+ * Bind borrowed flat-pattern data after validating sizes and every lookup ID.
+ * A NULL library clears the binding. An invalid non-NULL candidate returns
+ * nonzero without changing the previous binding.
+ */
+extern int rendererSetFlatPatternLibrary(
+    Renderer *r, const PingoFlatPatternLibrary *library);

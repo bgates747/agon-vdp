@@ -144,6 +144,11 @@ channel saturates at its maximum rather than wrapping.
 <b>VDU 23, 0, &A0, sid; &49, 46, enabled</b> :  Enable or Disable Illumination<br>
 <b>VDU 23, 0, &A0, sid; &49, 47, mid; mode</b> :  Set Mesh Shading Mode<br>
 <b>VDU 23, 0, &A0, sid; &49, 48, mid; mode</b> :  Set Mesh Illumination Policy<br>
+<b>VDU 23, 0, &A0, sid; &49, 49, pattern_buffer; lookup_buffer; pattern_count; material_count, band_count</b> :  Bind Flat-Pattern Library (Experimental)<br>
+<b>VDU 23, 0, &A0, sid; &49, 50, stage_bmid; mid; V; I; U; T;</b> :  Atomically Replace Mesh from Consolidated Buffer (Experimental)<br>
+<b>VDU 23, 0, &A0, sid; &49, 51, oid; active</b> :  Set Object Active State (Experimental)<br>
+<b>VDU 23, 0, &A0, sid; &49, 52, oid; distx24; disty24; distz24</b> :  Set Object XYZ Wide Translation Distances (Experimental)<br>
+<b>VDU 23, 0, &A0, sid; &49, 53, far_units;</b> :  Set Projection Far Distance (Experimental)<br>
 
 ## Create Control Structure
 <b>VDU 23, 0, &A0, sid; &49, 0, w; h;</b> :  Create Control Structure<br>
@@ -477,8 +482,9 @@ shade       = max(ambient / 127, directional * intensity / 127)
 
 An `enabled` value of 1 enables scene lighting; 0 disables it. Other values are
 invalid and leave the prior state unchanged. With illumination disabled, Pingo
-skips the normal, dot-product, and shade-table work and writes native texture or
-flat-palette colors. Illumination is enabled by default.
+skips the normal, dot-product, and shade-table work. Textured and flat-palette
+meshes write native colors; flat-pattern meshes select the library's final
+illumination band. Illumination is enabled by default.
 
 Illumination and mesh shading mode are independent. Flat-palette triangles are
 illuminated normally when illumination is enabled and retain their native
@@ -497,20 +503,251 @@ by an unsigned byte:
 - Mode 0: perspective-correct textured rendering.
 - Mode 1: flat-palette rendering, with one constant sampled color per source
   triangle.
+- Mode 2: experimental flat-pattern rendering, with one precomputed 4x4 native
+  RGBA2222 pattern selected per source triangle.
 
 Mode 0 is the default. Invalid modes are rejected without changing or creating
 the mesh.
 
 Flat-palette mode samples the first UV of each original source triangle once.
-All triangles generated from that source by frustum clipping retain the same
-sampled color. Geometry clipping, depth testing, span ownership, RGBA2222 output,
-and optional illumination continue through the established Pingo renderer;
-RGBA8888 destinations still receive the normal compatibility expansion.
+Flat-pattern mode instead interprets that UV's clamped, row-major texel
+position as a material ID; the texel color is irrelevant. All triangles
+generated from that source by frustum clipping retain the same sampled color or
+selected pattern. Geometry clipping, depth testing, span ownership, RGBA2222
+output, and optional illumination continue through the established Pingo
+renderer; RGBA8888 destinations still receive the normal compatibility
+expansion.
 
 Asset-build tooling must ensure that all three UVs of a flat-shaded source
 triangle select the same cell in the reference palette; malformed multi-color
 triangles should be rejected before upload. The firmware deliberately does not
 reinterpret or rewrite the UV data.
+
+## Bind Flat-Pattern Library (Experimental)
+<b>VDU 23, 0, &A0, sid; &49, 49, pattern_buffer; lookup_buffer; pattern_count; material_count, band_count</b> :  Bind Flat-Pattern Library<br>
+
+This command installs the resources used by mesh shading mode 2. The fixed
+eight-byte payload is:
+
+```
+pattern_buffer:u16
+lookup_buffer:u16
+pattern_count:u16
+material_count:u8
+band_count:u8
+```
+
+The pattern buffer must contain exactly `pattern_count * 16` bytes in one
+consolidated block. Each consecutive 16-byte record is a row-major 4x4 pattern
+of opaque native RGBA2222 pixels. The lookup buffer must contain exactly
+`material_count * band_count` bytes in one consolidated block. Lookup entries
+are zero-based pattern IDs in material-major order:
+
+```
+lookup[material_id * band_count + illumination_band]
+```
+
+Accepted ranges are 1 through 256 patterns, 1 through 255 materials, and 2
+through 255 illumination bands. Every pattern pixel must have RGBA2222 alpha 3,
+and every lookup entry must be less than `pattern_count`. Buffer 65535, a live
+Pingo control buffer, identical source IDs, mixed-zero fields, wrong sizes, and
+multi-block resources are rejected.
+
+Pingo validates the complete candidate and takes a private immutable snapshot
+of both buffers. Clearing, replacing, or modifying the generic source buffers
+after a successful bind therefore does not change an active scene. Malformed,
+truncated, or allocation-failed commands preserve the previous binding. A
+payload in which all five fields are zero explicitly removes it.
+
+The application normally supplies a compact selector bitmap and assigns each
+source triangle a UV whose first coordinate selects material texel position 0
+through `material_count - 1`. A 4x4 bitmap therefore carries up to 16 material
+IDs even though its pixel values are unused. Invalid material IDs, absent
+libraries, and invalid retained pattern IDs reject the affected object or face
+before any depth-buffer write.
+
+For a scene-lit face, Pingo chooses the nearest endpoint-inclusive band:
+
+```
+illumination_band = round(clamp(shade, 0, 1) * (band_count - 1))
+```
+
+Self-illuminated meshes, globally unlit scenes, and the compile-time unlit build
+select the final band. The chosen native pattern already encodes the intended
+illumination and is written without a second shade operation. Its phase is
+global screen space, `pattern[(y & 3) * 4 + (x & 3)]`, so adjacent triangles
+and independently culled terrain chunks do not restart or expose pattern seams.
+
+This command and mode 2 are experimental while the terrain fixture qualifies
+their visual quality and performance. Modes 0 and 1 are unchanged and do not
+depend on a flat-pattern library.
+
+## Atomically Replace Mesh from Consolidated Buffer (Experimental)
+<b>VDU 23, 0, &A0, sid; &49, 50, stage_bmid; mid; V; I; U; T;</b> :  Atomically Replace Mesh from Consolidated Buffer<br>
+
+This fixed twelve-byte command replaces all four array components of an
+already-established mesh slot. Its little-endian payload is:
+
+```
+stage_bmid:u16
+mid:u16
+V:u16
+I:u16
+U:u16
+T:u16
+```
+
+`stage_bmid` must identify an ordinary generic buffer containing exactly one
+consolidated block. A live Pingo control, buffer 0, buffer 65535, a missing
+buffer, or a multi-block buffer is invalid. `mid` must already exist; an
+application may establish an empty stable slot with subcommand 47 or 48 before
+its first import. Requiring that slot avoids a map-node allocation at commit
+time and preserves the address held by every object already bound to it.
+
+The staging block has no header and contains four consecutive packed arrays:
+
+```
+positions:        3 * V signed s16 values (x, y, z)
+position_indices: I     u16 values
+texture_coords:   2 * U u16 values (u, v)
+texture_indices:  T     u16 values
+```
+
+Every value is little-endian. The exact staging size is therefore:
+
+```
+6 * V + 2 * I + 4 * U + 2 * T bytes
+```
+
+Positions use the established Pingo vertex conversion, signed value divided by
+32767; consequently -32768 remains slightly below -1 exactly as with
+subcommand 1. Texture coordinates use the established unsigned value divided
+by 65535. Accepted counts are `V >= 3`, `I >= 3`, `I % 3 == 0`, `U >= 1`, and
+`T == I`. Every position index must be less than `V`, every texture index must
+be less than `U`, and all converted coordinates must be finite.
+
+When the target slot is already in flat-palette or flat-pattern shading mode,
+all three indexed UV pairs of each source face must be identical. This gives
+each flat face one unambiguous selector. Textured slots retain independent UVs
+at their three corners.
+
+Pingo allocates and fills four private native arrays, computes geometry
+validity and model-space bounds, and validates the complete candidate before
+publishing any part of it. It then replaces the four arrays in the existing
+map-resident mesh and refreshes every dependent object's texture-mapping
+validity. The mesh's shading mode and illumination policy are retained.
+Objects bound to the slot keep the same mesh pointer.
+
+Missing, malformed, truncated, out-of-range, inconsistent, or
+allocation-failed commands preserve the prior mesh and its object bindings.
+The accepted arrays do not borrow the staging storage, so subsequent generic
+buffer edits cannot change them. Pingo deliberately does not clear
+`stage_bmid`; the caller may reuse or clear it after the command.
+
+Diagnostic builds emit one machine-readable `PINGO_STREAM mesh_replace=ok`
+line after atomic publication. It includes the staging and mesh IDs, exact byte
+and element counts, and firmware-side conversion/publication time in
+microseconds. A rejected command emits no success line; its existing
+reason-specific debug message identifies the validation or allocation failure.
+
+## Set Object Active State (Experimental)
+<b>VDU 23, 0, &A0, sid; &49, 51, oid; active</b> :  Set Object Active State<br>
+
+The 16-bit object ID is followed by one byte. `active=1` enables rendering and
+`active=0` disables it. Objects are active by default, including objects
+created by older applications. The object must already exist, and any other
+value is invalid; invalid, absent-object, and truncated commands preserve
+state and do not create a placeholder object.
+
+An inactive VDU object is not added to the transient render scene, so it does
+not consume one of that scene's renderable slots. The native object renderer
+also rejects an inactive object at entry, before geometry, material, frustum,
+triangle, depth, or diagnostic work. Its transforms, texture binding, mesh
+binding, and mesh contents remain intact, so reactivation is a constant-size
+control operation. This command is intended to hide a streaming slot while its
+next mesh is prepared or when its terrain tile is outside the application's
+working set.
+
+Diagnostic builds emit `PINGO_STREAM object_active=ok` with the object ID and
+new state. They also emit `PINGO_SCENE active_overflow=1` if an application
+nevertheless exceeds the fixed 32-renderable scene budget; objects at and after
+the reported map-ordered ID are omitted from that frame.
+
+## Set Object XYZ Wide Translation Distances (Experimental)
+<b>VDU 23, 0, &A0, sid; &49, 52, oid; distx24; disty24; distz24</b> :  Set Object XYZ Wide Translation Distances<br>
+
+This command sets all three translation components of an already-established
+object using an eleven-byte little-endian payload:
+
+```
+oid:u16
+distx24:s24
+disty24:s24
+distz24:s24
+```
+
+Each distance is a signed two's-complement 24-bit integer in the same raw unit
+used by the legacy 16-bit object translation commands 14 through 17. The
+native conversion remains:
+
+```
+translation = signed_raw * (256 / 32767)
+```
+
+Consequently, sign-extending a command-17 value into 24 bits produces the same
+native transform. At the terrain project's accepted 1:8 scale, applications
+normally treat about 16 raw counts as one metre. The full range
+`-8388608..+8388607` then spans approximately -524,288 through +524,288 metres.
+
+The object must already exist. Pingo always reads the complete fixed payload
+before checking that stable object slot, so a valid packet naming an absent
+object cannot disrupt the following VDU command and does not create a
+placeholder. A truncated packet or absent object preserves the previous scene.
+All three components commit together and mark the object transform dirty.
+
+This is deliberately object-only. A floating-origin application keeps its
+camera local and continues to use command 25; no wide camera or scene command
+is defined without a demonstrated caller. This command also leaves the
+control's retained projection distance unchanged; command 53 owns that
+independent setting, whose initialization default is 2,500 units.
+
+Diagnostic builds emit `PINGO_WIDE object_translation=ok` with the object ID
+and the three signed raw values after a successful atomic update.
+
+## Set Projection Far Distance (Experimental)
+<b>VDU 23, 0, &A0, sid; &49, 53, far_units;</b> :  Set Projection Far Distance<br>
+
+This command sets one control's perspective far plane to an unsigned 16-bit
+distance in Pingo world units. Every new control defaults to the legacy
+configured value of 2,500 units. The near plane remains fixed at one unit.
+
+This experimental candidate also corrects the perspective matrix that applies
+that setting. The earlier near-one coefficients made homogeneous `Z + W`
+identically one, so the nominal far plane could never reject finite geometry.
+The corrected mapping sends view-space `z=-near` to `Z=0` and `z=-far` to
+`Z=-W`, matching Pingo's documented `-W <= Z <= 0` clip volume. Consequently,
+applications that never send command 53 now genuinely lose geometry beyond
+2,500 units; this is a deliberate renderer correctness change, not bit-exact
+legacy output. Perspective scale also changes by about 0.04 percent at that
+default distance. Existing scenes therefore require the same emulator and
+hardware visual qualification as command-53 users.
+
+Accepted values are 2 through 65,535 inclusive. Zero, one, and a truncated
+word are rejected without changing the retained distance. The accepted value
+is used the next time that control renders; it does not affect any other Pingo
+control. Deleting and recreating a control restores the 2,500-unit default.
+
+At the terrain project's accepted eight-metres-per-Pingo-unit scale, the
+legacy default reaches 20 km, 8,000 reaches 64 km, and the protocol maximum is
+approximately 524 km. A larger far/near ratio reduces perspective depth
+separation, so applications should select the shortest distance that contains
+the scenery they actually intend to render. Pingo currently uses a 32-bit
+depth buffer, but a changed distance still requires application-level visual
+qualification.
+
+Diagnostic builds emit `PINGO_PROJECTION far_set=ok units=...` for each
+accepted update. The `PINGO_RENDER` record also reports the applied value as
+`far=...`.
 
 ## Set Mesh Illumination Policy
 <b>VDU 23, 0, &A0, sid; &49, 48, mid; mode</b> :  Set Mesh Illumination Policy
@@ -519,14 +756,16 @@ This command selects how every object using a mesh responds to the scene-wide
 illumination state. The 16-bit mesh ID is followed by an unsigned byte:
 
 - Mode 0: inherit scene illumination.
-- Mode 1: self-illuminated; emit native texture or flat-palette colors.
+- Mode 1: self-illuminated; emit native texture or flat-palette colors, or use
+  the final illumination band for flat-pattern meshes.
 
 Mode 0 is the default and preserves the behavior of existing applications.
 Mode 1 bypasses the face-normal, directional-light, ambient-floor, and
 shade-table work for that mesh. It does not bypass geometry transforms,
-clipping, depth testing, texture mapping, or flat-palette selection. Shading
-mode and illumination policy are independent: either a textured or a
-flat-palette mesh may be scene-lit or self-illuminated.
+clipping, depth testing, texture mapping, flat-palette selection, or
+flat-pattern selection. Shading mode and illumination policy are independent:
+textured, flat-palette, and flat-pattern meshes may be scene-lit or
+self-illuminated.
 
 A valid policy may be selected before mesh geometry is uploaded, and later
 component uploads retain it. Invalid modes are rejected without changing or
@@ -534,9 +773,10 @@ creating the mesh. The policy is mesh-owned, so it applies to every object that
 references that mesh.
 
 When scene illumination is disabled with subcommand 46, inherited meshes also
-emit native colors. The `PINGO_DISABLE_ILLUMINATION=1` diagnostic build retains
-its compile-time behavior: all meshes emit native colors regardless of their
-runtime illumination policy.
+emit native colors, while flat-pattern meshes select their final band. The
+`PINGO_DISABLE_ILLUMINATION=1` diagnostic build retains its compile-time
+behavior: textured and flat-palette meshes emit native colors and flat-pattern
+meshes select their final band, regardless of runtime illumination policy.
 
 ## Sample
 

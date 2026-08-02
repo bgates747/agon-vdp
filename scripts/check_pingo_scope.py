@@ -9,7 +9,11 @@ ROOT = Path(__file__).resolve().parents[1]
 BRIDGE = ROOT / "video/pingo_3d.h"
 BUFFERED = ROOT / "video/vdu_buffered.h"
 
-EXPECTED_DISPATCH = set(range(1, 39)) | {40, 41} | set(range(43, 49))
+# Commands 39 and 42 are intentionally not inner dispatch entries: 39 is the
+# outer control-lifecycle route and 42 remains unassigned.  Keep experimental
+# terrain commands explicit here so a new handler cannot silently widen the
+# audited protocol surface.
+EXPECTED_DISPATCH = set(range(1, 39)) | {40, 41} | set(range(43, 54))
 
 
 def main() -> None:
@@ -34,7 +38,7 @@ def main() -> None:
         raise SystemExit(f"Missing outer lifecycle routes: {absent}")
 
     print(
-        "Pingo scope verified: TurboVega 0-40 plus local extensions 41, 43-48"
+        "Pingo scope verified: TurboVega 0-40 plus local extensions 41, 43-53"
     )
 
 

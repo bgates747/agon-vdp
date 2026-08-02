@@ -285,6 +285,9 @@ namespace p3d {
 #define PINGO_RENDER_NOTIFY_KEYCODE  1
 #define PINGO_RENDER_NOTIFY_VERSION  1
 #define PINGO_RENDER_NOTIFY_COMPLETE 1
+#define PINGO_PROJECTION_NEAR_UNITS 1.0f
+#define PINGO_PROJECTION_FAR_DEFAULT_UNITS 2500
+#define PINGO_PROJECTION_FAR_MIN_UNITS 2
 
 class VDUStreamProcessor;
 
@@ -381,6 +384,16 @@ typedef struct tag_TexObject : public Transformable {
     }
 } TexObject;
 
+typedef struct tag_PingoFlatPatternBinding {
+    /*
+     * Immutable private snapshot of client-uploaded generic buffers. Generic
+     * buffered operations can mutate their source blocks in place after a
+     * bind, so borrowing those bytes would invalidate the accepted lookup.
+     */
+    uint8_t* m_storage;
+    p3d::PingoFlatPatternLibrary m_library;
+} PingoFlatPatternBinding;
+
 struct tag_Pingo3dControl;
 
 extern "C" {
@@ -406,6 +419,7 @@ typedef struct tag_Pingo3dControl {
     p3d::PingoDepth*    m_zeta;             // Zeta buffer for depth information
     uint16_t            m_width;            // Width of final render in pixels
     uint16_t            m_height;           // Height of final render in pixels
+    uint16_t            m_projection_far_units; // Per-control perspective far plane
     Transformable       m_camera;           // Camera transformation settings
     Transformable       m_scene;            // Scene transformation settings
     std::map<uint16_t, p3d::Mesh>* m_meshes;    // Map of meshes for use by objects
@@ -417,6 +431,7 @@ typedef struct tag_Pingo3dControl {
     uint8_t             m_light_intensity;  // 127 is unity; 128..255 overdrive
     uint8_t             m_ambient_light;    // Minimum shade; 127 is unity
     uint8_t             m_illumination_enabled; // Zero writes native texture colors
+    PingoFlatPatternBinding* m_flat_pattern_binding;
 
     void show_free_ram() {
         debug_log("Free PSRAM: %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -468,6 +483,7 @@ typedef struct tag_Pingo3dControl {
 
         m_width = width;
         m_height = height;
+        m_projection_far_units = PINGO_PROJECTION_FAR_DEFAULT_UNITS;
         m_proc = &processor;
         m_frame = frame;
         m_zeta = zeta;
@@ -496,6 +512,16 @@ typedef struct tag_Pingo3dControl {
         return true;
     }
 
+    void release_flat_pattern_binding() {
+        if (!m_flat_pattern_binding) {
+            return;
+        }
+        pingo_owned_free(m_flat_pattern_binding->m_storage);
+        m_flat_pattern_binding->m_storage = nullptr;
+        pingo_owned_delete(m_flat_pattern_binding);
+        m_flat_pattern_binding = nullptr;
+    }
+
     // VDU 23, 0, &A0, sid; &48, 0, 0 :  Deinitialize Control Structure
     void deinitialize(VDUStreamProcessor& processor) {
         (void)processor;
@@ -503,6 +529,8 @@ typedef struct tag_Pingo3dControl {
         // Invalidate first so a repeated teardown is harmless.
         m_tag = 0;
         m_size = 0;
+
+        release_flat_pattern_binding();
 
         if (m_objects) {
             for (auto& entry : *m_objects) {
@@ -601,6 +629,11 @@ typedef struct tag_Pingo3dControl {
             case 46: set_illumination_enabled(); break;
             case 47: set_mesh_shading_mode(); break;
             case 48: set_mesh_illumination_policy(); break;
+            case 49: set_flat_pattern_library(); break;
+            case 50: replace_mesh_from_buffer(); break;
+            case 51: set_object_active(); break;
+            case 52: set_object_xyz_translation_distances_wide(); break;
+            case 53: set_projection_far_distance(); break;
         }
     }
 
@@ -693,7 +726,8 @@ typedef struct tag_Pingo3dControl {
     }
 
     // VDU 23, 0, &A0, sid; &49, 47, mesh_id; mode
-    // Mode 0 is perspective-textured; mode 1 is one palette color per face.
+    // Mode 0 is textured; 1 is one palette color per face; 2 is one uploaded
+    // 4x4 flat pattern per material/illumination pair.
     void set_mesh_shading_mode() {
         auto mesh_id = m_proc->readWord_t();
         if (mesh_id < 0) {
@@ -701,7 +735,8 @@ typedef struct tag_Pingo3dControl {
         }
         auto mode = m_proc->readByte_t();
         if (mode != p3d::MESH_SHADING_TEXTURED &&
-            mode != p3d::MESH_SHADING_FLAT_PALETTE) {
+            mode != p3d::MESH_SHADING_FLAT_PALETTE &&
+            mode != p3d::MESH_SHADING_FLAT_PATTERN) {
             return;
         }
         auto mesh = establish_mesh((uint16_t)mesh_id);
@@ -726,6 +761,385 @@ typedef struct tag_Pingo3dControl {
         if (mesh) {
             mesh->illumination_policy = (uint8_t)mode;
         }
+    }
+
+    /*
+     * VDU 23,0,&A0,sid; &49,49,
+     *     pattern_buffer; lookup_buffer; pattern_count;
+     *     material_count, illumination_band_count
+     *
+     * Both source buffers must already be consolidated into one exact-sized
+     * block. A completely zeroed payload clears the binding. Every other
+     * candidate is validated and privately copied before the accepted
+     * binding changes, so malformed input and allocation failure preserve the
+     * previous usable resource.
+     */
+    void set_flat_pattern_library() {
+        auto pattern_buffer_id = m_proc->readWord_t();
+        auto lookup_buffer_id = m_proc->readWord_t();
+        auto pattern_count = m_proc->readWord_t();
+        auto material_count = m_proc->readByte_t();
+        auto illumination_band_count = m_proc->readByte_t();
+        if (pattern_buffer_id < 0 || lookup_buffer_id < 0 ||
+            pattern_count < 0 || material_count < 0 ||
+            illumination_band_count < 0) {
+            return;
+        }
+
+        bool clear = pattern_buffer_id == 0 && lookup_buffer_id == 0 &&
+            pattern_count == 0 && material_count == 0 &&
+            illumination_band_count == 0;
+        if (clear) {
+            release_flat_pattern_binding();
+            return;
+        }
+
+        if (pattern_buffer_id == 0 || lookup_buffer_id == 0 ||
+            pattern_buffer_id == 65535 || lookup_buffer_id == 65535 ||
+            pattern_buffer_id == lookup_buffer_id ||
+            pattern_count < 1 ||
+            pattern_count > p3d::PINGO_FLAT_PATTERN_MAX_PATTERNS ||
+            material_count < 1 || illumination_band_count < 2 ||
+            isPingo3dControlBuffer((uint16_t)pattern_buffer_id) ||
+            isPingo3dControlBuffer((uint16_t)lookup_buffer_id)) {
+            debug_log("set_flat_pattern_library: invalid IDs or counts\n");
+            return;
+        }
+
+        size_t patterns_size =
+            (size_t)pattern_count * p3d::PINGO_FLAT_PATTERN_PIXELS;
+        size_t lookup_size =
+            (size_t)material_count * (size_t)illumination_band_count;
+        auto patterns_iter = buffers.find((uint16_t)pattern_buffer_id);
+        auto lookup_iter = buffers.find((uint16_t)lookup_buffer_id);
+        if (patterns_iter == buffers.end() ||
+            lookup_iter == buffers.end() ||
+            patterns_iter->second.size() != 1 ||
+            lookup_iter->second.size() != 1 ||
+            !patterns_iter->second.front() ||
+            !lookup_iter->second.front() ||
+            patterns_iter->second.front()->size() != patterns_size ||
+            lookup_iter->second.front()->size() != lookup_size ||
+            !patterns_iter->second.front()->getBuffer() ||
+            !lookup_iter->second.front()->getBuffer()) {
+            debug_log("set_flat_pattern_library: source buffers are not exact consolidated resources\n");
+            return;
+        }
+
+        const uint8_t* patterns =
+            patterns_iter->second.front()->getBuffer();
+        const uint8_t* lookup =
+            lookup_iter->second.front()->getBuffer();
+        for (size_t i = 0; i < patterns_size; i++) {
+            if ((patterns[i] & 0xC0) != 0xC0) {
+                debug_log("set_flat_pattern_library: pattern pixels must be opaque RGBA2222\n");
+                return;
+            }
+        }
+        for (size_t i = 0; i < lookup_size; i++) {
+            if (lookup[i] >= pattern_count) {
+                debug_log("set_flat_pattern_library: lookup pattern ID is out of range\n");
+                return;
+            }
+        }
+
+        auto replacement = pingo_owned_new<PingoFlatPatternBinding>();
+        if (!replacement) {
+            debug_log("set_flat_pattern_library: could not allocate binding\n");
+            return;
+        }
+        replacement->m_storage =
+            (uint8_t*)pingo_owned_malloc(patterns_size + lookup_size);
+        if (!replacement->m_storage) {
+            pingo_owned_delete(replacement);
+            debug_log("set_flat_pattern_library: could not copy resource\n");
+            return;
+        }
+        memcpy(replacement->m_storage, patterns, patterns_size);
+        memcpy(
+            replacement->m_storage + patterns_size,
+            lookup, lookup_size);
+        replacement->m_library = (p3d::PingoFlatPatternLibrary){
+            replacement->m_storage,
+            (uint32_t)patterns_size,
+            replacement->m_storage + patterns_size,
+            (uint32_t)lookup_size,
+            (uint16_t)pattern_count,
+            (uint8_t)material_count,
+            (uint8_t)illumination_band_count
+        };
+
+        auto previous = m_flat_pattern_binding;
+        m_flat_pattern_binding = replacement;
+        if (previous) {
+            pingo_owned_free(previous->m_storage);
+            previous->m_storage = nullptr;
+            pingo_owned_delete(previous);
+        }
+    }
+
+    /*
+     * VDU 23,0,&A0,sid; &49,50,
+     *     stage_bmid; mid; vertex_count; position_index_count;
+     *     texture_coordinate_count; texture_index_count;
+     *
+     * The source is one exact consolidated generic-buffer block containing,
+     * in order, packed little-endian signed-s16 XYZ positions, u16 position
+     * indices, u16 UV pairs, and u16 UV indices. The target mesh slot must
+     * already exist. This permits an allocation-free commit into its stable
+     * map address, so every object bound to the slot observes either the
+     * complete old mesh or the complete replacement.
+     *
+     * The staging buffer remains an ordinary caller-owned buffer and is not
+     * cleared by this command. Accepted geometry is converted into four
+     * private Pingo-owned arrays, so later generic-buffer mutation cannot
+     * affect the mesh.
+    */
+    void replace_mesh_from_buffer() {
+#if PINGO_RENDER_DIAGNOSTICS
+        uint64_t command_started_us = pingo_render_clock_us();
+#endif
+        auto stage_buffer_id = m_proc->readWord_t();
+        auto mesh_id = m_proc->readWord_t();
+        auto vertex_count = m_proc->readWord_t();
+        auto position_index_count = m_proc->readWord_t();
+        auto texture_coordinate_count = m_proc->readWord_t();
+        auto texture_index_count = m_proc->readWord_t();
+        if (stage_buffer_id < 0 || mesh_id < 0 || vertex_count < 0 ||
+            position_index_count < 0 || texture_coordinate_count < 0 ||
+            texture_index_count < 0) {
+            return;
+        }
+
+        const uint32_t vertices = (uint16_t)vertex_count;
+        const uint32_t position_indices =
+            (uint16_t)position_index_count;
+        const uint32_t texture_coordinates =
+            (uint16_t)texture_coordinate_count;
+        const uint32_t texture_indices =
+            (uint16_t)texture_index_count;
+        if (stage_buffer_id == 0 || stage_buffer_id == 65535 ||
+            isPingo3dControlBuffer((uint16_t)stage_buffer_id) ||
+            vertices < 3 || position_indices < 3 ||
+            (position_indices % 3U) != 0 ||
+            texture_coordinates == 0 ||
+            texture_indices != position_indices) {
+            debug_log(
+                "replace_mesh_from_buffer: invalid source ID or counts\n");
+            return;
+        }
+
+        /*
+         * Replacement is intentionally slot-oriented. Requiring an existing
+         * entry avoids a std::map node allocation at the commit boundary and
+         * preserves the address already held by every bound object.
+         */
+        auto mesh_iter = m_meshes->find((uint16_t)mesh_id);
+        if (mesh_iter == m_meshes->end()) {
+            debug_log(
+                "replace_mesh_from_buffer: mesh slot %u is not established\n",
+                (uint16_t)mesh_id);
+            return;
+        }
+
+        size_t required_size =
+            (size_t)vertices * 6U +
+            (size_t)position_indices * 2U +
+            (size_t)texture_coordinates * 4U +
+            (size_t)texture_indices * 2U;
+        auto source_iter = buffers.find((uint16_t)stage_buffer_id);
+        if (source_iter == buffers.end() ||
+            source_iter->second.size() != 1 ||
+            !source_iter->second.front() ||
+            source_iter->second.front()->size() != required_size ||
+            !source_iter->second.front()->getBuffer()) {
+            debug_log(
+                "replace_mesh_from_buffer: source is not one exact consolidated block\n");
+            return;
+        }
+
+        p3d::Mesh replacement = mesh_iter->second;
+        replacement.positions = nullptr;
+        replacement.pos_indices = nullptr;
+        replacement.textCoord = nullptr;
+        replacement.tex_indices = nullptr;
+        replacement.positions_count = 0;
+        replacement.indexes_count = 0;
+        replacement.texture_coordinates_count = 0;
+        replacement.texture_indexes_count = 0;
+        replacement.geometry_valid = 0;
+        replacement.bounds_valid = 0;
+
+        auto release_replacement = [&replacement]() {
+            pingo_owned_free(replacement.tex_indices);
+            pingo_owned_free(replacement.textCoord);
+            pingo_owned_free(replacement.pos_indices);
+            pingo_owned_free(replacement.positions);
+            replacement.tex_indices = nullptr;
+            replacement.textCoord = nullptr;
+            replacement.pos_indices = nullptr;
+            replacement.positions = nullptr;
+        };
+
+        replacement.positions = (p3d::Vec3f*)pingo_owned_malloc(
+            (size_t)vertices * sizeof(*replacement.positions));
+        if (!replacement.positions) {
+            debug_log(
+                "replace_mesh_from_buffer: position allocation failed\n");
+            return;
+        }
+        replacement.pos_indices = (uint16_t*)pingo_owned_malloc(
+            (size_t)position_indices * sizeof(*replacement.pos_indices));
+        if (!replacement.pos_indices) {
+            debug_log(
+                "replace_mesh_from_buffer: position-index allocation failed\n");
+            release_replacement();
+            return;
+        }
+        replacement.textCoord = (p3d::Vec2f*)pingo_owned_malloc(
+            (size_t)texture_coordinates * sizeof(*replacement.textCoord));
+        if (!replacement.textCoord) {
+            debug_log(
+                "replace_mesh_from_buffer: UV allocation failed\n");
+            release_replacement();
+            return;
+        }
+        replacement.tex_indices = (uint16_t*)pingo_owned_malloc(
+            (size_t)texture_indices * sizeof(*replacement.tex_indices));
+        if (!replacement.tex_indices) {
+            debug_log(
+                "replace_mesh_from_buffer: UV-index allocation failed\n");
+            release_replacement();
+            return;
+        }
+
+        const uint8_t * source =
+            source_iter->second.front()->getBuffer();
+        size_t offset = 0;
+        auto read_word = [&source, &offset]() {
+            uint16_t value = (uint16_t)source[offset] |
+                ((uint16_t)source[offset + 1] << 8);
+            offset += 2;
+            return value;
+        };
+
+        bool valid = true;
+        for (uint32_t i = 0; i < vertices; i++) {
+            replacement.positions[i] = (p3d::Vec3f){
+                convert_position_value(read_word()),
+                convert_position_value(read_word()),
+                convert_position_value(read_word())
+            };
+            if (!isfinite(replacement.positions[i].x) ||
+                !isfinite(replacement.positions[i].y) ||
+                !isfinite(replacement.positions[i].z)) {
+                valid = false;
+            }
+        }
+        for (uint32_t i = 0; i < position_indices; i++) {
+            replacement.pos_indices[i] = read_word();
+            if (replacement.pos_indices[i] >= vertices) {
+                valid = false;
+            }
+        }
+        for (uint32_t i = 0; i < texture_coordinates; i++) {
+            replacement.textCoord[i] = (p3d::Vec2f){
+                convert_texture_coordinate_value(read_word()),
+                convert_texture_coordinate_value(read_word())
+            };
+            if (!isfinite(replacement.textCoord[i].x) ||
+                !isfinite(replacement.textCoord[i].y)) {
+                valid = false;
+            }
+        }
+        for (uint32_t i = 0; i < texture_indices; i++) {
+            replacement.tex_indices[i] = read_word();
+            if (replacement.tex_indices[i] >= texture_coordinates) {
+                valid = false;
+            }
+        }
+        if (offset != required_size) {
+            valid = false;
+        }
+
+        /*
+         * Flat modes use UV0 as the face selector and intentionally do not
+         * interpolate it. Their packed form must nevertheless describe one
+         * unambiguous selector: all three indexed UV pairs of every source
+         * face are required to be identical.
+         */
+        if (valid &&
+            (replacement.shading_mode == p3d::MESH_SHADING_FLAT_PALETTE ||
+             replacement.shading_mode == p3d::MESH_SHADING_FLAT_PATTERN)) {
+            for (uint32_t i = 0; i < texture_indices; i += 3) {
+                p3d::Vec2f selector = replacement.textCoord[
+                    replacement.tex_indices[i]];
+                for (uint32_t corner = 1; corner < 3; corner++) {
+                    p3d::Vec2f candidate = replacement.textCoord[
+                        replacement.tex_indices[i + corner]];
+                    if (candidate.x != selector.x ||
+                        candidate.y != selector.y) {
+                        valid = false;
+                    }
+                }
+            }
+        }
+
+        replacement.positions_count = vertices;
+        replacement.indexes_count = (int)position_indices;
+        replacement.texture_coordinates_count = texture_coordinates;
+        replacement.texture_indexes_count = texture_indices;
+        if (!valid || !p3d::meshUpdateBounds(&replacement) ||
+            !p3d::meshUpdateGeometryValidity(&replacement)) {
+            debug_log(
+                "replace_mesh_from_buffer: staged mesh failed validation\n");
+            release_replacement();
+            return;
+        }
+
+        /*
+         * Single-threaded VDU dispatch makes this struct publication the
+         * logical atomic swap. The stable map element address is unchanged;
+         * old storage is released only after dependent objects have observed
+         * the complete replacement.
+         */
+        p3d::Mesh previous = mesh_iter->second;
+        mesh_iter->second = replacement;
+        refresh_mesh_dependents(&mesh_iter->second);
+        pingo_owned_free(previous.tex_indices);
+        pingo_owned_free(previous.textCoord);
+        pingo_owned_free(previous.pos_indices);
+        pingo_owned_free(previous.positions);
+#if PINGO_RENDER_DIAGNOSTICS
+        force_debug_log(
+            "PINGO_STREAM mesh_replace=ok stage=%u mid=%u bytes=%u "
+            "v=%u i=%u u=%u t=%u us=%u\n",
+            (uint16_t)stage_buffer_id, (uint16_t)mesh_id,
+            (uint32_t)required_size,
+            vertices, position_indices, texture_coordinates, texture_indices,
+            pingo_render_diagnostics_elapsed_us(
+                command_started_us, pingo_render_clock_us()));
+#endif
+    }
+
+    // VDU 23,0,&A0,sid; &49,51, oid; active
+    // Only 0 and 1 are valid. The object must already exist.
+    void set_object_active() {
+        auto object_id = m_proc->readWord_t();
+        auto active = m_proc->readByte_t();
+        if (object_id < 0 || active < 0 || (active != 0 && active != 1)) {
+            return;
+        }
+        auto object = m_objects->find((uint16_t)object_id);
+        if (object == m_objects->end()) {
+            return;
+        }
+        object->second.m_object.inactive = active ? 0 : 1;
+#if PINGO_RENDER_DIAGNOSTICS
+        force_debug_log(
+            "PINGO_STREAM object_active=ok oid=%u active=%u\n",
+            (uint16_t)object_id, (uint8_t)active);
+#endif
     }
 
     p3d::Mesh* establish_mesh(uint16_t mid) {
@@ -1250,6 +1664,16 @@ typedef struct tag_Pingo3dControl {
         return ((p3d::F_TYPE) value) * factor;
     }
 
+    int32_t sign_extend_24(int32_t value) {
+        value &= 0xFFFFFF;
+        return (value ^ 0x800000) - 0x800000;
+    }
+
+    p3d::F_TYPE convert_wide_translation_value(int32_t value) {
+        static const p3d::F_TYPE factor = 256.0f / 32767.0f;
+        return ((p3d::F_TYPE) sign_extend_24(value)) * factor;
+    }
+
     p3d::F_TYPE convert_position_value(int32_t value) {
         if (value & 0x8000) {
             value = (int32_t)(int16_t)(uint16_t) value;
@@ -1392,7 +1816,83 @@ typedef struct tag_Pingo3dControl {
             object->m_translation.y = convert_translation_value(valuey);
             object->m_translation.z = convert_translation_value(valuez);
             object->m_modified = true;
+#if PINGO_RENDER_DIAGNOSTICS
+            force_debug_log(
+                "PINGO_POSE object_translation oid=%u "
+                "raw_x=%d raw_y=%d raw_z=%d\n",
+                object->m_oid,
+                (int)(int16_t)(uint16_t)valuex,
+                (int)(int16_t)(uint16_t)valuey,
+                (int)(int16_t)(uint16_t)valuez);
+#endif
         }
+    }
+
+    /*
+     * VDU 23, 0, &A0, sid; &49, 52, oid; distx:s24; disty:s24;
+     * distz:s24 : Set an existing object's XYZ translation using signed
+     * little-endian 24-bit values. The raw unit is identical to command 17.
+     */
+    void set_object_xyz_translation_distances_wide() {
+        auto object_id = m_proc->readWord_t();
+        if (object_id < 0) {
+            return;
+        }
+        auto valuex = m_proc->read24_t();
+        if (valuex < 0) {
+            return;
+        }
+        auto valuey = m_proc->read24_t();
+        if (valuey < 0) {
+            return;
+        }
+        auto valuez = m_proc->read24_t();
+        if (valuez < 0) {
+            return;
+        }
+
+        /*
+         * Unlike the legacy setters, this streaming-oriented command must
+         * not allocate a placeholder object. Still consume the complete
+         * fixed payload before deciding whether its stable slot exists.
+         */
+        auto object = m_objects->find((uint16_t)object_id);
+        if (object == m_objects->end()) {
+            return;
+        }
+        object->second.m_translation.x =
+            convert_wide_translation_value(valuex);
+        object->second.m_translation.y =
+            convert_wide_translation_value(valuey);
+        object->second.m_translation.z =
+            convert_wide_translation_value(valuez);
+        object->second.m_modified = true;
+#if PINGO_RENDER_DIAGNOSTICS
+        int32_t signed_x = sign_extend_24(valuex);
+        int32_t signed_y = sign_extend_24(valuey);
+        int32_t signed_z = sign_extend_24(valuez);
+        force_debug_log(
+            "PINGO_WIDE object_translation=ok oid=%u "
+            "raw_x=%d raw_y=%d raw_z=%d\n",
+            (uint16_t)object_id,
+            (int)signed_x, (int)signed_y, (int)signed_z);
+#endif
+    }
+
+    // VDU 23,0,&A0,sid; &49,53, far_units:u16
+    // Retain the existing one-unit near plane and require far > near.
+    void set_projection_far_distance() {
+        auto far_units = m_proc->readWord_t();
+        if (far_units < PINGO_PROJECTION_FAR_MIN_UNITS ||
+            far_units > UINT16_MAX) {
+            return;
+        }
+        m_projection_far_units = (uint16_t)far_units;
+#if PINGO_RENDER_DIAGNOSTICS
+        force_debug_log(
+            "PINGO_PROJECTION far_set=ok units=%u\n",
+            m_projection_far_units);
+#endif
     }
 
     // VDU 23, 0, &A0, sid; &48, 18, oid; anglex; :  Set Camera X Rotation Angle
@@ -1425,6 +1925,13 @@ typedef struct tag_Pingo3dControl {
         m_camera.m_rotation.y = convert_rotation_value(valuey);
         m_camera.m_rotation.z = convert_rotation_value(valuez);
         m_camera.m_modified = true;
+#if PINGO_RENDER_DIAGNOSTICS
+        force_debug_log(
+            "PINGO_POSE camera_rotation raw_x=%d raw_y=%d raw_z=%d\n",
+            (int)(int16_t)(uint16_t)valuex,
+            (int)(int16_t)(uint16_t)valuey,
+            (int)(int16_t)(uint16_t)valuez);
+#endif
     }
 
     // VDU 23, 0, &A0, sid; &48, 22, oid; distx; :  Set Camera X Translation Distance
@@ -1457,6 +1964,13 @@ typedef struct tag_Pingo3dControl {
         m_camera.m_translation.y = convert_translation_value(valuey);
         m_camera.m_translation.z = convert_translation_value(valuez);
         m_camera.m_modified = true;
+#if PINGO_RENDER_DIAGNOSTICS
+        force_debug_log(
+            "PINGO_POSE camera_translation raw_x=%d raw_y=%d raw_z=%d\n",
+            (int)(int16_t)(uint16_t)valuex,
+            (int)(int16_t)(uint16_t)valuey,
+            (int)(int16_t)(uint16_t)valuez);
+#endif
     }
 
     // VDU 23, 0, &A0, sid; &48, 26, oid; scalex; :  Set Scene X Scale Factor
@@ -1611,6 +2125,13 @@ typedef struct tag_Pingo3dControl {
         p3d::rendererSetAmbientLight(&renderer, m_ambient_light);
         p3d::rendererSetIlluminationEnabled(
             &renderer, m_illumination_enabled);
+        if (m_flat_pattern_binding &&
+            p3d::rendererSetFlatPatternLibrary(
+                &renderer,
+                &m_flat_pattern_binding->m_library) != 0) {
+            debug_log(
+                "render_to_bitmap: retained flat-pattern resource is invalid\n");
+        }
 #if PINGO_RENDER_DIAGNOSTICS
         renderer.diagnostics_clock = pingo_render_diagnostics_clock_ticks;
         renderer.diagnostics_clock_hz =
@@ -1623,17 +2144,34 @@ typedef struct tag_Pingo3dControl {
         p3d::rendererSetScene(&renderer, &scene);
 
         for (auto object = m_objects->begin(); object != m_objects->end(); object++) {
+            if (object->second.m_object.inactive) {
+                continue;
+            }
             object->second.bind();
             if (object->second.m_modified) {
                 object->second.update_transformation_matrix();
                 //object->second.dump();
             }
-            sceneAddRenderable(&scene, p3d::object_as_renderable(&object->second.m_object));
+            if (sceneAddRenderable(
+                    &scene,
+                    p3d::object_as_renderable(&object->second.m_object))) {
+#if PINGO_RENDER_DIAGNOSTICS
+                force_debug_log(
+                    "PINGO_SCENE active_overflow=1 limit=%u first_dropped_oid=%u\n",
+                    (uint32_t)MAX_SCENE_RENDERABLES,
+                    (uint32_t)object->first);
+#endif
+                break;
+            }
         }
 
         // Set the projection matrix
         renderer.camera_projection =
-            p3d::mat4Perspective( 1, 2500.0, (p3d::F_TYPE)size.x / (p3d::F_TYPE)size.y, 0.6);
+            p3d::mat4Perspective(
+                PINGO_PROJECTION_NEAR_UNITS,
+                (p3d::F_TYPE)m_projection_far_units,
+                (p3d::F_TYPE)size.x / (p3d::F_TYPE)size.y,
+                0.6);
 
         if (m_camera.m_modified) {
             m_camera.compute_transformation_matrix();
@@ -1725,7 +2263,8 @@ typedef struct tag_Pingo3dControl {
 
         force_debug_log(
             "PINGO_RENDER seq=%u bmid=%u render_us=%u "
-            "d=4 w=%u h=%u fmt=%u cmd=%u pre=%u clr=%u xf=%u ts=%u "
+            "d=4 w=%u h=%u fmt=%u far=%u "
+            "cmd=%u pre=%u clr=%u xf=%u ts=%u "
             "ras=%u out=%u ob=%u obt=%u ofr=%u ta=%u "
             "ti=%u tz=%u tfr=%u tc=%u tu=%u tg=%u "
             "tp=%u tf=%u td=%u to=%u tr=%u tv=%u "
@@ -1733,6 +2272,7 @@ typedef struct tag_Pingo3dControl {
             sequence, bmid, render_elapsed_us,
             m_width, m_height,
             bitmap->format == PixelFormat::RGBA2222 ? 2 : 8,
+            m_projection_far_units,
             command_us, prepare_us, clear_us, transform_us,
             triangle_setup_us, raster_us, output_us,
             renderer.diagnostics.objects,
@@ -1837,6 +2377,16 @@ extern "C" uint32_t pingo_userspace_control_size() {
     return sizeof(Pingo3dControl);
 }
 
+extern "C" bool pingo_userspace_get_projection_far_units(
+        uint16_t buffer_id, uint16_t * far_units) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !far_units) {
+        return false;
+    }
+    *far_units = control->m_projection_far_units;
+    return true;
+}
+
 extern "C" bool pingo_userspace_get_object_scale(
         uint16_t buffer_id, uint16_t object_id, float * scale) {
     auto control = pingo_userspace_get_control(buffer_id);
@@ -1850,6 +2400,140 @@ extern "C" bool pingo_userspace_get_object_scale(
     scale[0] = object->second.m_scale.x;
     scale[1] = object->second.m_scale.y;
     scale[2] = object->second.m_scale.z;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_object_translation(
+        uint16_t buffer_id, uint16_t object_id,
+        float * translation, float * matrix_translation,
+        uint8_t * modified) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !translation || !matrix_translation || !modified) {
+        return false;
+    }
+    auto object = control->m_objects->find(object_id);
+    if (object == control->m_objects->end()) {
+        return false;
+    }
+    translation[0] = object->second.m_translation.x;
+    translation[1] = object->second.m_translation.y;
+    translation[2] = object->second.m_translation.z;
+    matrix_translation[0] = object->second.m_transform.elements[3];
+    matrix_translation[1] = object->second.m_transform.elements[7];
+    matrix_translation[2] = object->second.m_transform.elements[11];
+    *modified = object->second.m_modified ? 1 : 0;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_object_active(
+        uint16_t buffer_id, uint16_t object_id, uint8_t * active) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !active) {
+        return false;
+    }
+    auto object = control->m_objects->find(object_id);
+    if (object == control->m_objects->end()) {
+        return false;
+    }
+    *active = object->second.m_object.inactive ? 0 : 1;
+    return true;
+}
+
+extern "C" bool pingo_userspace_object_uses_mesh(
+        uint16_t buffer_id, uint16_t object_id, uint16_t mesh_id) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control) {
+        return false;
+    }
+    auto object = control->m_objects->find(object_id);
+    auto mesh = control->m_meshes->find(mesh_id);
+    return object != control->m_objects->end() &&
+        mesh != control->m_meshes->end() &&
+        object->second.m_object.mesh == &mesh->second;
+}
+
+extern "C" bool pingo_userspace_get_mesh_stream_state(
+        uint16_t buffer_id, uint16_t mesh_id,
+        uint32_t * vertex_count, uint32_t * position_index_count,
+        uint32_t * texture_coordinate_count, uint32_t * texture_index_count,
+        uint8_t * geometry_valid, uint8_t * bounds_valid) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !vertex_count || !position_index_count ||
+        !texture_coordinate_count || !texture_index_count ||
+        !geometry_valid || !bounds_valid) {
+        return false;
+    }
+    auto mesh = control->m_meshes->find(mesh_id);
+    if (mesh == control->m_meshes->end()) {
+        return false;
+    }
+    *vertex_count = mesh->second.positions_count;
+    *position_index_count =
+        mesh->second.indexes_count < 0
+            ? 0U
+            : (uint32_t)mesh->second.indexes_count;
+    *texture_coordinate_count =
+        mesh->second.texture_coordinates_count;
+    *texture_index_count = mesh->second.texture_indexes_count;
+    *geometry_valid = mesh->second.geometry_valid;
+    *bounds_valid = mesh->second.bounds_valid;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_mesh_stream_vertex(
+        uint16_t buffer_id, uint16_t mesh_id, uint32_t vertex_index,
+        float * position) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !position) {
+        return false;
+    }
+    auto mesh = control->m_meshes->find(mesh_id);
+    if (mesh == control->m_meshes->end() ||
+        !mesh->second.positions ||
+        vertex_index >= mesh->second.positions_count) {
+        return false;
+    }
+    position[0] = mesh->second.positions[vertex_index].x;
+    position[1] = mesh->second.positions[vertex_index].y;
+    position[2] = mesh->second.positions[vertex_index].z;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_mesh_stream_uv(
+        uint16_t buffer_id, uint16_t mesh_id, uint32_t coordinate_index,
+        float * coordinate) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !coordinate) {
+        return false;
+    }
+    auto mesh = control->m_meshes->find(mesh_id);
+    if (mesh == control->m_meshes->end() ||
+        !mesh->second.textCoord ||
+        coordinate_index >= mesh->second.texture_coordinates_count) {
+        return false;
+    }
+    coordinate[0] = mesh->second.textCoord[coordinate_index].x;
+    coordinate[1] = mesh->second.textCoord[coordinate_index].y;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_mesh_stream_indices(
+        uint16_t buffer_id, uint16_t mesh_id, uint32_t index_offset,
+        uint16_t * position_index, uint16_t * texture_index) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !position_index || !texture_index) {
+        return false;
+    }
+    auto mesh = control->m_meshes->find(mesh_id);
+    if (mesh == control->m_meshes->end() ||
+        !mesh->second.pos_indices || !mesh->second.tex_indices ||
+        mesh->second.indexes_count < 0 ||
+        index_offset >= (uint32_t)mesh->second.indexes_count ||
+        index_offset >= mesh->second.texture_indexes_count) {
+        return false;
+    }
+    *position_index = mesh->second.pos_indices[index_offset];
+    *texture_index = mesh->second.tex_indices[index_offset];
     return true;
 }
 
@@ -1968,6 +2652,23 @@ extern "C" bool pingo_userspace_get_object_texture_pixel(
     return true;
 }
 
+extern "C" bool pingo_userspace_get_bitmap2222_pixel(
+        uint16_t bitmap_id, uint32_t pixel_index, uint8_t * pixel) {
+    auto bitmap = getBitmap(bitmap_id);
+    if (!bitmap || !pixel || !bitmap->data ||
+        bitmap->format != PixelFormat::RGBA2222 ||
+        bitmap->width <= 0 || bitmap->height <= 0) {
+        return false;
+    }
+    uint32_t pixel_count =
+        (uint32_t)bitmap->width * (uint32_t)bitmap->height;
+    if (pixel_index >= pixel_count) {
+        return false;
+    }
+    *pixel = bitmap->data[pixel_index];
+    return true;
+}
+
 extern "C" bool pingo_userspace_get_lighting_state(
         uint16_t buffer_id, float * direction,
         uint8_t * intensity, uint8_t * ambient, uint8_t * enabled) {
@@ -2009,6 +2710,33 @@ extern "C" bool pingo_userspace_get_mesh_illumination_policy(
         return false;
     }
     *policy = mesh->second.illumination_policy;
+    return true;
+}
+
+extern "C" bool pingo_userspace_get_flat_pattern_state(
+        uint16_t buffer_id,
+        uint16_t * pattern_count,
+        uint8_t * material_count,
+        uint8_t * illumination_band_count,
+        uint8_t * first_pattern_pixel,
+        uint8_t * first_lookup_id) {
+    auto control = pingo_userspace_get_control(buffer_id);
+    if (!control || !control->m_flat_pattern_binding ||
+        !pattern_count || !material_count || !illumination_band_count ||
+        !first_pattern_pixel || !first_lookup_id) {
+        return false;
+    }
+    auto& library = control->m_flat_pattern_binding->m_library;
+    if (!library.patterns || !library.lookup ||
+        !library.pattern_count || !library.material_count ||
+        !library.illumination_band_count) {
+        return false;
+    }
+    *pattern_count = library.pattern_count;
+    *material_count = library.material_count;
+    *illumination_band_count = library.illumination_band_count;
+    *first_pattern_pixel = library.patterns[0];
+    *first_lookup_id = library.lookup[0];
     return true;
 }
 #endif

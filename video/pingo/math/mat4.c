@@ -307,11 +307,24 @@ Mat4 mat4Perspective(float near, float far, float aspect, float fov)
     float nearFar = near * far;
     float farNear = far - near;
 
+    /*
+     * Pingo clips homogeneous coordinates to -W <= Z <= 0 while looking
+     * down negative view-space Z.  The previous last two rows used an
+     * approximation of the near mapping in both places:
+     *
+     *     Z = far/(far-near) * z + 1
+     *     W = -near*far/(far-near) * z
+     *
+     * For the production near distance of one that makes Z + W identically
+     * one, so no finite point can ever leave the far half-space.  Use the
+     * exact D3D-style mapping instead: z=-near maps to Z=0 and z=-far maps
+     * to Z=-W.
+     */
     Mat4 m = {{
                   w,          0,          0,                  0,
                   0,          h,          0,                  0,
-                  0,          0,          far/(farNear),      1,
-                  0,          0,          -nearFar/farNear,   0
+                  0,          0,          far/(farNear),      nearFar/farNear,
+                  0,          0,          -1,                 0
               }};
 
     return m;
@@ -322,7 +335,7 @@ float mat4NearFromProjection(Mat4 mat)
     float C = mat.elements[10]; // 2 2
     float D = mat.elements[11]; // 2 3
 
-    return D / (C - 1.0);
+    return D / C;
 }
 
 float mat4FarFromProjection(Mat4 mat)
@@ -330,6 +343,5 @@ float mat4FarFromProjection(Mat4 mat)
     float C = mat.elements[10]; // 2 2
     float D = mat.elements[11]; // 2 3
 
-    return D / (C + 1.0);
+    return D / (C - 1.0);
 }
-

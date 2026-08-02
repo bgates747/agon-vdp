@@ -38,7 +38,12 @@ static inline float texture_clamp_coordinate_inline(float value)
    return value;
 }
 
-static inline Pixel texture_readFInline(
+/*
+ * Resolve the exact texel selected by normalized texture coordinates. Flat
+ * pattern shading uses the texel's linear position as a compact material ID,
+ * while ordinary texture paths use the same position to fetch its color.
+ */
+static inline uint32_t texture_indexFInline(
       const Texture * f, Vec2f pos)
 {
    float u = texture_clamp_coordinate_inline(pos.x);
@@ -46,7 +51,14 @@ static inline Pixel texture_readFInline(
    uint16_t x = (uint16_t)(u * (f->size.x - 1));
    // UV V grows upward; texture memory begins with the top image row.
    uint16_t y = (uint16_t)((1.0f - v) * (f->size.y - 1));
-   uint32_t index = x + y * f->size.x;
+   return (uint32_t)x +
+      (uint32_t)y * (uint32_t)f->size.x;
+}
+
+static inline Pixel texture_readFInline(
+      const Texture * f, Vec2f pos)
+{
+   uint32_t index = texture_indexFInline(f, pos);
    return texture_read_index_inline(f, index);
 }
 

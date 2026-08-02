@@ -27,7 +27,7 @@ make -C userspace \
   smoke
 ```
 
-The smoke target first runs seven direct native tests:
+The smoke target first runs eight direct native tests:
 
 1. `pingo_texture_test`, which verifies the one-byte Pingo working pixel, all
    256 RGBA2222 packed values, RGBA8888-to-RGBA2222 quantization and stride,
@@ -51,7 +51,10 @@ The smoke target first runs seven direct native tests:
 7. `pingo_clip_test`, which checks exact pass-through, one- and two-vertex
    near-plane crossings, exact and adjacent near boundaries, all six
    homogeneous clip planes, bounded output, interpolated UVs, and safe
-   rejection of nonfinite input.
+   rejection of nonfinite input; and
+8. `pingo_flat_pattern_test`, which checks the native 4×4 pattern phase,
+   illumination-band selection, self-illumination, depth ownership, clipped
+   triangles, and rejection of invalid material or lookup state.
 
 It then runs two full-module harnesses. `pingo_smoke` loads the module with
 immediate symbol resolution, starts the native VDP, creates 64×64 RGBA2222 and
@@ -69,9 +72,19 @@ exposes a live framebuffer.
    teardown with exact owned-allocation accounting;
 5. rejection of copied or aliased control bytes, generic call/jump execution,
    control-backed bitmaps/render targets, and unsafe generic mutation;
-6. complete-payload draining after allocation rejection; and
+6. complete-payload draining after allocation rejection;
 7. bounded recovery from truncated uploads, including the maximum legal
-   16-bit element count, followed by an immediately valid command.
+   16-bit element count, followed by an immediately valid command;
+8. immutable flat-pattern-library binding and mesh shading/illumination policy;
+9. consolidated-buffer mesh replacement with transactional validation and
+   stable object bindings;
+10. inactive-object scene exclusion and exact 32-renderable overflow behavior;
+11. signed-24 object translation endpoints, legacy-unit equivalence,
+    absent-object draining, and truncation recovery; and
+12. per-control projection-far defaults, isolation, accepted endpoints,
+    invalid/truncated preservation, recreation reset, and a functional
+    visibility witness that is clipped at 2,500, visible at 8,000, and clipped
+    again at the rendered minimum of two units.
 
 The bridge harness has a 30-second outer timeout. General-poll and
 render-completion packets provide command barriers; the test does not infer

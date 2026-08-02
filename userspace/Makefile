@@ -46,7 +46,10 @@ DEPTH_TEST_TARGET ?= $(BUILD_DIR)/pingo_depth_test
 MESH_VALIDATION_TEST_TARGET ?= $(BUILD_DIR)/pingo_mesh_validation_test
 CLIP_TEST_TARGET ?= $(BUILD_DIR)/pingo_clip_test
 DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
+FLAT_PATTERN_TEST_TARGET ?= $(BUILD_DIR)/pingo_flat_pattern_test
 SANITIZER_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_sanitizer_test
+FLAT_PATTERN_SANITIZER_TEST_TARGET ?= \
+	$(BUILD_DIR)/pingo_flat_pattern_sanitizer_test
 BRIDGE_SANITIZER_BUILD_DIR := $(VDP_ROOT)/video/build/userspace-bridge-sanitizer
 BRIDGE_SANITIZER_FLAGS := \
 	-fno-omit-frame-pointer \
@@ -194,7 +197,7 @@ DEPS := $(OBJECTS:.o=.d) $(VDP_GL_OBJECTS:.o=.d)
 	renderer-test fizzle-test texture-test math-test span-test \
 	perspective-span-test depth-test mesh-validation-test \
 	clip-test diagnostics-test diagnostics-smoke sanitizer-test \
-	bridge-sanitizer-test
+	flat-pattern-test bridge-sanitizer-test
 
 all: $(TARGET)
 
@@ -341,11 +344,26 @@ $(DIAGNOSTICS_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
 		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -lm -o $@
 
+$(FLAT_PATTERN_TEST_TARGET): pingo_flat_pattern_test.c \
+		$(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
+		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -lm -o $@
+
 $(SANITIZER_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 		$(PINGO_C_SOURCE_PATHS) $(ADAPTER_MAKEFILE)
 	@mkdir -p $(dir $@)
 	$(CC) -DPINGO_RENDER_DIAGNOSTICS=1 \
 		$(COMMON_INCLUDES) \
+		-Wall -Werror=return-type -O1 -g -std=c11 \
+		-fno-omit-frame-pointer \
+		-fsanitize=address,undefined,float-divide-by-zero,float-cast-overflow \
+		$< $(PINGO_C_SOURCE_PATHS) -lm -o $@
+
+$(FLAT_PATTERN_SANITIZER_TEST_TARGET): pingo_flat_pattern_test.c \
+		$(PINGO_C_SOURCE_PATHS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(COMMON_INCLUDES) \
 		-Wall -Werror=return-type -O1 -g -std=c11 \
 		-fno-omit-frame-pointer \
 		-fsanitize=address,undefined,float-divide-by-zero,float-cast-overflow \
@@ -372,6 +390,9 @@ mesh-validation-test: $(MESH_VALIDATION_TEST_TARGET)
 clip-test: $(CLIP_TEST_TARGET)
 	$(CLIP_TEST_TARGET)
 
+flat-pattern-test: $(FLAT_PATTERN_TEST_TARGET)
+	$(FLAT_PATTERN_TEST_TARGET)
+
 renderer-test: $(RENDERER_TEST_TARGET)
 	$(RENDERER_TEST_TARGET)
 
@@ -386,7 +407,7 @@ wolf-smoke: $(TARGET) $(WOLF_SMOKE_TARGET)
 
 pingo-tests: pingo-smoke $(BRIDGE_ROBUSTNESS_TEST_TARGET) \
 		texture-test math-test span-test perspective-span-test depth-test \
-		mesh-validation-test clip-test
+		mesh-validation-test clip-test flat-pattern-test
 	timeout $(BRIDGE_TEST_TIMEOUT) \
 		$(BRIDGE_ROBUSTNESS_TEST_TARGET) $(TARGET)
 
@@ -408,10 +429,14 @@ endif
 
 diagnostics-smoke: smoke diagnostics-test
 
-sanitizer-test: $(SANITIZER_TEST_TARGET)
+sanitizer-test: $(SANITIZER_TEST_TARGET) \
+		$(FLAT_PATTERN_SANITIZER_TEST_TARGET)
 	ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
 	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
 	$(SANITIZER_TEST_TARGET)
+	ASAN_OPTIONS=detect_leaks=0:halt_on_error=1 \
+	UBSAN_OPTIONS=halt_on_error=1:print_stacktrace=1 \
+	$(FLAT_PATTERN_SANITIZER_TEST_TARGET)
 
 bridge-sanitizer-test:
 	$(MAKE) \
@@ -443,7 +468,9 @@ clean:
 		$(MESH_VALIDATION_TEST_TARGET) \
 		$(CLIP_TEST_TARGET) \
 		$(DIAGNOSTICS_TEST_TARGET) \
-		$(SANITIZER_TEST_TARGET) $(VDP_GL_LIB) \
+		$(FLAT_PATTERN_TEST_TARGET) \
+		$(SANITIZER_TEST_TARGET) \
+		$(FLAT_PATTERN_SANITIZER_TEST_TARGET) $(VDP_GL_LIB) \
 		$(OBJECTS) $(VDP_GL_OBJECTS) $(DEPS)
 
 -include $(DEPS)

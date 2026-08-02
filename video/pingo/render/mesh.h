@@ -41,7 +41,9 @@ typedef struct Mesh {
      * Selects how this mesh interprets its existing texture coordinates.
      * Zero preserves perspective-correct textured rendering. Flat palette
      * mode samples the source triangle's first UV once and carries that
-     * constant color through clipping and rasterization.
+     * constant color through clipping and rasterization. Flat pattern mode
+     * instead treats that UV's linear texel position as a material ID and
+     * resolves one screen-space pattern for the source face.
      */
     uint8_t shading_mode;
 
@@ -56,7 +58,8 @@ typedef struct Mesh {
 typedef uint8_t MeshShadingMode;
 enum {
     MESH_SHADING_TEXTURED = 0,
-    MESH_SHADING_FLAT_PALETTE = 1
+    MESH_SHADING_FLAT_PALETTE = 1,
+    MESH_SHADING_FLAT_PATTERN = 2
 };
 
 typedef uint8_t MeshIlluminationPolicy;

@@ -63,6 +63,13 @@ int main(int argc, char **argv) {
 	auto setDebug = loadSymbol<void (*)(bool)>(
 		handle, "setVdpDebugLogging");
 	auto shutdown = loadSymbol<void (*)()>(handle, "vdp_shutdown");
+	auto meshShadingMode = loadSymbol<bool (*)(
+		std::uint16_t, std::uint16_t, std::uint8_t *)>(
+		handle, "pingo_userspace_get_mesh_shading_mode");
+	auto flatPatternState = loadSymbol<bool (*)(
+		std::uint16_t, std::uint16_t *, std::uint8_t *,
+		std::uint8_t *, std::uint8_t *, std::uint8_t *)>(
+		handle, "pingo_userspace_get_flat_pattern_state");
 	loadSymbol<void (*)()>(handle, "rendererRender");
 
 	auto sendBytes = [&](const std::vector<std::uint8_t>& bytes) {
@@ -89,6 +96,25 @@ int main(int argc, char **argv) {
 			appendWord(bytes, word);
 		}
 		sendBytes(bytes);
+	};
+	auto uploadConsolidatedBuffer = [&](
+			std::uint16_t buffer,
+			const std::vector<std::uint8_t>& payload) {
+		std::vector<std::uint8_t> bytes = {
+			23, 0, 0xA0,
+			static_cast<std::uint8_t>(buffer),
+			static_cast<std::uint8_t>(buffer >> 8),
+			0,
+		};
+		appendWord(bytes, static_cast<std::uint16_t>(payload.size()));
+		bytes.insert(bytes.end(), payload.begin(), payload.end());
+		sendBytes(bytes);
+		sendBytes({
+			23, 0, 0xA0,
+			static_cast<std::uint8_t>(buffer),
+			static_cast<std::uint8_t>(buffer >> 8),
+			14,
+		});
 	};
 	auto receiveBytes = [&](std::chrono::milliseconds quietPeriod) {
 		std::vector<std::uint8_t> bytes;
@@ -261,6 +287,70 @@ int main(int argc, char **argv) {
 		std::fprintf(
 			stderr,
 			"valid replacement did not recover malformed mesh state\n");
+		shutdown();
+		return 1;
+	}
+
+	/*
+	 * Exercise the experimental flat-pattern path through generic-buffer
+	 * upload, consolidation, resource binding, mesh policy, and a completed
+	 * native render. The selector bitmap's pixels are deliberately irrelevant:
+	 * UV texel position zero is the compact material ID.
+	 */
+	constexpr std::uint16_t selectorBitmap = 259;
+	constexpr std::uint16_t patternBuffer = 410;
+	constexpr std::uint16_t lookupBuffer = 411;
+	std::vector<std::uint8_t> pattern(16);
+	for (std::uint8_t phase = 0; phase < pattern.size(); phase++) {
+		pattern[phase] = static_cast<std::uint8_t>(0xC0u | phase);
+	}
+	uploadConsolidatedBuffer(patternBuffer, pattern);
+	uploadConsolidatedBuffer(lookupBuffer, {0, 0});
+	sendBytes({23, 27, 0x20, 3, 1});
+	sendBytes({23, 27, 0x22, 4, 0, 4, 0, 0xC0});
+	sendPingo(5, {7, 7, selectorBitmap});
+
+	std::vector<std::uint8_t> bind = {
+		23, 0, 0xA0, 0xE8, 0x03, 0x49, 49,
+	};
+	appendWord(bind, patternBuffer);
+	appendWord(bind, lookupBuffer);
+	appendWord(bind, 1);
+	bind.push_back(1);
+	bind.push_back(2);
+	sendBytes(bind);
+	std::vector<std::uint8_t> patternMode = {
+		23, 0, 0xA0, 0xE8, 0x03, 0x49, 47,
+	};
+	appendWord(patternMode, 7);
+	patternMode.push_back(2);
+	sendBytes(patternMode);
+	sendBytes({23, 0, 0xA0, 0xE8, 0x03, 0x49, 38, 1, 1});
+	std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	auto patternedMeshBytes = receiveBytes(std::chrono::milliseconds(10));
+	if (!findCompletion(patternedMeshBytes, 0xC3A7, 5)) {
+		std::fprintf(
+			stderr,
+			"flat-pattern upload/bind/render did not complete\n");
+		shutdown();
+		return 1;
+	}
+
+	std::uint8_t shadingMode = 0;
+	std::uint16_t patternCount = 0;
+	std::uint8_t materialCount = 0;
+	std::uint8_t bandCount = 0;
+	std::uint8_t firstPatternPixel = 0;
+	std::uint8_t firstLookupId = 0xFF;
+	if (!meshShadingMode(1000, 7, &shadingMode) || shadingMode != 2 ||
+		!flatPatternState(
+			1000, &patternCount, &materialCount, &bandCount,
+			&firstPatternPixel, &firstLookupId) ||
+		patternCount != 1 || materialCount != 1 || bandCount != 2 ||
+		firstPatternPixel != 0xC0 || firstLookupId != 0) {
+		std::fprintf(
+			stderr,
+			"flat-pattern protocol state did not match uploaded resources\n");
 		shutdown();
 		return 1;
 	}

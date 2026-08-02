@@ -254,13 +254,30 @@ static inline void backendDrawPixel(
     }
 }
 
+static uint8_t flatPatternIlluminationBand(
+        float illumination, uint8_t bandCount) {
+    if (!(illumination > 0.0f) || bandCount <= 1) {
+        return 0;
+    }
+    if (illumination >= 1.0f) {
+        return (uint8_t)(bandCount - 1);
+    }
+
+    /* Endpoint-inclusive uniform bands, selecting the nearest target. */
+    float scaled = illumination * (float)(bandCount - 1);
+    return (uint8_t)(scaled + 0.5f);
+}
+
 int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     Object * o = ren.impl;
+    if (!o || o->inactive) {
+        return 0;
+    }
 #if PINGO_RENDER_DIAGNOSTICS
     r->diagnostics.objects++;
 #endif
-    if (!o || !o->mesh ||
+    if (!o->mesh ||
         !o->mesh->positions ||
         !o->mesh->pos_indices ||
         !o->mesh->geometry_valid ||
@@ -268,6 +285,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         (o->mesh->indexes_count % 3) != 0) {
         return 0;
     }
+
+    const bool flatPatternShaded =
+        o->mesh->shading_mode == MESH_SHADING_FLAT_PATTERN;
 
     Vec2f * tex_coords = o->textCoord;
     if (!tex_coords) {
@@ -282,6 +302,11 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
          o->material->texture->size.x <= 0 ||
          o->material->texture->size.y <= 0)) {
         return 0;
+    }
+    if (flatPatternShaded) {
+        if (!o->material || !r->flatPatternLibraryValid) {
+            return 0;
+        }
     }
 
     // MODEL MATRIX
@@ -322,9 +347,10 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
     PingoDepth * const zetaBuffer =
         backEnd->getZetaBuffer(r, backEnd);
 
-    const bool flatShaded =
+    const bool flatPaletteShaded =
         o->material != 0 &&
         o->mesh->shading_mode == MESH_SHADING_FLAT_PALETTE;
+    const bool flatShaded = flatPaletteShaded || flatPatternShaded;
 #if !PINGO_DISABLE_ILLUMINATION
     const bool applyIllumination =
         r->illuminationEnabled &&
@@ -334,7 +360,6 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     for (int i = 0; i + 2 < o->mesh->indexes_count; i += 3) {
 #if PINGO_RENDER_DIAGNOSTICS
-        r->diagnostics.triangles_submitted++;
         uint32_t phase_started = rendererDiagnosticsNow(r);
 #endif
 
@@ -362,6 +387,21 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         const Vec2f flatColorCoordinate = tca;
         Pixel flatColor = PIXELBLACK;
         bool flatColorReady = false;
+        const uint8_t * flatPattern = 0;
+        uint32_t flatPatternMaterialId = 0;
+        if (flatPatternShaded) {
+            /* The selected texel position, not its color, is the material. */
+            flatPatternMaterialId = texture_indexFInline(
+                o->material->texture, flatColorCoordinate);
+            if (flatPatternMaterialId >=
+                r->flatPatternLibrary.material_count) {
+#if PINGO_RENDER_DIAGNOSTICS
+                rendererDiagnosticsFinishPhase(
+                    r, phase_started, &r->diagnostics.transform_ticks);
+#endif
+                continue;
+            }
+        }
 
         Vec4f a =  { ver1->x, ver1->y, ver1->z, 1 };
         Vec4f b =  { ver2->x, ver2->y, ver2->z, 1 };
@@ -389,6 +429,48 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                 r->ambientLight,
                 directional * r->lightIntensity);
         }
+#endif
+
+        if (flatPatternShaded) {
+            const PingoFlatPatternLibrary * library =
+                &r->flatPatternLibrary;
+            uint8_t band = flatPatternIlluminationBand(
+                diffuseLight, library->illumination_band_count);
+            uint32_t lookupIndex =
+                flatPatternMaterialId *
+                    (uint32_t)library->illumination_band_count +
+                band;
+            if (lookupIndex >= library->lookup_size) {
+#if PINGO_RENDER_DIAGNOSTICS
+                rendererDiagnosticsFinishPhase(
+                    r, phase_started, &r->diagnostics.transform_ticks);
+#endif
+                continue;
+            }
+            uint8_t patternId = library->lookup[lookupIndex];
+            if (patternId >= library->pattern_count) {
+#if PINGO_RENDER_DIAGNOSTICS
+                rendererDiagnosticsFinishPhase(
+                    r, phase_started, &r->diagnostics.transform_ticks);
+#endif
+                continue;
+            }
+            uint32_t patternOffset =
+                (uint32_t)patternId * PINGO_FLAT_PATTERN_PIXELS;
+            if (patternOffset > library->patterns_size ||
+                library->patterns_size - patternOffset <
+                    PINGO_FLAT_PATTERN_PIXELS) {
+#if PINGO_RENDER_DIAGNOSTICS
+                rendererDiagnosticsFinishPhase(
+                    r, phase_started, &r->diagnostics.transform_ticks);
+#endif
+                continue;
+            }
+            flatPattern = library->patterns + patternOffset;
+        }
+
+#if PINGO_RENDER_DIAGNOSTICS
+        r->diagnostics.triangles_submitted++;
 #endif
 
         a = mat4MultiplyVec4( &a, &vp);
@@ -543,9 +625,12 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #endif
             continue;
         }
-        if (flatShaded && !flatColorReady) {
-            // Delay the single texture lookup until at least one clipped fan
-            // survives projection, backface, and degeneracy rejection.
+        if (flatPaletteShaded && !flatColorReady) {
+            /*
+             * Delay the one face-source lookup until at least one clipped fan
+             * survives projection, backface, and degeneracy rejection. All
+             * fans generated from this source face reuse the result.
+             */
             flatColor = texture_readFInline(
                 o->material->texture, flatColorCoordinate);
             flatColorReady = true;
@@ -673,6 +758,15 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             uint32_t textureSpanRemaining = 0u;
             uint32_t textureBlockRemaining = 0u;
             bool textureBlockValid = false;
+            const uint8_t * patternRow = flatPatternShaded
+                ? flatPattern +
+                    ((uint32_t)y &
+                     (PINGO_FLAT_PATTERN_HEIGHT - 1u)) *
+                    PINGO_FLAT_PATTERN_WIDTH
+                : 0;
+            uint8_t patternPhase =
+                (uint8_t)((uint32_t)spanMinX &
+                    (PINGO_FLAT_PATTERN_WIDTH - 1u));
 
             if (o->material != 0 && !flatShaded) {
                 PingoPerspectiveAttributes textureAttributes;
@@ -727,7 +821,19 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #if PINGO_RENDER_DIAGNOSTICS
                         fragmentsDepthTestRejected++;
 #endif
-                    } else if (flatShaded) {
+                    } else if (flatPatternShaded) {
+                        Pixel patternPixel = {
+                            patternRow[patternPhase]
+                        };
+                        /* Pattern bytes already encode face illumination. */
+                        backendDrawPixel(
+                            r, &r->frameBuffer, (Vec2i){x,y},
+                            pixelIndex, patternPixel, 1.0f, 0);
+
+#if PINGO_RENDER_DIAGNOSTICS
+                        fragmentsShaded++;
+#endif
+                    } else if (flatPaletteShaded) {
                         backendDrawPixel(
                             r, &r->frameBuffer, (Vec2i){x,y},
                             pixelIndex, flatColor, diffuseLight, shadeLut);
@@ -793,6 +899,11 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
                     textCoordy += textCoordStepY;
                     textureBlockRemaining--;
                 }
+                if (flatPatternShaded) {
+                    patternPhase = (uint8_t)(
+                        (patternPhase + 1u) &
+                        (PINGO_FLAT_PATTERN_WIDTH - 1u));
+                }
             }
 
         }
@@ -832,6 +943,8 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     r->lightIntensity = 1.0f;
     r->ambientLight = 0.0f;
     r->illuminationEnabled = 1;
+    memset(&r->flatPatternLibrary, 0, sizeof(r->flatPatternLibrary));
+    r->flatPatternLibraryValid = 0;
 
 #if PINGO_RENDER_DIAGNOSTICS
     r->diagnostics_clock = 0;
@@ -885,6 +998,50 @@ void rendererSetIlluminationEnabled(Renderer * r, int enabled) {
     if (r) {
         r->illuminationEnabled = enabled != 0;
     }
+}
+
+int rendererSetFlatPatternLibrary(
+        Renderer * r, const PingoFlatPatternLibrary * library) {
+    if (!r) {
+        return 1;
+    }
+    if (!library) {
+        memset(&r->flatPatternLibrary, 0, sizeof(r->flatPatternLibrary));
+        r->flatPatternLibraryValid = 0;
+        return 0;
+    }
+
+    if (!library->patterns || !library->lookup ||
+        library->pattern_count == 0 ||
+        library->pattern_count > PINGO_FLAT_PATTERN_MAX_PATTERNS ||
+        library->material_count == 0 ||
+        library->illumination_band_count < 2) {
+        return 1;
+    }
+
+    uint32_t requiredPatterns =
+        (uint32_t)library->pattern_count * PINGO_FLAT_PATTERN_PIXELS;
+    uint32_t requiredLookup =
+        (uint32_t)library->material_count *
+        library->illumination_band_count;
+    if (library->patterns_size < requiredPatterns ||
+        library->lookup_size < requiredLookup) {
+        return 1;
+    }
+    for (uint32_t i = 0; i < requiredPatterns; i++) {
+        if ((library->patterns[i] & 0xC0u) != 0xC0u) {
+            return 1;
+        }
+    }
+    for (uint32_t i = 0; i < requiredLookup; i++) {
+        if (library->lookup[i] >= library->pattern_count) {
+            return 1;
+        }
+    }
+
+    r->flatPatternLibrary = *library;
+    r->flatPatternLibraryValid = 1;
+    return 0;
 }
 
 int rendererRender(Renderer * r) {

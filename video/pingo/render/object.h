@@ -13,6 +13,14 @@ typedef struct Object {
     Vec2f * textCoord;
     uint32_t textCoord_count;
     uint8_t texture_mapping_valid;
+
+    /*
+     * Zero is the backward-compatible active state for statically initialized
+     * and legacy objects. The VDU object-active command stores the inverse so
+     * an inactive object can be rejected before any renderer work or
+     * diagnostic accounting.
+     */
+    uint8_t inactive;
 } Object;
 
 Renderable object_as_renderable(Object * object);
