@@ -114,6 +114,24 @@ typedef struct tag_Renderer{
 
 } Renderer;
 
+/*
+ * Stream a frame without first materializing a Scene renderable array.
+ *
+ * rendererBeginFrame() resets diagnostics, clears the depth/color targets,
+ * and calls the backend's beforeRender hook. Submit zero or more renderables
+ * with rendererRenderRenderable(), then call rendererEndFrame() exactly once
+ * to run the backend's afterRender hook. The caller owns traversal and the
+ * lifetime of every submitted renderable.
+ *
+ * rendererRender() remains the compatibility entry point for a bound Scene.
+ */
+extern int rendererBeginFrame(Renderer *);
+
+extern void rendererRenderRenderable(
+    Renderer *, Mat4 transform, Renderable renderable);
+
+extern int rendererEndFrame(Renderer *);
+
 extern int rendererRender(Renderer *);
 
 extern int rendererInit(Renderer *, Vec2i size, struct tag_BackEnd * backEnd);

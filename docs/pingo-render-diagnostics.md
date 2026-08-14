@@ -73,24 +73,24 @@ the complete declared schema and reject a record that mixes versions.
 | --- | --- |
 | `seq` | Full control-local render sequence. The callback protocol carries only its low 16 bits. |
 | `bmid` | Command-38 output bitmap ID. |
-| `render_us` | Existing independent monotonic measurement around `rendererRender()` only. In a diagnostic build it necessarily includes instrumentation overhead inside that call. |
+| `render_us` | Independent monotonic measurement around one complete streamed frame: `rendererBeginFrame()`, direct active-object submissions in map order, and `rendererEndFrame()`. In a diagnostic build it necessarily includes instrumentation overhead inside those operations. |
 | `d` | Diagnostic schema version; exactly `4` for the current candidate schema. |
 | `w`, `h` | Pingo render width and height. |
 | `fmt` | Target bitmap bits per RGBA channel: `2` for RGBA2222 or `8` for RGBA8888. |
 | `cmd` | Valid command-38 handler entry, before reading `bmid`, through target-bitmap finalization and restoration of Pingo's private frame pointer. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
-| `pre` | After output-bitmap validation through the instant before `rendererRender()`: target selection, renderer/scene construction, object binding and modified transforms, projection, camera-view inversion, and scene transform. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
+| `pre` | After output-bitmap validation through the instant before `rendererBeginFrame()`: target selection, renderer construction, object binding and modified transforms, projection, camera-view inversion, and scene-transform preparation. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
 | `clr` | Renderer entry through both buffer clears: depth clear, backend `beforeRender`, framebuffer-pointer refresh, and optional color clear. |
 | `xf` | Cached object-bounds transformation and common-plane testing, plus per-triangle source lookup, model transformation, normal and diffuse-light calculation, view transformation, and multiplication into clip space. Bounds work is present only for eligible objects while object frustum culling is enabled. |
 | `ts` | Source-triangle rejection, homogeneous outcode and clipping work, safe perspective projection, fan-primitive winding and screen setup, bounding-box clamp, integer-area test, barycentric setup, and perspective-UV preparation. |
 | `ras` | Per-triangle fragment loops: edge tests, depth work, texture interpolation and sampling, illumination, pixel writes, and diagnostic counter maintenance. An empty clamped bounding box returns before this phase and contributes no raster time. |
-| `out` | Output finalization after `rendererRender()` through target readiness. RGBA8888 targets include full one-byte-to-four-byte expansion; RGBA2222 targets require only final bookkeeping and frame-pointer restoration. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
+| `out` | Output finalization after `rendererEndFrame()` through target readiness. RGBA8888 targets include full one-byte-to-four-byte expansion; RGBA2222 targets require only final bookkeeping and frame-pointer restoration. It is measured with the independent 64-bit microsecond clock and saturated to `u32`. |
 
 The timed phases do not form a perfect sum:
 
 1. `render_us` uses a separate monotonic clock from the detailed tick
    accumulators.
-2. `clr + xf + ts + ras` omits scene traversal, renderable dispatch,
-   `afterRender`, and small instrumentation gaps inside `rendererRender()`.
+2. `clr + xf + ts + ras` omits direct object-map traversal, renderable dispatch,
+   `afterRender`, and small instrumentation gaps inside the streamed frame.
 3. `pre + render_us + out` omits part of command parsing and validation and can
    differ from `cmd` because the clocks and rounding differ.
 4. The host summarizer reports these differences as renderer-unattributed and
@@ -192,8 +192,9 @@ These definitions make several comparisons direct:
 
 ## State and emission invariants
 
-1. The renderer clears the entire diagnostic structure at the beginning of
-   every `rendererRender()` call. Counts and phase totals describe one frame,
+1. `rendererBeginFrame()` clears the entire diagnostic structure at the
+   beginning of every frame. The compatibility `rendererRender()` path enters
+   through the same operation. Counts and phase totals describe one frame,
    never lifetime accumulation.
 2. The injected clock pointer and frequency survive that per-frame reset.
 3. A valid, completed command-38 render produces exactly one debug record.
@@ -239,7 +240,8 @@ C renderer remains platform-neutral:
    independent 64-bit monotonic microsecond clock and saturate their serialized
    results to `u32`.
 6. `render_us` continues to use the pre-existing monotonic microsecond clock
-   around `rendererRender()`, independently of the detailed phase ticks.
+   around begin-frame, direct object submissions, and end-frame, independently
+   of the detailed phase ticks.
 
 The diagnostic firmware is intentionally observant rather than
 performance-neutral:

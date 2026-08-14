@@ -78,7 +78,9 @@ exposes a live framebuffer.
 8. immutable flat-pattern-library binding and mesh shading/illumination policy;
 9. consolidated-buffer mesh replacement with transactional validation and
    stable object bindings;
-10. inactive-object scene exclusion and exact 32-renderable overflow behavior;
+10. allocation-free traversal beyond 32 active objects, visibility at the
+    maximum 16-bit object and mesh ID, and inactive-object exclusion and
+    reactivation;
 11. signed-24 object translation endpoints, legacy-unit equivalence,
     absent-object draining, and truncation recovery; and
 12. per-control projection-far defaults, isolation, accepted endpoints,

@@ -71,7 +71,8 @@ int renderSprite(Mat4 transform, Renderer * r, Renderable ren) {
     return 0;
 };
 
-void renderRenderable(Mat4 transform, Renderer * r, Renderable ren) {
+void rendererRenderRenderable(
+        Renderer * r, Mat4 transform, Renderable ren) {
     renderingFunctions[ren.renderableType](transform, r, ren);
 };
 
@@ -83,7 +84,7 @@ int renderScene(Mat4 transform, Renderer * r, Renderable ren) {
     //Apply hierarchy transfom
     Mat4 newTransform = mat4MultiplyM( & s->transform, & transform);
     for (int i = 0; i < s->numberOfRenderables; i++) {
-        renderRenderable(newTransform, r, s->renderables[i]);
+        rendererRenderRenderable(r, newTransform, s->renderables[i]);
     }
     return 0;
 };
@@ -1044,7 +1045,7 @@ int rendererSetFlatPatternLibrary(
     return 0;
 }
 
-int rendererRender(Renderer * r) {
+int rendererBeginFrame(Renderer * r) {
 
 #if PINGO_RENDER_DIAGNOSTICS
     memset(&r->diagnostics, 0, sizeof(r->diagnostics));
@@ -1069,11 +1070,28 @@ int rendererRender(Renderer * r) {
         r, clear_started, &r->diagnostics.clear_ticks);
 #endif
 
-    renderScene(mat4Identity(), r, sceneAsRenderable(r->scene));
+    return 0;
+}
 
+int rendererEndFrame(Renderer * r) {
     r->backEnd->afterRender(r, r->backEnd);
 
     return 0;
+}
+
+int rendererRender(Renderer * r) {
+    if (!r || !r->scene) {
+        return 1;
+    }
+
+    int status = rendererBeginFrame(r);
+    if (status) {
+        return status;
+    }
+
+    renderScene(mat4Identity(), r, sceneAsRenderable(r->scene));
+
+    return rendererEndFrame(r);
 }
 
 int rendererSetScene(Renderer * r, Scene * s) {

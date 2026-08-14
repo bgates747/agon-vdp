@@ -2139,10 +2139,13 @@ typedef struct tag_Pingo3dControl {
 #endif
         rendererSetCamera(&renderer,(p3d::Vec4i){0,0,size.x,size.y});
 
-        p3d::Scene scene;
-        sceneInit(&scene);
-        p3d::rendererSetScene(&renderer, &scene);
-
+        /*
+         * Consume dirty object transforms during command preparation, as the
+         * former transient-Scene path did. Rendering later walks the stable
+         * uint16_t-keyed map directly, so active-object capacity is bounded
+         * by the complete object ID space and available registry memory, not
+         * by MAX_SCENE_RENDERABLES.
+         */
         for (auto object = m_objects->begin(); object != m_objects->end(); object++) {
             if (object->second.m_object.inactive) {
                 continue;
@@ -2151,17 +2154,6 @@ typedef struct tag_Pingo3dControl {
             if (object->second.m_modified) {
                 object->second.update_transformation_matrix();
                 //object->second.dump();
-            }
-            if (sceneAddRenderable(
-                    &scene,
-                    p3d::object_as_renderable(&object->second.m_object))) {
-#if PINGO_RENDER_DIAGNOSTICS
-                force_debug_log(
-                    "PINGO_SCENE active_overflow=1 limit=%u first_dropped_oid=%u\n",
-                    (uint32_t)MAX_SCENE_RENDERABLES,
-                    (uint32_t)object->first);
-#endif
-                break;
             }
         }
 
@@ -2185,7 +2177,6 @@ typedef struct tag_Pingo3dControl {
         if (m_scene.m_modified) {
             m_scene.compute_transformation_matrix();
         }
-        scene.transform = m_scene.m_transform;
 
 #if PINGO_RENDER_DIAGNOSTICS
         uint32_t prepare_us = pingo_render_diagnostics_elapsed_us(
@@ -2198,7 +2189,18 @@ typedef struct tag_Pingo3dControl {
         // Time only Pingo's renderer. Bitmap copying and diagnostic output are
         // intentionally outside the measured interval.
         uint64_t render_start_us = pingo_render_clock_us();
-        rendererRender(&renderer);
+        p3d::rendererBeginFrame(&renderer);
+        for (auto object = m_objects->begin();
+             object != m_objects->end(); object++) {
+            if (object->second.m_object.inactive) {
+                continue;
+            }
+            p3d::rendererRenderRenderable(
+                &renderer,
+                m_scene.m_transform,
+                p3d::object_as_renderable(&object->second.m_object));
+        }
+        p3d::rendererEndFrame(&renderer);
         uint32_t render_elapsed_us =
             (uint32_t)(pingo_render_clock_us() - render_start_us);
 

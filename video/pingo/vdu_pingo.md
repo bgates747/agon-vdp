@@ -659,19 +659,26 @@ created by older applications. The object must already exist, and any other
 value is invalid; invalid, absent-object, and truncated commands preserve
 state and do not create a placeholder object.
 
-An inactive VDU object is not added to the transient render scene, so it does
-not consume one of that scene's renderable slots. The native object renderer
-also rejects an inactive object at entry, before geometry, material, frustum,
+At render time the VDP bridge traverses the control's 16-bit-keyed object
+registry directly in ascending object-ID order. It begins one frame, submits
+every active object, and ends that frame without first materializing a transient
+renderable array. VDU rendering therefore has no fixed active-object cap and
+does not allocate a render list. The complete 65,536-value `uint16_t` object-ID
+space is available, subject to the memory needed by the object, mesh, and
+texture registries.
+
+Inactive objects are skipped before submission. The native object renderer also
+rejects an inactive object at entry, before geometry, material, frustum,
 triangle, depth, or diagnostic work. Its transforms, texture binding, mesh
 binding, and mesh contents remain intact, so reactivation is a constant-size
 control operation. This command is intended to hide a streaming slot while its
 next mesh is prepared or when its terrain tile is outside the application's
 working set.
 
-Diagnostic builds emit `PINGO_STREAM object_active=ok` with the object ID and
-new state. They also emit `PINGO_SCENE active_overflow=1` if an application
-nevertheless exceeds the fixed 32-renderable scene budget; objects at and after
-the reported map-ordered ID are omitted from that frame.
+The native C renderer's `Scene` container remains a separate compatibility path
+for callers of `rendererRender()`; its storage policy does not limit the VDU
+bridge's direct object traversal. Diagnostic builds emit
+`PINGO_STREAM object_active=ok` with the object ID and new state.
 
 ## Set Object XYZ Wide Translation Distances (Experimental)
 <b>VDU 23, 0, &A0, sid; &49, 52, oid; distx24; disty24; distz24</b> :  Set Object XYZ Wide Translation Distances<br>

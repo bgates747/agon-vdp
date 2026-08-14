@@ -1688,6 +1688,127 @@ void testStreamingMeshReplacementAndVisibility(
         harness);
 }
 
+void testUnboundedObjectTraversalAndHighIds(
+        Harness& harness, std::uint32_t baseline) {
+    constexpr std::uint16_t control = 1113;
+    constexpr std::uint16_t target = 414;
+    constexpr std::uint16_t texture = 415;
+    constexpr std::uint16_t fillerMesh = 0;
+    constexpr std::uint16_t highId = UINT16_MAX;
+    constexpr std::uint16_t token = 0x6A43;
+    constexpr std::uint32_t centerPixel = 32U * 64U + 32U;
+
+    auto sendActive = [&](std::uint16_t object, std::uint8_t active) {
+        auto command = harness.pingoPrefix(control, 51);
+        Harness::appendWord(command, object);
+        command.push_back(active);
+        harness.sendBytes(command);
+    };
+    auto sendWideZ = [&](std::uint16_t object, std::uint32_t z) {
+        auto command = harness.pingoPrefix(control, 52);
+        Harness::appendWord(command, object);
+        Harness::append24(command, 0);
+        Harness::append24(command, 0);
+        Harness::append24(command, z);
+        harness.sendBytes(command);
+    };
+
+    harness.createBitmap2222(target, 64, 64, 0);
+    harness.createBitmap2222(texture, 4, 4, 0xFC);
+    harness.sendPingo(control, 0, {64, 64});
+    auto notification = harness.pingoPrefix(control, 41);
+    notification.push_back(1);
+    Harness::appendWord(notification, token);
+    harness.sendBytes(notification);
+    harness.drain();
+
+    std::uint16_t sequence = 0;
+    auto render = [&](const char * failure) {
+        harness.sendPingo(control, 38, {target});
+        require(
+            harness.waitForCompletion(token, sequence++),
+            failure, harness);
+    };
+
+    render("empty high-ID fixture render did not complete");
+    std::uint8_t clearPixel = 0xFF;
+    require(
+        harness.bitmapPixel(target, centerPixel, &clearPixel) &&
+        clearPixel != 0xFC,
+        "could not establish the high-ID fixture clear pixel", harness);
+
+    /*
+     * These 36 active objects deliberately bind an incomplete mesh. They
+     * draw nothing, but the former transient 32-entry scene consumed all of
+     * its slots before object geometry validation and therefore never
+     * reached the valid high-ID witness below.
+     */
+    for (std::uint16_t object = 0; object < 36; object++) {
+        harness.sendPingo(
+            control, 5, {object, fillerMesh, texture});
+    }
+
+    /*
+     * Use both endpoints of the 16-bit identity domain in the same fixture:
+     * object zero exists above, while this centered drawable uses 65535 for
+     * both its object and mesh IDs. Its geometry and pose duplicate the
+     * already-qualified projection-far visibility witness.
+     */
+    populateObject(harness, control, highId, highId, texture);
+    harness.sendPingo(
+        control, 9, {highId, UINT16_MAX, UINT16_MAX, UINT16_MAX});
+    harness.sendPingoBytes(control, 46, {0});
+    harness.sendPingo(control, 53, {8000});
+    sendWideZ(highId, 0xFA2400U);
+
+    std::uint8_t active = 0;
+    require(
+        harness.synchronize() &&
+        harness.objectUsesMesh(control, highId, highId) &&
+        harness.objectActive(control, highId, &active) && active == 1,
+        "maximum-ID object or mesh did not retain its complete identity",
+        harness);
+    const auto allocationsBeforeRenders = harness.ownedAllocations();
+
+    render("render did not traverse beyond 32 active objects");
+    std::uint8_t pixel = 0;
+    require(
+        harness.bitmapPixel(target, centerPixel, &pixel) &&
+        pixel == 0xFC &&
+        harness.ownedAllocations() == allocationsBeforeRenders,
+        "maximum-ID object was not rendered allocation-free", harness);
+
+    sendActive(highId, 0);
+    render("render after maximum-ID deactivation did not complete");
+    require(
+        harness.objectActive(control, highId, &active) && active == 0 &&
+        harness.bitmapPixel(target, centerPixel, &pixel) &&
+        pixel == clearPixel &&
+        harness.ownedAllocations() == allocationsBeforeRenders,
+        "maximum-ID object deactivation changed ownership or remained visible",
+        harness);
+
+    sendActive(highId, 1);
+    render("render after maximum-ID reactivation did not complete");
+    require(
+        harness.objectActive(control, highId, &active) && active == 1 &&
+        harness.bitmapPixel(target, centerPixel, &pixel) &&
+        pixel == 0xFC &&
+        harness.ownedAllocations() == allocationsBeforeRenders,
+        "maximum-ID object reactivation changed ownership or stayed hidden",
+        harness);
+
+    harness.sendPingo(control, 39);
+    harness.clearBuffer(texture);
+    harness.clearBuffer(target);
+    require(
+        harness.synchronize(),
+        "unbounded object fixture teardown disrupted alignment", harness);
+    require(
+        harness.ownedAllocations() == baseline,
+        "unbounded object fixture teardown leaked Pingo ownership", harness);
+}
+
 void testAtomicInitialization(Harness& harness, std::uint32_t baseline) {
     constexpr std::uint16_t control = 1101;
     harness.sendPingo(control, 0, {0xFFFF, 0xFFFF});
@@ -2173,6 +2294,7 @@ int main(int argc, char ** argv) {
     testLightingAndShadingCommands(harness, baseline);
     testFlatPatternLibrary(harness, baseline);
     testStreamingMeshReplacementAndVisibility(harness, baseline);
+    testUnboundedObjectTraversalAndHighIds(harness, baseline);
     testAtomicInitialization(harness, baseline);
     testTeardownAndTextureLifetime(harness, baseline);
     testRegisteredControlIsolation(harness, baseline);
