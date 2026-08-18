@@ -77,6 +77,28 @@ void Context::setGraphicsFill(uint8_t mode) {
 	}
 }
 
+// Update selected colours based on palette change in 64 colour modes
+//
+void Context::updateColours(uint8_t logical, uint8_t physical) {
+	plottingText = false;
+	auto lookedup = colourLookup[physical];
+	if (logical == tfgc) {
+		tfg = lookedup;
+	}
+	if (logical == tbgc) {
+		tbg = lookedup;
+	}
+	if (logical == tfgc || logical == tbgc) {
+		updateTextCursorBitmap();
+	}
+	if (logical == gfgc) {
+		gfg = lookedup;
+	}
+	if (logical == gbgc) {
+		gbg = lookedup;
+	}
+}
+
 // Set a clipping rectangle
 //
 inline void Context::setClippingRect(Rect rect) {
@@ -111,6 +133,7 @@ void Context::moveTo() {
 void Context::plotLine(bool omitFirstPoint, bool omitLastPoint, bool usePattern, bool resetPattern) {
 	if (!textCursorActive()) {
 		// if we're in graphics mode, we need to move the cursor to the last point
+		// TODO think about this - why do we _not_ do this when the text cursor is active??
 		canvas->moveTo(p2.X, p2.Y);
 	}
 
@@ -135,24 +158,27 @@ void Context::plotPoint() {
 // Fill horizontal line
 //
 void Context::fillHorizontalLine(bool scanLeft, bool match, RGB888 matchColor) {
+	canvas->moveTo(p1.X, p1.Y);
+	canvas->fillRow(matchColor, scanLeft, match);
 	canvas->waitCompletion(false);
-	int16_t y = p1.Y;
-	int16_t x1 = scanLeft ? (match ? scanHToMatch(p1.X, y, matchColor, -1) : scanH(p1.X, y, matchColor, -1)) : p1.X;
-	int16_t x2 = match ? scanHToMatch(p1.X, y, matchColor, 1) : scanH(p1.X, y, matchColor, 1);
-	debug_log("fillHorizontalLine: (%d, %d) transformed to (%d,%d) -> (%d,%d)\n\r", p1.X, p1.Y, x1, y, x2, y);
 
-	if (x1 == x2 || x1 > x2) {
-		// Coordinate needs to be tweaked to match Acorn's behaviour
-		auto p = toCurrentCoordinates(scanLeft ? x2 + 1 : x2, y);
-		pushPoint(p.X, up1.Y);
-		// nothing to draw
-		return;
-	}
-	canvas->moveTo(x1, y);
-	canvas->lineTo(x2, y);
+	// read back the updated position from the canvas and sync our coordinate stack
+	auto pos = canvas->getPosition();
+	auto p = toCurrentCoordinates(pos.X, pos.Y);
+	pushPoint(p.X, p.Y);
+}
 
-	auto p = toCurrentCoordinates(x2, y);
-	pushPoint(p.X, up1.Y);
+// Flood fill
+//
+void Context::floodFill(bool match, RGB888 matchColor) {
+	canvas->moveTo(p1.X, p1.Y);
+	canvas->floodFill(matchColor, match);
+	canvas->waitCompletion(false);
+
+	// read back the updated position from the canvas and sync our coordinate stack
+	auto pos = canvas->getPosition();
+	auto p = toCurrentCoordinates(pos.X, pos.Y);
+	pushPoint(p.X, p.Y);
 }
 
 // Triangle plot
@@ -198,6 +224,23 @@ void Context::plotCircle(bool filled) {
 		canvas->fillEllipse(p2.X, p2.Y, size, rectangularPixels ? size / 2 : size);
 	} else {
 		canvas->drawEllipse(p2.X, p2.Y, size, rectangularPixels ? size / 2 : size);
+	}
+}
+
+// Ellipse plot (Acorn-style, three-point sheared ellipse)
+//
+// p3 = centre, p2 = horizontal axis endpoint (only X matters),
+// p1 = top point (Y-offset = vertical semi-axis, X-offset = horizontal shear).
+// All coordinates here are already in pixel/screen space (agon-vdp's pushPoint
+// has applied any OS->pixel conversion), so we pass them straight through.
+void Context::plotEllipse(bool filled) {
+	int width  = 2 * abs(p2.X - p3.X);
+	int height = 2 * abs(p1.Y - p3.Y);
+	int shear  = p1.X - p3.X;
+	if (filled) {
+		canvas->fillEllipseSheared(p3.X, p3.Y, width, height, shear);
+	} else {
+		canvas->drawEllipseSheared(p3.X, p3.Y, width, height, shear);
 	}
 }
 
@@ -511,6 +554,8 @@ void Context::setTextColour(uint8_t colour) {
 	else {
 		debug_log("vdu_colour: invalid colour %d\n\r", colour);
 	}
+
+	updateTextCursorBitmap();
 }
 
 // Set graphics colour (handles GCOL / VDU 18)
@@ -545,25 +590,6 @@ void Context::setGraphicsColour(uint8_t mode, uint8_t colour) {
 		debug_log("vdu_gcol: invalid mode %d\n\r", mode);
 	}
 	plottingText = false;
-}
-
-// Update selected colours based on palette change in 64 colour modes
-//
-void Context::updateColours(uint8_t l, uint8_t index) {
-	plottingText = false;
-	auto lookedup = colourLookup[index];
-	if (l == tfgc) {
-		tfg = lookedup;
-	}
-	if (l == tbgc) {
-		tbg = lookedup;
-	}
-	if (l == gfgc) {
-		gfg = lookedup;
-	}
-	if (l == gbgc) {
-		gbg = lookedup;
-	}
 }
 
 // Get currently set colour values
@@ -698,8 +724,10 @@ bool IRAM_ATTR Context::plot(int16_t x, int16_t y, uint8_t command) {
 				fillHorizontalLine(false, false, gfg);
 				break;
 			case 0x80:	// flood to non-bg
+				floodFill(false, gbg);
+				break;
 			case 0x88:	// flood to fg
-				debug_log("plot flood fill not implemented\n\r");
+				floodFill(true, gfg);
 				break;
 			case 0x90:	// circle outline
 				plotCircle(false);
@@ -723,9 +751,11 @@ bool IRAM_ATTR Context::plot(int16_t x, int16_t y, uint8_t command) {
 				plotCopyMove(mode);
 				break;
 			case 0xC0:	// ellipse outline
+				plotEllipse(false);
+				break;
 			case 0xC8:	// ellipse fill
-				// fab-gl's ellipse isn't compatible with BBC BASIC
-				debug_log("plot ellipse not implemented\n\r");
+				setGraphicsFill(mode);
+				plotEllipse(true);
 				break;
 			case 0xD8:	// plot path (unassigned on Acorn and other BBC BASIC versions)
 				plotPath(mode, lastPlotCommand & 0x03);
@@ -780,7 +810,8 @@ void Context::plotString(const std::string& s) {
 	auto font = getFont();
 	// iterate over the string and plot each character
 	for (const char c : s) {
-		if (cursorBehaviour.scrollProtect) {
+		if (cursorIsOffRight()) {
+			// Cursor might be off right from scroll protect, or previous character plot
 			cursorAutoNewline();
 		}
 		if (ttxtMode) {
@@ -794,8 +825,17 @@ void Context::plotString(const std::string& s) {
 			}
 		}
 		if (!cursorBehaviour.xHold) {
-			cursorRight(cursorBehaviour.scrollProtect);
+			cursorRight();
+
+			if (cursorIsOffRight()) {
+				checkPagedMode();
+			}
 		}
+	}
+
+	// If we're not pausing output, then wrap to new line if needed
+	if (processorState == VDUProcessorState::Active && (!cursorBehaviour.scrollProtect || !cursorIsOnBottomRow())) {
+		cursorAutoNewline();
 	}
 }
 
@@ -849,23 +889,6 @@ void Context::drawBitmap(uint16_t x, uint16_t y, bool compensateHeight, bool for
 	}
 }
 
-// Draw cursor
-//
-void Context::drawCursor(Point p) {
-	if (textCursorActive()) {
-		auto font = getFont();
-		if (cursorHStart < font->width && cursorHStart <= cursorHEnd && cursorVStart < font->height && cursorVStart <= cursorVEnd) {
-			canvas->setPaintOptions(cpo);
-			canvas->setBrushColor(tbg);
-			canvas->fillRectangle(p.X + cursorHStart, p.Y + cursorVStart, p.X + std::min(((int)cursorHEnd), font->width - 1), p.Y + std::min(((int)cursorVEnd), font->height - 1));
-			canvas->setBrushColor(tfg);
-			canvas->fillRectangle(p.X + cursorHStart, p.Y + cursorVStart, p.X + std::min(((int)cursorHEnd), font->width - 1), p.Y + std::min(((int)cursorVEnd), font->height - 1));
-			canvas->setPaintOptions(tpo);
-			plottingText = false;
-		}
-	}
-}
-
 // Set affine transform
 //
 void Context::setAffineTransform(uint8_t flags, uint16_t bufferId) {
@@ -877,7 +900,6 @@ void Context::setAffineTransform(uint8_t flags, uint16_t bufferId) {
 // Clear the screen
 //
 void Context::cls() {
-	hideCursor();
 	if (hasActiveSprites()) {
 		activateSprites(0);
 	}
@@ -891,7 +913,6 @@ void Context::cls() {
 	}
 	cursorHome();
 	setPagedMode(pagedMode);
-	showCursor();
 }
 
 // Clear the graphics area
@@ -922,6 +943,7 @@ void Context::resetGraphicsPainting() {
 	gbg = colourLookup[0x00];
 	gpofg = getPaintOptions(fabgl::PaintMode::Set, gpofg);
 	gpobg = getPaintOptions(fabgl::PaintMode::Set, gpobg);
+	updateTextCursorBitmap();
 }
 
 void Context::resetGraphicsOptions() {
@@ -941,11 +963,14 @@ void Context::resetGraphicsPositioning() {
 }
 
 void Context::resetTextPainting() {
+	tfgc = 15 % getVGAColourDepth();
+	tbgc = 0;
 	tfg = colourLookup[0x3F];
 	tbg = colourLookup[0x00];
 	tpo = getPaintOptions(fabgl::PaintMode::Set, tpo);
 	cpo = getPaintOptions(fabgl::PaintMode::XOR, tpo);
 	plottingText = false;
+	updateTextCursorBitmap();
 }
 
 // Reset graphics context, called after a mode change
@@ -973,6 +998,7 @@ void Context::activate() {
 	canvas->setLinePattern(linePattern);
 	canvas->setLinePatternLength(linePatternLength);
 	moveTo();
+	_VGAController->setTextCursor(textCursorSprite.get());
 }
 
 #endif // CONTEXT_GRAPHICS_H

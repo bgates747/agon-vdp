@@ -96,9 +96,14 @@ void VDUStreamProcessor::vdu(uint8_t c, bool usePeek) {
 			}
 			break;
 		case 0x09:	// Cursor Right
+			context->cursorAutoNewline();
 			context->cursorRight();
+			if (context->cursorAutoNewline()) {
+				context->checkPagedMode();
+			}
 			break;
 		case 0x0A:	// Cursor Down
+			context->checkPagedMode();
 			context->cursorDown();
 			break;
 		case 0x0B:	// Cursor Up
@@ -128,12 +133,9 @@ void VDUStreamProcessor::vdu(uint8_t c, bool usePeek) {
 		case 0x13:	// Define Logical Colour
 			vdu_palette();
 			break;
-		case 0x14: { // Reset colours
-			restorePalette();
-			// TODO consider if this should iterate over all stored contexts
-			// and if not, how to handle the fact that the palette has changed
-			context->resetGraphicsPainting();
-		}	break;
+		case 0x14:	// Reset colours
+			vdu_restorePalette();
+			break;
 		case 0x15:
 			commandsEnabled = false;
 			break;
@@ -196,8 +198,8 @@ void VDUStreamProcessor::vdu_print(char c, bool usePeek) {
 	// gather our string for printing
 	if (usePeek) {
 		// For compatibility with newline things, we max out to the remaining chars in line
-		auto limit = fabgl::imin(15, getContext()->getCharsRemainingInLine());
-		while (--limit) {
+		auto limit = fabgl::imin(15, context->getCharsRemainingInLine());
+		while (limit) {
 			if (!byteAvailable()) {
 				break;
 			}
@@ -212,8 +214,10 @@ void VDUStreamProcessor::vdu_print(char c, bool usePeek) {
 					break;
 				}
 				s += (char)next;
+				limit--;
 			} else if ((next >= 0x20 && next <= 0x7E) || (next >= 0x80 && next <= 0xFF)) {
 				s += (char)next;
+				limit--;
 				readByte();		// discard byte we have peeked
 			} else {
 				break;
@@ -252,14 +256,44 @@ void VDUStreamProcessor::vdu_palette() {
 	auto g = readByte_t(); if (g == -1) return; // The green component
 	auto b = readByte_t(); if (b == -1) return; // The blue component
 
-	// keep logical colour index in bounds
-	l &= 63;
-	auto index = setLogicalPalette(l, p, r, g, b);
+	// keep logical colour index in bounds for current mode
+	l &= (getVGAColourDepth() - 1);
+	auto physical = setLogicalPalette(l, p, r, g, b);
 
-	if (index != -1) {
-		// TODO iterate over all stored contexts and update the palette
-		context->updateColours(l, index);
+	if (physical != -1) {
+		// Ensure all contexts get updated with the new colour
+		Context::updateColoursInAllContexts(l, physical);
+
+		auto pixel = colourLookup[physical];
+		setVDPVariable(VDPVAR_LAST_COLOUR_RED, pixel.R);
+		setVDPVariable(VDPVAR_LAST_COLOUR_GREEN, pixel.G);
+		setVDPVariable(VDPVAR_LAST_COLOUR_BLUE, pixel.B);
+		setVDPVariable(VDPVAR_LAST_COLOUR_LOGICAL, l);
+		setVDPVariable(VDPVAR_LAST_COLOUR_PHYSICAL, physical);
+		setVDPVariable(VDPVAR_LAST_COLOUR_X, 32768);
+		setVDPVariable(VDPVAR_LAST_COLOUR_Y, 32768);
+		bufferCallCallbacks(CALLBACK_PALETTE);
 	}
+}
+
+// VDU 20 Handle palette reset
+//
+void VDUStreamProcessor::vdu_restorePalette() {
+	restorePalette();
+	// Reset our current context graphics painting settings
+	context->resetGraphicsPainting();
+	// iterate over current possible colours, and call updateColoursInAllContexts
+	for (int8_t i = getVGAColourDepth() - 1; i >= 0; i--) {
+		Context::updateColoursInAllContexts(i, palette[i]);
+	}
+	setVDPVariable(VDPVAR_LAST_COLOUR_RED, 0);
+	setVDPVariable(VDPVAR_LAST_COLOUR_GREEN, 0);
+	setVDPVariable(VDPVAR_LAST_COLOUR_BLUE, 0);
+	setVDPVariable(VDPVAR_LAST_COLOUR_LOGICAL, 255);
+	setVDPVariable(VDPVAR_LAST_COLOUR_PHYSICAL, 255);
+	setVDPVariable(VDPVAR_LAST_COLOUR_X, 32768);
+	setVDPVariable(VDPVAR_LAST_COLOUR_Y, 32768);
+	bufferCallCallbacks(CALLBACK_PALETTE);
 }
 
 // VDU 22 Handle MODE
@@ -287,15 +321,18 @@ void VDUStreamProcessor::vdu_mode(uint8_t mode) {
 		switchBuffer();
 		context->cls();
 	}
-	// reset mouse
-	setMouseCursor();
+	// ensure mouse is shown if it was visible
+	if (mouseVisible) {
+		showMouseCursor();
+	}
 	resetMousePositioner(canvasW, canvasH, _VGAController.get());
-	// update MOS with new info
-	sendModeInformation();
-	if (mouseEnabled) {
-		sendMouseData();
+	if (mouseVisible) {
+		// update mouse variables from potentially revised mouse position
+		updateMouseVars(nullptr);
 	}
 	bufferCallCallbacks(CALLBACK_MODE_CHANGE);
+	// update MOS with new info
+	sendModeInformation();
 }
 
 // VDU 24 Graphics viewport
@@ -378,7 +415,7 @@ void VDUStreamProcessor::vdu_origin() {
 	}
 }
 
-// VDU 30 TAB(x,y)
+// VDU 31 TAB(x,y)
 //
 void VDUStreamProcessor::vdu_cursorTab() {
 	auto x = readByte_t();
@@ -386,6 +423,7 @@ void VDUStreamProcessor::vdu_cursorTab() {
 		auto y = readByte_t();
 		if (y >= 0) {
 			context->cursorTab(x, y);
+			context->resetPagedModeCount();
 		}
 	}
 }

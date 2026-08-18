@@ -9,7 +9,7 @@
 #include "agon.h"
 #include "agon_ps2.h"
 #include "agon_screen.h"
-#include "feature_flags.h"
+#include "vdp_variables.h"
 #include "vdu_audio.h"
 #include "vdu_buffered.h"
 #include "vdu_context.h"
@@ -18,6 +18,7 @@
 #include "updater.h"
 #include "vdu_stream_processor.h"
 #include "vdu_layers.h"
+#include "ymodem.h"
 
 extern void startTerminal();					// Start the terminal
 extern void setConsoleMode(bool mode);			// Set console mode
@@ -45,20 +46,22 @@ typedef union {
 //
 void VDUStreamProcessor::wait_eZ80() {
 	if (esp_reset_reason() == ESP_RST_SW) {
-		return;
-	}
-
-	debug_log("wait_eZ80: Start\n\r");
-	while (!initialised) {
-		if (byteAvailable()) {
-			auto c = readByte();	// Only handle VDU 23 packets
-			if (c == 23) {
-				vdu_sys();
+		// We only perform a s/w reset after flashing, so MOS will already be running
+		initialised = true;
+	} else {
+		debug_log("wait_eZ80: Start\n\r");
+		while (!initialised) {
+			if (byteAvailable()) {
+				auto c = readByte();	// Only handle VDU 23 packets
+				if (c == 23) {
+					vdu_sys();
+				}
 			}
 		}
+		debug_log("wait_eZ80: End\n\r");	
 	}
+
 	sendModeInformation();
-	debug_log("wait_eZ80: End\n\r");
 }
 
 // Handle SYS
@@ -110,10 +113,22 @@ void VDUStreamProcessor::vdu_sys() {
 				clearEcho();				// Don't echo bitmap/sprite commands
 				vdu_sys_sprites();			// Sprite system control
 			}	break;
-			case 0x1C: {					// VDU 23, 28
-				clearEcho();				// Don't echo hexload commands
-				vdu_sys_hexload();
-			}	break;
+			case 0x1C: {
+				clearEcho();                        // Don't echo hexload/ymodem commands
+				int16_t hlcmd = readByte_t();
+				switch(hlcmd) {
+					case -1:
+						vdu_sys_hexload();          // VDU 23,28
+						break;
+					case 1:
+						vdu_sys_ymodem_receive();   // VDU 23,28,1
+						break;
+					case 2:
+						vdu_sys_ymodem_send();      // VDU 23,28,2
+						break;
+				}
+
+			}   break;
 		}
 	}
 	//
@@ -243,7 +258,7 @@ void VDUStreamProcessor::vdu_sys_video() {
 			vdu_sys_font();				// Font management
 		}	break;
 		case VDP_AFFINE_TRANSFORM: {	// VDU 23, 0, &96, flags, bufferId;
-			if (!isFeatureFlagSet(TESTFLAG_AFFINE_TRANSFORM)) {
+			if (!isVDPVariableSet(TESTFLAG_AFFINE_TRANSFORM)) {
 				return;
 			}
 			auto flags = readByte_t();	// Set affine transform flags
@@ -326,7 +341,7 @@ void VDUStreamProcessor::vdu_sys_video() {
 			}
 		}	break;
 		case VDP_LAYERS: {				// VDU 23, 0, &C2, n
-			if (!isFeatureFlagSet(FEATUREFLAG_TILE_ENGINE)) {
+			if (!isVDPVariableSet(TESTFLAG_TILE_ENGINE)) {
 				return;
 			}
 			vdu_sys_layers();
@@ -335,7 +350,7 @@ void VDUStreamProcessor::vdu_sys_video() {
 			switchBuffer();
 		}	break;
 		case VDP_COPPER: {				// VDU 23, 0, &C4, command, [<args>]
-			if (!isFeatureFlagSet(FEATUREFLAG_COPPER)) {
+			if (!isVDPVariableSet(VDPVAR_COPPER)) {
 				return;
 			}
 			vdu_sys_copper();
@@ -352,14 +367,14 @@ void VDUStreamProcessor::vdu_sys_video() {
 				context->setDottedLinePatternLength(b);
 			}
 		}	break;
-		case VDP_FEATUREFLAG_SET: {		// VDU 23, 0, &F8, flag; value;
+		case VDP_VDPVAR_SET: {		// VDU 23, 0, &F8, flag; value;
 			auto flag = readWord_t();	// Set a test/feature flag
 			auto value = readWord_t();
-			setFeatureFlag(flag, value);
+			setVDPVariable(flag, value);
 		}	break;
-		case VDP_FEATUREFLAG_CLEAR: {	// VDU 23, 0, &F9, flag
+		case VDP_VDPVAR_CLEAR: {	// VDU 23, 0, &F9, flag
 			auto flag = readWord_t();	// Clear a test/feature flag
-			clearFeatureFlag(flag);
+			clearVDPVariable(flag);
 		}	break;
 		case VDP_CONSOLEMODE: {			// VDU 23, 0, &FE, n
 			auto b = readByte_t();
@@ -379,8 +394,10 @@ void VDUStreamProcessor::sendGeneralPoll() {
 		debug_log("sendGeneralPoll: Timeout\n\r");
 		return;
 	}
+	setVDPVariable(VDPVAR_GENERALPOLL_BYTE, b);
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_GP);
 	uint8_t packet[] = {
-		(uint8_t) (b & 0xFF),
+		(uint8_t) (getVDPVariable(VDPVAR_GENERALPOLL_BYTE) & 0xFF),
 	};
 	send_packet(PACKET_GP, sizeof packet, packet);
 	initialised = true;
@@ -401,6 +418,9 @@ void VDUStreamProcessor::sendCursorPosition() {
 	// and if x/y are swapped, we need to swap them
 	uint8_t x, y;
 
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_CURSOR);
+	// NB whilst we're not fetching variables for x and y, changing the cursor position
+	// via VDP variables in a callback would still affect the output of this function
 	context->getCursorTextPosition(&x, &y);
 	
 	uint8_t packet[] = { x, y };
@@ -410,8 +430,10 @@ void VDUStreamProcessor::sendCursorPosition() {
 // VDU 23, 0, &83 / &93 Send a character back to MOS
 //
 void VDUStreamProcessor::sendScreenChar(char c) {
+	setVDPVariable(VDPVAR_LAST_CHARACTER_READ, c);
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_SCRCHAR);
 	uint8_t packet[] = {
-		(uint8_t)c,
+		uint8_t (getVDPVariable(VDPVAR_LAST_CHARACTER_READ)),
 	};
 	send_packet(PACKET_SCRCHAR, sizeof packet, packet);
 }
@@ -422,13 +444,16 @@ void VDUStreamProcessor::sendScreenPixel(uint16_t x, uint16_t y) {
 	waitPlotCompletion();
 	RGB888 pixel = context->getPixel(x, y);
 	uint8_t pixelIndex = getPaletteIndex(pixel);
-	uint8_t packet[] = {
-		pixel.R,	// Send the colour components
-		pixel.G,
-		pixel.B,
-		pixelIndex,	// And the pixel index in the palette
-	};
-	send_packet(PACKET_SCRPIXEL, sizeof packet, packet);
+	setVDPVariable(VDPVAR_LAST_COLOUR_RED, pixel.R);
+	setVDPVariable(VDPVAR_LAST_COLOUR_GREEN, pixel.G);
+	setVDPVariable(VDPVAR_LAST_COLOUR_BLUE, pixel.B);
+	setVDPVariable(VDPVAR_LAST_COLOUR_LOGICAL, pixelIndex);
+	RGB222 physical = RGB222(pixel);
+	setVDPVariable(VDPVAR_LAST_COLOUR_PHYSICAL, physical.R << 4 | physical.G << 2 | physical.B);
+	setVDPVariable(VDPVAR_LAST_COLOUR_X, x);
+	setVDPVariable(VDPVAR_LAST_COLOUR_Y, y);
+	bufferCallCallbacks(CALLBACK_READPIXEL);
+	sendScrPixelPacket();
 }
 
 // VDU 23, 0, &94, index: Send a colour back to MOS
@@ -448,11 +473,25 @@ void VDUStreamProcessor::sendColour(uint8_t colour) {
 		colour = getPaletteIndex(pixel);
 	}
 
+	setVDPVariable(VDPVAR_LAST_COLOUR_RED, pixel.R);
+	setVDPVariable(VDPVAR_LAST_COLOUR_GREEN, pixel.G);
+	setVDPVariable(VDPVAR_LAST_COLOUR_BLUE, pixel.B);
+	setVDPVariable(VDPVAR_LAST_COLOUR_LOGICAL, colour);
+	RGB222 physical = RGB222(pixel);
+	setVDPVariable(VDPVAR_LAST_COLOUR_PHYSICAL, physical.R << 4 | physical.G << 2 | physical.B);
+	setVDPVariable(VDPVAR_LAST_COLOUR_X, 32768);
+	setVDPVariable(VDPVAR_LAST_COLOUR_Y, 32768);
+	sendScrPixelPacket();
+}
+
+void VDUStreamProcessor::sendScrPixelPacket() {
+	// Send the pixel packet
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_SCRPIXEL);
 	uint8_t packet[] = {
-		pixel.R,	// Send the colour components
-		pixel.G,
-		pixel.B,
-		colour,
+		(uint8_t) getVDPVariable(VDPVAR_LAST_COLOUR_RED),
+		(uint8_t) getVDPVariable(VDPVAR_LAST_COLOUR_GREEN),
+		(uint8_t) getVDPVariable(VDPVAR_LAST_COLOUR_BLUE),
+		(uint8_t) getVDPVariable(VDPVAR_LAST_COLOUR_LOGICAL),
 	};
 	send_packet(PACKET_SCRPIXEL, sizeof packet, packet);
 }
@@ -476,6 +515,8 @@ void VDUStreamProcessor::printBuffer(uint16_t bufferId) {
 void VDUStreamProcessor::sendTime() {
 	vdp_time_t	time;
 
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_RTC);
+
 	time.year = rtc.getYear() - EPOCH_YEAR;	// 0 - 255
 	time.month = rtc.getMonth();			// 0 - 11
 	time.day = rtc.getDay();				// 1 - 31
@@ -493,6 +534,7 @@ void VDUStreamProcessor::sendTime() {
 void VDUStreamProcessor::sendModeInformation() {
 	// our character dimensions are for the currently active viewport
 	// needed as MOS's line editing system uses these
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_MODE);
 	uint8_t packet[] = {
 		(uint8_t) (canvasW & 0xFF),			// Width in pixels (L)
 		(uint8_t) ((canvasW >> 8) & 0xFF),	// Width in pixels (H)
@@ -536,6 +578,7 @@ void VDUStreamProcessor::sendKeyboardState() {
 	uint16_t	delay;
 	uint16_t	rate;
 	uint8_t		ledState;
+	bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_KEYSTATE);
 	getKeyboardState(&delay, &rate, &ledState);
 	uint8_t		packet[] = {
 		(uint8_t) (delay & 0xFF),
@@ -567,61 +610,53 @@ void VDUStreamProcessor::vdu_sys_mouse() {
 
 	switch (command) {
 		case MOUSE_ENABLE: {
-			// ensure mouse is enabled, enabling its port if necessary
 			if (enableMouse()) {
-				// mouse can be enabled, so set cursor
-				if (!setMouseCursor()) {
-					setMouseCursor(MOUSE_DEFAULT_CURSOR);
-				}
 				debug_log("vdu_sys_mouse: mouse enabled\n\r");
 			} else {
 				debug_log("vdu_sys_mouse: mouse enable failed\n\r");
 			}
 			// send mouse data (with no delta) to indicate command processed successfully
-			sendMouseData();
+			setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+			setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 		}	break;
 
 		case MOUSE_DISABLE: {
 			if (disableMouse()) {
-				setMouseCursor(65535);	// set cursor to be a non-existant cursor
 				debug_log("vdu_sys_mouse: mouse disabled\n\r");
 			} else {
 				debug_log("vdu_sys_mouse: mouse disable failed\n\r");
 			}
-			sendMouseData();
+			setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+			setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 		}	break;
 
 		case MOUSE_RESET: {
 			debug_log("vdu_sys_mouse: reset mouse\n\r");
-			// call the reset for the mouse
 			if (resetMouse()) {
-				// mouse successfully reset, so set cursor
-				if (!setMouseCursor()) {
-					setMouseCursor(MOUSE_DEFAULT_CURSOR);
-				}
+				// mouse successfully reset, so make sure the mouse cursor is visible
+				showMouseCursor();
 			}
-			sendMouseData();
+			setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+			setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 		}	break;
 
 		case MOUSE_SET_CURSOR: {
 			auto cursor = readWord_t();	if (cursor == -1) return;
-			if (setMouseCursor(cursor)) {
-				sendMouseData();
+			if (mouseEnabled) {
+				setMouseCursor(cursor);
 			}
+			setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+			setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 			debug_log("vdu_sys_mouse: set cursor\n\r");
 		}	break;
 
 		case MOUSE_SET_POSITION: {
 			auto x = readWord_t();	if (x == -1) return;
 			auto y = readWord_t();	if (y == -1) return;
-			// normalise coordinates
-			auto p = context->toScreenCoordinates(x, y);
-
-			// need to update position in mouse status
-			setMousePos(p.X, p.Y);
-			setMouseCursorPos(p.X, p.Y);
-
-			sendMouseData();
+			setVDPVariable(VDPVAR_MOUSE_XPOS_OS, x);
+			setVDPVariable(VDPVAR_MOUSE_YPOS_OS, y);
+			setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+			setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 			debug_log("vdu_sys_mouse: set position\n\r");
 		}	break;
 
@@ -630,7 +665,6 @@ void VDUStreamProcessor::vdu_sys_mouse() {
 			auto y = readWord_t();	if (y == -1) return;
 			auto x2 = readWord_t();	if (x2 == -1) return;
 			auto y2 = readWord_t();	if (y2 == -1) return;
-
 			debug_log("vdu_sys_mouse: set area can't be properly supported with current fab-gl\n\r");
 			// TODO set area to width/height using bottom/right only
 		}	break;
@@ -639,50 +673,53 @@ void VDUStreamProcessor::vdu_sys_mouse() {
 			auto rate = readByte_t();	if (rate == -1) return;
 			if (setMouseSampleRate(rate)) {
 				debug_log("vdu_sys_mouse: set sample rate %d\n\r", rate);
-				// success so send new data packet (triggering VDP flag)
-				sendMouseData();
+				// Clear deltas, which will trigger a mouse packet send
+				setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+				setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
+			} else {
+				debug_log("vdu_sys_mouse: set sample rate %d failed\n\r", rate);
 			}
-			debug_log("vdu_sys_mouse: set sample rate %d failed\n\r", rate);
 		}	break;
 
 		case MOUSE_SET_RESOLUTION: {
 			auto resolution = readByte_t();	if (resolution == -1) return;
 			if (setMouseResolution(resolution)) {
-				// success so send new data packet (triggering VDP flag)
-				sendMouseData();
 				debug_log("vdu_sys_mouse: set resolution %d\n\r", resolution);
-				return;
+				// Clear deltas, which will trigger a mouse packet send
+				setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+				setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
+			} else {
+				debug_log("vdu_sys_mouse: set resolution %d failed\n\r", resolution);
 			}
-			debug_log("vdu_sys_mouse: set resolution %d failed\n\r", resolution);
 		}	break;
 
 		case MOUSE_SET_SCALING: {
 			auto scaling = readByte_t();	if (scaling == -1) return;
 			if (setMouseScaling(scaling)) {
-				// success so send new data packet (triggering VDP flag)
-				sendMouseData();
 				debug_log("vdu_sys_mouse: set scaling %d\n\r", scaling);
-				return;
+				// Clear deltas, which will trigger a mouse packet send
+				setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+				setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 			}
 		}	break;
 
 		case MOUSE_SET_ACCERATION: {
 			auto acceleration = readWord_t();	if (acceleration == -1) return;
 			if (setMouseAcceleration(acceleration)) {
-				// success so send new data packet (triggering VDP flag)
-				sendMouseData();
 				debug_log("vdu_sys_mouse: set acceleration %d\n\r", acceleration);
-				return;
+				// Clear deltas, which will trigger a mouse packet send
+				setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+				setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 			}
 		}	break;
 
 		case MOUSE_SET_WHEELACC: {
 			auto wheelAcc = read24_t();	if (wheelAcc == -1) return;
 			if (setMouseWheelAcceleration(wheelAcc)) {
-				// success so send new data packet (triggering VDP flag)
-				sendMouseData();
 				debug_log("vdu_sys_mouse: set wheel acceleration %d\n\r", wheelAcc);
-				return;
+				// Clear deltas, which will trigger a mouse packet send
+				setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+				setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
 			}
 		}	break;
 	}

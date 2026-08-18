@@ -4,6 +4,7 @@
 #include <memory>
 #include <unordered_map>
 #include <vector>
+#include <variant>
 
 #include <Stream.h>
 #include <fabgl.h>
@@ -14,14 +15,15 @@
 #include "buffer_stream.h"
 #include "span.h"
 #include "types.h"
+#include "utils/thread_safe_variant_deque.h"
 
-using ContextVector = std::vector<std::shared_ptr<Context>, psram_allocator<std::shared_ptr<Context>>>;
-using ContextVectorPtr = std::shared_ptr<ContextVector>;
-std::unordered_map<uint16_t, ContextVectorPtr,
-	std::hash<uint16_t>, std::equal_to<uint16_t>,
-	psram_allocator<std::pair<const uint16_t, ContextVectorPtr>>> contextStacks;
+// Queue for pending events waiting to be handled
+using EventQueue = ThreadSafeVariantDeque<KeyboardEvent, MouseEvent>;
+EventQueue eventQueue;
 
-extern uint16_t getFeatureFlag(uint16_t flag);
+extern uint16_t getVDPVariable(uint16_t flag);
+extern void setVDPVariable(uint16_t flag, uint16_t value);
+extern void clearVDPVariable(uint16_t flag);
 
 class VDUStreamProcessor {
 	private:
@@ -55,11 +57,14 @@ class VDUStreamProcessor {
 		void flushEcho();
 
 		void handleKeyboardAndMouse();
+		void updateMouseVars(MouseDelta *delta);
+		void processEventQueue();
 
 		void vdu_print(char c, bool usePeek);
 		void vdu_colour();
 		void vdu_gcol();
 		void vdu_palette();
+		void vdu_restorePalette();
 		void vdu_graphicsViewport();
 		void vdu_plot();
 		void vdu_resetViewports();
@@ -75,6 +80,7 @@ class VDUStreamProcessor {
 		void sendScreenChar(char c);
 		void sendScreenPixel(uint16_t x, uint16_t y);
 		void sendColour(uint8_t colour);
+		void sendScrPixelPacket();
 		void printBuffer(uint16_t bufferId);
 		void sendTime();
 		void vdu_sys_video_time();
@@ -115,7 +121,13 @@ class VDUStreamProcessor {
 		void createBitmapFromBuffer(uint16_t bufferId, uint8_t format, uint16_t width, uint16_t height);
 
 		void vdu_sys_hexload(void);
+		void vdu_sys_ymodem_receive(void);
+		void vdu_sys_ymodem_send(void);
 		void sendKeycodeByte(uint8_t b, bool waitack);
+		void sendKeycodeUINT32_T(uint32_t value);
+		void sendKeycodeBytestream(const char *ptr, uint32_t length);
+		uint32_t receiveKeycodeUINT32(void);
+		void receiveKeycodeBytestream(char *ptr, uint32_t length);
 
 		void vdu_sys_buffered();
 		uint32_t bufferWrite(uint16_t bufferId, uint32_t size);
@@ -143,7 +155,7 @@ class VDUStreamProcessor {
 		void bufferMatrixManipulate(uint16_t bufferId, uint8_t command, MatrixSize size);
 		void bufferTransformBitmap(uint16_t bufferId, uint8_t options, uint16_t transformBufferId, uint16_t sourceBufferId);
 		void bufferTransformData(uint16_t bufferId, uint8_t options, uint8_t format, uint16_t transformBufferId, uint16_t sourceBufferId);
-		void bufferReadFlag(uint16_t bufferId);
+		void bufferReadVariable(uint16_t bufferId);
 		void bufferCompress(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferDecompress(uint16_t bufferId, uint16_t sourceBufferId);
 		void bufferExpandBitmap(uint16_t bufferId, uint8_t options, uint16_t sourceBufferId);
@@ -171,20 +183,26 @@ class VDUStreamProcessor {
 		void vdu_sys_layers_tilelayer_draw_layerbuffer(uint8_t tileLayerNum);
 		void vdu_sys_layers_tilelayer_draw(uint8_t tileLayerNum);
 		void vdu_sys_layers_tilelayer_free(uint8_t tileLayerNum);
-		void writeTileToBuffer(uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
-		void writeTileToBufferFlipX(uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
-		void writeTileToBufferFlipY(uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
-		void writeTileToBufferFlipXY(uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
+		void writeTileToBuffer(uint8_t tileBankNum, uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
+		void writeTileToBufferFlipX(uint8_t tileBankNum, uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
+		void writeTileToBufferFlipY(uint8_t tileBankNum, uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
+		void writeTileToBufferFlipXY(uint8_t tileBankNum, uint8_t tileId, uint8_t tileCount, uint8_t xOffset, uint8_t tileBuffer[], uint8_t tileLayerWidth);
 
-		void writeTileToLayerBuffer(uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer,  uint8_t tileLayerHeight, uint8_t tileLayerWidth);
-		void writeTileToLayerBufferFlipX(uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
-		void writeTileToLayerBufferFlipY(uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
-		void writeTileToLayerBufferFlipXY(uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
+		void writeTileToLayerBuffer(uint8_t tileBankNum, uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
+		void writeTileToLayerBufferFlipX(uint8_t tileBankNum, uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
+		void writeTileToLayerBufferFlipY(uint8_t tileBankNum, uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
+		void writeTileToLayerBufferFlipXY(uint8_t tileBankNum, uint8_t tileId, uint8_t xPos, uint8_t xOffset, uint8_t yPos, uint8_t yOffset, uint8_t * tileBuffer, uint8_t tileLayerHeight, uint8_t tileLayerWidth);
 
 		// Tile Bank variables
 
 		void * tileBank0Data = NULL;
+		void * tileBank1Data = NULL;
+		void * tileBank2Data = NULL;
+		void * tileBank3Data = NULL;
 		uint8_t * tileBank0Ptr;
+		uint8_t * tileBank1Ptr;
+		uint8_t * tileBank2Ptr;
+		uint8_t * tileBank3Ptr;
 
 		Bitmap currentTile; 
 		uint8_t currentTileDataBuffer[64];
@@ -236,6 +254,7 @@ class VDUStreamProcessor {
 		// End: Tile Engine
 
 	public:
+	    friend class MOS_YmodemSession;
 		uint16_t id = 65535;
 		uint8_t contextId = 0;					// Current active context ID
 
@@ -270,19 +289,11 @@ class VDUStreamProcessor {
 		}
 		void send_packet(uint8_t code, uint16_t len, uint8_t data[]);
 
-		void sendMouseData(MouseDelta * delta);
+		inline void sendMouseData();
+		inline void sendKeyboardData();
 
 		void processAllAvailable();
 		void processNext();
-		void doCursorFlash() {
-			context->doCursorFlash();
-		}
-		void hideCursor() {
-			context->hideCursor();
-		}
-		void showCursor() {
-			context->showCursor();
-		}
 
 		void vdu(uint8_t c, bool usePeek = true);
 
@@ -294,7 +305,8 @@ class VDUStreamProcessor {
 			echoEnabled = enabled;
 			if (!enabled) {
 				// Send an echo end packet
-				auto handle = getFeatureFlag(FEATUREFLAG_ECHO);
+				bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_ECHO_END);
+				auto handle = getVDPVariable(TESTFLAG_ECHO);
 				if (handle == 0) {
 					return;
 				}
@@ -502,81 +514,111 @@ bool VDUStreamProcessor::readFloatArguments(float *values, int count, bool useBu
 // Send a packet of data to the MOS
 //
 void VDUStreamProcessor::send_packet(uint8_t code, uint16_t len, uint8_t data[]) {
+	if (isVDPVariableSet(VDPVAR_VDPP_SUPPRESSNEXT)) {
+		// Skip sending this packet
+		clearVDPVariable(VDPVAR_VDPP_SUPPRESSNEXT);
+		debug_log("send_packet: Skipping packet 0x%02X\n\r", code);
+		return;
+	}
 	writeByte(code + 0x80);
 	writeByte(len);
 	for (int i = 0; i < len; i++) {
 		writeByte(data[i]);
 	}
+	bufferCallCallbacks(CALLBACK_SENT_VDPP | code);
 }
 
-void VDUStreamProcessor::sendMouseData(MouseDelta * delta = nullptr) {
-	auto mouse = getMouse();
-	uint16_t mouseX = 0;
-	uint16_t mouseY = 0;
-	uint8_t buttons = 0;
-	uint8_t wheelDelta = 0;
-	uint16_t deltaX = 0;
-	uint16_t deltaY = 0;
-	if (delta) {
-		deltaX = delta->deltaX;
-		deltaY = delta->deltaY;
-	}
-	if (mouse) {
-		auto mStatus = mouse->status();
-		auto mousePos = context->toCurrentCoordinates(mStatus.X, mStatus.Y);
-		mouseX = mousePos.X;
-		mouseY = mousePos.Y;
-		buttons = mStatus.buttons.left << 0 | mStatus.buttons.right << 1 | mStatus.buttons.middle << 2;
-		wheelDelta = mStatus.wheelDelta;
-	}
-	debug_log("sendMouseData: %d %d %d %d %d %d %d %d %d %d\n\r", mouseX, mouseY, buttons, wheelDelta, deltaX, deltaY);
-	uint8_t packet[] = {
-		(uint8_t) (mouseX & 0xFF),
-		(uint8_t) ((mouseX >> 8) & 0xFF),
-		(uint8_t) (mouseY & 0xFF),
-		(uint8_t) ((mouseY >> 8) & 0xFF),
-		(uint8_t) buttons,
-		(uint8_t) wheelDelta,
-		(uint8_t) (deltaX & 0xFF),
-		(uint8_t) ((deltaX >> 8) & 0xFF),
-		(uint8_t) (deltaY & 0xFF),
-		(uint8_t) ((deltaY >> 8) & 0xFF),
-	};
-	send_packet(PACKET_MOUSE, sizeof packet, packet);
+inline void VDUStreamProcessor::sendMouseData() {
+	eventQueue.pushUnique(MouseEvent{});
 }
 
-// Process all available commands from the stream
+inline void VDUStreamProcessor::sendKeyboardData() {
+	eventQueue.pushUnique(KeyboardEvent{});
+}
+
+void VDUStreamProcessor::processEventQueue() {
+	EventQueue::value_type item;
+	// Process the event queue, only removing items after processing
+	// to ensure callbacks that change key/mouse values won't instantly add the same event to the queue
+	while (eventQueue.peek(item)) {
+		std::visit(overloaded{
+			[this](const MouseEvent& event) {
+				bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_MOUSE);
+				uint16_t mouseX = getVDPVariable(VDPVAR_MOUSE_XPOS_OS);
+				uint16_t mouseY = getVDPVariable(VDPVAR_MOUSE_YPOS_OS);
+				uint8_t buttons = getVDPVariable(VDPVAR_MOUSE_BUTTONS);
+				uint8_t wheelDelta = getVDPVariable(VDPVAR_MOUSE_WHEEL);
+				uint16_t deltaX = getVDPVariable(VDPVAR_MOUSE_DELTAX_OS);
+				uint16_t deltaY = getVDPVariable(VDPVAR_MOUSE_DELTAY_OS);
+				debug_log("sendMouseData: %d %d %d %d %d %d\n\r", mouseX, mouseY, buttons, wheelDelta, deltaX, deltaY);
+				uint8_t packet[] = {
+					(uint8_t) (mouseX & 0xFF),
+					(uint8_t) ((mouseX >> 8) & 0xFF),
+					(uint8_t) (mouseY & 0xFF),
+					(uint8_t) ((mouseY >> 8) & 0xFF),
+					(uint8_t) buttons,
+					(uint8_t) wheelDelta,
+					(uint8_t) (deltaX & 0xFF),
+					(uint8_t) ((deltaX >> 8) & 0xFF),
+					(uint8_t) (deltaY & 0xFF),
+					(uint8_t) ((deltaY >> 8) & 0xFF),
+				};
+				send_packet(PACKET_MOUSE, sizeof packet, packet);
+			},
+			[this](const KeyboardEvent& event) {
+				bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_KEYCODE);
+				uint8_t packet[] = {
+					uint8_t (getVDPVariable(VDPVAR_KEYEVENT_KEYCODE) & 0xFF),
+					uint8_t (getVDPVariable(VDPVAR_KEYEVENT_MODIFIERS)),
+					uint8_t (getVDPVariable(VDPVAR_KEYEVENT_VK) & 0xFF),
+					uint8_t (getVDPVariable(VDPVAR_KEYEVENT_DOWN)),
+				};
+				send_packet(PACKET_KEYCODE, sizeof packet, packet);
+			}
+			// ... other handlers ...
+		}, item);
+		// Remove the processed item
+		eventQueue.pop();
+	}
+}
+
+// Process all available commands from the stream (used for buffer call/jump commands)
 //
 void VDUStreamProcessor::processAllAvailable() {
 	while (byteAvailable()) {
 		flushEcho();
 		vdu(readByte());
 	}
+	// Don't call processEventQueue to allow nested buffer calls to edit values that could trigger events
 }
 
 // Process next command from the stream
 //
 void VDUStreamProcessor::processNext() {
-	if (getContext()->checkForVSYNC()) {
+	auto hasPending = byteAvailable();
+	if (context->checkForVSYNC(hasPending)) {
+		// TODO consider making this an event pushed to the queue?
 		bufferCallCallbacks(CALLBACK_VSYNC);
-		if (!byteAvailable()) {
-			getContext()->clearTempPagedMode();
+		if (!hasPending) {
+			context->clearTempPagedMode();
+			// Ensure output stream changes on main VDU processor are temporary
+			if (outputStream != originalOutputStream) {
+				outputStream = originalOutputStream;
+			}
 		}
 	}
 
+	processEventQueue();
 	handleKeyboardAndMouse();
-	doCursorFlash();
+	context->doCursorFlash();
 
-	switch (getContext()->getProcessorState()) {
+	switch (context->getProcessorState()) {
 		case VDUProcessorState::Active:
 			// process next byte, if available
-			if (byteAvailable()) {
-				hideCursor();
+			if (hasPending) {
 				flushEcho();
+				context->hideCursor();
 				vdu(readByte());
-				if (!byteAvailable()) {
-					showCursor();
-				}
 			}
 			break;
 		case VDUProcessorState::WaitingForFrames:
@@ -584,17 +626,21 @@ void VDUStreamProcessor::processNext() {
 			break;
 		case VDUProcessorState::PagedModePaused:
 			if (shiftKeyPressed()) {
-				getContext()->setProcessorState(VDUProcessorState::Active);
+				context->setProcessorState(VDUProcessorState::Active);
 			}
+			context->showCursor();
 			break;
 		case VDUProcessorState::CtrlShiftPaused:
 			if (!shiftKeyPressed() || !ctrlKeyPressed()) {
-				getContext()->setProcessorState(VDUProcessorState::Active);
+				context->setProcessorState(VDUProcessorState::Active);
 			}
+			context->showCursor();
 			break;
 		default:
 			break;
 	}
+
+	processEventQueue();
 }
 
 inline void VDUStreamProcessor::pushEcho(uint8_t c) {
@@ -623,7 +669,7 @@ void VDUStreamProcessor::flushEcho() {
 		return;
 	}
 
-	uint32_t bufferSize = getFeatureFlag(FEATUREFLAG_MOS_VDPP_BUFFERSIZE);
+	uint32_t bufferSize = getVDPVariable(TESTFLAG_VDPP_BUFFERSIZE);
 	if (bufferSize == 0) {
 		bufferSize = 16;
 	}
@@ -633,6 +679,7 @@ void VDUStreamProcessor::flushEcho() {
 	uint32_t remaining = echoBuffer.size();
 	uint32_t offset = 0;
 	while (remaining > 0) {
+		bufferCallCallbacks(CALLBACK_SENDING_VDPP | PACKET_ECHO);
 		uint32_t packetSize = remaining > bufferSize ? bufferSize : remaining;
 		uint8_t packet[bufferSize];
 		for (uint32_t i = 0; i < packetSize; i++) {
@@ -655,50 +702,84 @@ void VDUStreamProcessor::flushEcho() {
 }
 
 void VDUStreamProcessor::handleKeyboardAndMouse() {
-	uint8_t keycode;
-	uint8_t modifiers;
-	uint8_t vk;
-	uint8_t down;
 	MouseDelta delta;
+	fabgl::VirtualKeyItem kbItem;
 
-	// Send all pending keyboard events to MOS
-	while (getKeyboardKey(&keycode, &modifiers, &vk, &down)) {
+	// Check for keyboard event
+	while (getKeyboardKey(&kbItem)) {
+		// Set system variables corresponding to the keyboard event
+		setVDPVariable(VDPVAR_KEYEVENT_KEYCODE, _keycode | kbItem.ASCII << 8);
+		setVDPVariable(VDPVAR_KEYEVENT_VK, kbItem.vk);
+		setVDPVariable(VDPVAR_KEYEVENT_DOWN, kbItem.down);
+		setVDPVariable(VDPVAR_KEYEVENT_MODIFIERS, packKeyboardModifiers(&kbItem));
+		// Individual modifiers get automatically set
+		setVDPVariable(VDPVAR_KEYEVENT_SCANCODE1, reinterpret_cast<const uint16_t*>(kbItem.scancode)[0]);
+		setVDPVariable(VDPVAR_KEYEVENT_SCANCODE2, reinterpret_cast<const uint16_t*>(kbItem.scancode)[1]);
+		setVDPVariable(VDPVAR_KEYEVENT_SCANCODE3, reinterpret_cast<const uint16_t*>(kbItem.scancode)[2]);
+		setVDPVariable(VDPVAR_KEYEVENT_SCANCODE4, reinterpret_cast<const uint16_t*>(kbItem.scancode)[3]);
+
+		// Perform callback for keyboard h/w event
+		bufferCallCallbacks(CALLBACK_KEYBOARD);
+
+		auto keyDown = getVDPVariable(VDPVAR_KEYEVENT_DOWN);
+
 		// Handle some control keys
-		//
-		if (controlKeys && down) {
-			switch (keycode) {
+		if (controlKeys && keyDown) {
+			uint16_t keycode = getVDPVariable(VDPVAR_KEYEVENT_KEYCODE);
+			uint8_t ascii = keycode >> 8;
+			switch (ascii) {
 				case 2:		// printer on
 				case 3:		// printer off
 				case 6:		// VDU commands enable
 				case 7:		// Bell
 				case 12:	// CLS
 				case 14 ... 15:	// paged mode on/off
-					vdu(keycode, false);
+					vdu(ascii, false);
 					break;
 				case 16:
 					// control-P toggles "printer" on R.T.Russell's BASIC
 					printerOn = !printerOn;
 			}
 		}
-		// Create and send the packet back to MOS
-		//
-		uint8_t packet[] = {
-			keycode,
-			modifiers,
-			vk,
-			down,
-		};
-		send_packet(PACKET_KEYCODE, sizeof packet, packet);
+		// If we're pausing for paged mode and escape is pressed, resume
+		if (keyDown && context->getProcessorState() == VDUProcessorState::PagedModePaused) {
+			uint16_t keycode = getVDPVariable(VDPVAR_KEYEVENT_KEYCODE);
+			uint8_t ascii = keycode >> 8;
+			if (ascii == 27) {
+				context->setProcessorState(VDUProcessorState::Active);
+				context->showCursor();
+			}
+		}
+
+		// Process queue to send any pending keyboard events
+		processEventQueue();
 	}
 
-	// get mouse delta, if the mouse is active
+	// has the mouse moved?
 	if (mouseMoved(&delta)) {
-		auto mouse = getMouse();
-		auto mStatus = mouse->status();
-		// update mouse cursor position if it's active
-		setMouseCursorPos(mStatus.X, mStatus.Y);
-		sendMouseData(&delta);
-	}	
+		// Absolute position of mouse will have been updated from the mouse delta
+		// Update all of our mouse variables, which will trigger a mouse event to be queued
+		updateMouseVars(&delta);
+		// Perform mouse h/w event callback
+		bufferCallCallbacks(CALLBACK_MOUSE);
+		// Send any pending event packets to MOS
+		processEventQueue();
+	}
+}
+
+void VDUStreamProcessor::updateMouseVars(MouseDelta *delta) {
+	auto mStatus = getMouse()->status();
+	setVDPVariable(VDPVAR_MOUSE_XPOS, mStatus.X);
+	setVDPVariable(VDPVAR_MOUSE_YPOS, mStatus.Y);
+	setVDPVariable(VDPVAR_MOUSE_BUTTONS, mStatus.buttons.left << 0 | mStatus.buttons.right << 1 | mStatus.buttons.middle << 2);
+	setVDPVariable(VDPVAR_MOUSE_WHEEL, mStatus.wheelDelta);
+	if (delta == nullptr) {
+		setVDPVariable(VDPVAR_MOUSE_DELTAX, 0);
+		setVDPVariable(VDPVAR_MOUSE_DELTAY, 0);
+	} else {
+		setVDPVariable(VDPVAR_MOUSE_DELTAX, delta->deltaX);
+		setVDPVariable(VDPVAR_MOUSE_DELTAY, delta->deltaY);
+	}
 }
 
 #include "vdu.h"

@@ -13,8 +13,13 @@
 #include "agon.h"
 #include "sprites.h"
 
-extern bool isFeatureFlagSet(uint16_t flag);
+extern bool isVDPVariableSet(uint16_t flag);
+extern uint16_t getVDPVariable(uint16_t flag);
+extern void setVDPVariable(uint16_t flag, uint16_t value);
 uint		lastFrameCounter = 0;			// Last frame counter for VSYNC callbacks
+
+// Type declarations for ContextVector and ContextVectorPtr are after the Context class
+// contextStacks global variable also defined after the Context class
 
 // Support structures
 
@@ -60,16 +65,16 @@ class Context {
 		// VDU command processor state info
 		VDUProcessorState		processorState = VDUProcessorState::Active;	// Current VDU command processor state
 		uint8_t			waitForFrames = 0;				// Count of frames for WaitForFrames state
+		uint8_t			idleFrameCount = 0;				// Count of idle frames for idle detection
 		
 		// Cursor management data
 		bool			cursorEnabled = true;			// Cursor visibility
 		bool			cursorFlashing = true;			// Cursor is flashing
+		bool			cursorTemporarilyHidden = false;	// Cursor hidden for command processing
 		uint16_t		cursorFlashRate = pdMS_TO_TICKS(CURSOR_PHASE);	// Cursor flash rate
 		CursorBehaviour cursorBehaviour;				// Cursor behavior byte
 		Point			textCursor;						// Text cursor
 		Point *			activeCursor = &textCursor;		// Pointer to the active text cursor (textCursor or p1)
-		bool			cursorShowing = false;			// Cursor is currently showing on screen
-		bool			cursorTemporarilyHidden = false;	// Cursor is temporarily hidden for command processing
 		TickType_t		cursorTime;						// Time of last cursor flash event
 		uint8_t			cursorCtrlPauseFrames = 3;		// Number of frames to pause on newline when ctrl held
 
@@ -78,10 +83,12 @@ class Context {
 		uint8_t			cursorVEnd;						// Cursor vertical end
 		uint8_t			cursorHStart;					// Cursor horizontal start offset
 		uint8_t			cursorHEnd;						// Cursor horizontal end
+		std::shared_ptr<Bitmap>	textCursorBitmap = nullptr;		// Pointer to the text cursor bitmap
+		std::shared_ptr<Sprite>	textCursorSprite = nullptr;		// Pointer to the text cursor sprite
 
 		// Paged mode tracking
 		PagedMode 		pagedMode = PagedMode::Disabled;	// Is output paged or not? Set by VDU 14 and 15
-		uint8_t			pagedModeCount = 0;				// Remaining rows in paged mode
+		int8_t			pagedModeCount = 0;				// Remaining rows in paged mode
 		uint8_t			pagedModeContext = 6;			// Number of context rows when paged mode enabled
 
 		// Viewport management data
@@ -127,16 +134,41 @@ class Context {
 		bool cursorIsOffLeft();
 		bool cursorIsOffTop();
 		bool cursorIsOffBottom();
+		bool cursorIsOnBottomRow();
 
-		void cursorEndRow();
 		void cursorEndRow(Point * cursor, Rect * viewport);
-		void cursorTop();
+		inline void cursorEndRow() {
+			cursorEndRow(activeCursor, activeViewport);
+		}
 		void cursorTop(Point * cursor, Rect * viewport);
-		void cursorEndCol();
+		inline void cursorTop() {
+			cursorTop(activeCursor, activeViewport);
+		}
 		void cursorEndCol(Point * cursor, Rect * viewport);
+		inline void cursorEndCol() {
+			cursorEndCol(activeCursor, activeViewport);
+		}
 
-		void cursorAutoNewline();
 		void ensureCursorInViewport(Rect viewport);
+
+		inline void updateTextCursorPosition() {
+			if (textCursorActive() && textCursorSprite != nullptr) {
+				textCursorSprite->moveTo(
+					fabgl::imin(fabgl::imax(activeCursor->X, 0), defaultViewport.X2 - (getFont()->width - 1)) + cursorHStart,
+					fabgl::imin(fabgl::imax(activeCursor->Y, 0), defaultViewport.Y2 - (getFont()->height - 1)) + cursorVStart
+				);
+			}
+		}
+
+		inline void updateTextCursorVisibility() {
+			if (textCursorSprite != nullptr) {
+				textCursorSprite->visible = cursorEnabled && textCursorActive();
+				cursorTemporarilyHidden = false;
+			}
+		}
+
+		void deleteTextCursor();
+		void updateTextCursorBitmap();
 
 		// Viewport management functions
 		Rect * getViewport(ViewportType type);
@@ -157,6 +189,7 @@ class Context {
 		fabgl::PaintOptions getPaintOptions(fabgl::PaintMode mode, fabgl::PaintOptions priorPaintOptions);
 		void setGraphicsOptions(uint8_t mode);
 		void setGraphicsFill(uint8_t mode);
+		void updateColours(uint8_t logical, uint8_t physical);
 		inline void setClippingRect(Rect rect);
 
 		void pushPoint(Point p);
@@ -166,10 +199,12 @@ class Context {
 		void plotLine(bool omitFirstPoint, bool omitLastPoint, bool usePattern, bool resetPattern);
 		void plotPoint();
 		void fillHorizontalLine(bool scanLeft, bool match, RGB888 matchColor);
+		void floodFill(bool match, RGB888 matchColor);
 		void plotTriangle();
 		void plotRectangle();
 		void plotParallelogram();
 		void plotCircle(bool filled);
+		void plotEllipse(bool filled);
 		void plotArc();
 		void plotSegment();
 		void plotSector();
@@ -200,16 +235,16 @@ class Context {
 		inline VDUProcessorState getProcessorState();
 		void setProcessorState(VDUProcessorState state);
 		void setWaitForFrames(uint8_t frames);
-		bool checkForVSYNC();
+		bool checkForVSYNC(bool hasPendingCommands);
 
 		// Cursor management functions
-		void hideCursor();
-		void showCursor();
 		void doCursorFlash();
 		inline bool textCursorActive();
 		inline void setActiveCursor(CursorType type);
 		inline void setCursorBehaviour(uint8_t setting, uint8_t mask);
 		inline void enableCursor(uint8_t enable);
+		inline void hideCursor();
+		inline void showCursor();
 		void setCursorAppearance(uint8_t appearance);
 		void setCursorVStart(uint8_t start);
 		void setCursorVEnd(uint8_t end);
@@ -218,25 +253,34 @@ class Context {
 		void setPagedMode(PagedMode mode);
 		void setTempPagedMode();
 		void clearTempPagedMode();
+		void checkPagedMode();
 		void resetTextCursor();
 
-		void cursorUp();
 		void cursorUp(bool moveOnly);
-		void cursorDown();
+		inline void cursorUp() {
+			cursorUp(false);
+		}
 		void cursorDown(bool moveOnly);
+		inline void cursorDown() {
+			cursorDown(false);
+		}
 		void cursorLeft();
 		void cursorRight();
-		void cursorRight(bool scrollProtect);
-		void cursorCR();
 		void cursorCR(Point * cursor, Rect * viewport);
-		void cursorHome();
+		inline void cursorCR() {
+			cursorCR(activeCursor, activeViewport);
+		}
 		void cursorHome(Point * cursor, Rect * viewport);
+		inline void cursorHome() {
+			cursorHome(activeCursor, activeViewport);
+		}
 		void cursorTab(uint8_t x, uint8_t y);
 		void cursorRelativeMove(int8_t x, int8_t y);
 		void getCursorTextPosition(uint8_t * x, uint8_t * y);
 		bool cursorScrollOrWrap();
 		void resetPagedModeCount();
 		uint8_t getCharsRemainingInLine();
+		bool cursorAutoNewline();
 
 		// Viewport management functions
 		void viewportReset();
@@ -280,9 +324,9 @@ class Context {
 
 		void setTextColour(uint8_t colour);
 		void setGraphicsColour(uint8_t mode, uint8_t colour);
-		void updateColours(uint8_t l, uint8_t p);
 		bool getColour(uint8_t colour, RGB888 * pixel);
 		RGB888 getPixel(uint16_t x, uint16_t y);
+		static void updateColoursInAllContexts(uint8_t logical, uint8_t physical);
 
 		void pushPoint(uint16_t x, uint16_t y);
 		Rect getGraphicsRect();							// Used by sprites system to capture screen area
@@ -293,7 +337,6 @@ class Context {
 		void plotString(const std::string & s);
 		void plotBackspace();
 		void drawBitmap(uint16_t x, uint16_t y, bool compensateHeight, bool forceSet);
-		void drawCursor(Point p);
 
 		void setAffineTransform(uint8_t flags, uint16_t bufferId);
 
@@ -310,8 +353,14 @@ class Context {
 		void activate();
 };
 
+using ContextVector = std::vector<std::shared_ptr<Context>, psram_allocator<std::shared_ptr<Context>>>;
+using ContextVectorPtr = std::shared_ptr<ContextVector>;
+std::unordered_map<uint16_t, ContextVectorPtr,
+	std::hash<uint16_t>, std::equal_to<uint16_t>,
+	psram_allocator<std::pair<const uint16_t, ContextVectorPtr>>> contextStacks;
 
- Context::Context(const Context &c) {
+
+Context::Context(const Context &c) {
 	// Copy almost all the data
 	// VDU command processor state is explicitly not copied, so will get defaults
 
@@ -333,10 +382,38 @@ class Context {
 	cursorHStart = c.cursorHStart;
 	cursorHEnd = c.cursorHEnd;
 	// Data related to cursor rendering
-	cursorShowing = c.cursorShowing;
-	cursorTemporarilyHidden = c.cursorTemporarilyHidden;
 	cursorTime = c.cursorTime;
 	cursorCtrlPauseFrames = c.cursorCtrlPauseFrames;
+
+	// Clone our text cursor sprite, if we have one, and we can
+	// TODO: Cursor - update this when we support custom cursor bitmaps/sprites
+	if (c.textCursorBitmap) {
+		// Copy our bitmap data
+		auto data = (uint8_t*)ps_malloc(c.textCursorBitmap->width * c.textCursorBitmap->height);
+		if (data) {
+			memcpy(data, c.textCursorBitmap->data, c.textCursorBitmap->width * c.textCursorBitmap->height);
+			textCursorBitmap = std::make_shared<Bitmap>(c.textCursorBitmap->width, c.textCursorBitmap->height, data, c.textCursorBitmap->format, true);
+		} else {
+			textCursorBitmap = nullptr;
+		}
+		if (textCursorBitmap && c.textCursorSprite) {
+			// Create a new sprite for the text cursor
+			textCursorSprite = std::make_shared<Sprite>();
+			if (textCursorSprite) {
+				textCursorSprite->addBitmap(textCursorBitmap.get());
+				textCursorSprite->moveTo(c.textCursorSprite->x, c.textCursorSprite->y);
+				textCursorSprite->paintOptions = c.textCursorSprite->paintOptions;
+				textCursorSprite->allowDraw = c.textCursorSprite->allowDraw;
+				textCursorSprite->hardware = c.textCursorSprite->hardware;
+				textCursorSprite->visible = c.textCursorSprite->visible;
+			}
+		} else {
+			textCursorSprite = nullptr;
+		}
+	} else {
+		textCursorBitmap = nullptr;
+		textCursorSprite = nullptr;
+	}
 
 	pagedMode = (PagedMode)((uint8_t)c.pagedMode & 1);
 	pagedModeCount = c.pagedModeCount;
@@ -392,6 +469,19 @@ class Context {
 	}
 }
 
+void Context::updateColoursInAllContexts(uint8_t logical, uint8_t physical) {
+	for (auto& stackPair : contextStacks) {
+		auto contextStack = stackPair.second;
+		if (contextStack) {
+			for (auto& context : *contextStack) {
+				if (context) {
+					context->updateColours(logical, physical);
+				}
+			}
+		}
+	}
+}
+
 bool Context::readVariable(uint16_t var, uint16_t * value) {
 	if (var >= VDU_VAR_PALETTE && var <= VDU_VAR_PALETTE_END) {
 		if (value) {
@@ -441,7 +531,7 @@ bool Context::readVariable(uint16_t var, uint16_t * value) {
 			break;
 		case 13:	// Number of screen banks
 			if (value) {
-				*value =  isDoubleBuffered() ? 2 : 1;
+				*value = isDoubleBuffered() ? 2 : 1;
 			}
 			break;
 
@@ -848,81 +938,25 @@ bool Context::readVariable(uint16_t var, uint16_t * value) {
 		// case 0x412:	// Current sprite transform ID - not supported
 
 		case 0x440:	// Mouse cursor ID
-			if (value) {
-				*value = mCursor;
-			}
-			break;
 		case 0x441:	// Mouse cursor enabled
-			if (value) {
-				*value = mouseEnabled ? 1 : 0;
-			}
-			break;
-		case 0x442:	// Mouse cursor X position
-			if (value) {
-				auto mouse = getMouse();
-				if (mouse) {
-					auto mStatus = mouse->status();
-					*value = mStatus.X;
-				}
-			}
-			break;
+		case 0x442:	// Mouse cursor X position (pixel coords)
 		case 0x443:	// Mouse cursor Y position
-			if (value) {
-				auto mouse = getMouse();
-				if (mouse) {
-					auto mStatus = mouse->status();
-					*value = mStatus.Y;
-				}
-			}
-			break;
 		case 0x444:	// Mouse cursor button status
-			if (value) {
-				auto mouse = getMouse();
-				if (mouse) {
-					auto mStatus = mouse->status();
-					*value = mStatus.buttons.left << 0 | mStatus.buttons.right << 1 | mStatus.buttons.middle << 2;
-				}
-			}
-			break;
 		case 0x445:	// Mouse wheel delta
-			if (value) {
-				auto mouse = getMouse();
-				if (mouse) {
-					auto mStatus = mouse->status();
-					*value = mStatus.wheelDelta;
-				}
-			}
-			break;
 		case 0x446:	// Mouse sample rate
-			if (value) {
-				*value = mSampleRate;
-			}
-			break;
 		case 0x447:	// Mouse resolution
-			if (value) {
-				*value = mResolution;
-			}
-			break;
 		case 0x448:	// Mouse scaling
-			if (value) {
-				*value = mScaling;
-			}
-			break;
 		case 0x449:	// Mouse acceleration
-			if (value) {
-				*value = mAcceleration;
+		case 0x44A: {	// Mouse wheel acceleration
+			auto flagId = (var - 0x440) + VDPVAR_MOUSE_CURSOR;
+			auto flagExists = isVDPVariableSet(flagId);
+			if (flagExists) {
+				*value = getVDPVariable(flagId);
+			} else {
+				// This shouldn't happen, but just in case
+				return false;
 			}
-			break;
-		case 0x44A:	// Mouse wheel acceleration
-			if (value) {
-				auto mouse = getMouse();
-				if (mouse) {
-					auto & currentAcceleration = mouse->wheelAcceleration();
-					*value = currentAcceleration;
-				}
-			}
-			break;
-		// 0x44B-0x44E reserved for mouse area
+		}	break;
 
 		default:
 			debug_log("readVariable: variable %d not found\n\r", var);
@@ -937,7 +971,13 @@ void Context::setVariable(uint16_t var, uint16_t value) {
 		if (value >= 64) {
 			return;
 		}
-		setLogicalPalette(var - VDU_VAR_PALETTE, value, 0, 0, 0);
+		// NB Setting a palette entry via the VDU variable explicitly does not
+		// trigger a palette update event or update the "last colour" VDP variables
+		auto logical = (var - VDU_VAR_PALETTE) & (getVGAColourDepth() - 1);
+		auto physical = setLogicalPalette(logical, value, 0, 0, 0);
+		if (physical != -1) {
+			Context::updateColoursInAllContexts(logical, physical);
+		}
 		return;
 	}
 	if (var >= VDU_VAR_CHARMAPPING && var <= VDU_VAR_CHARMAPPING_END) {
@@ -1203,7 +1243,7 @@ void Context::setVariable(uint16_t var, uint16_t value) {
 			setCurrentBitmap(value);
 			break;
 		case 0x402:	// Current bitmap transform ID
-			if (isFeatureFlagSet(TESTFLAG_AFFINE_TRANSFORM)) {
+			if (isVDPVariableSet(TESTFLAG_AFFINE_TRANSFORM)) {
 				bitmapTransform = value;
 			}
 			break;
@@ -1213,47 +1253,19 @@ void Context::setVariable(uint16_t var, uint16_t value) {
 			break;
 
 		case 0x440:	// Mouse cursor ID
-			setMouseCursor(value);
-			break;
 		case 0x441:	// Mouse cursor enabled
-			if (value) {
-				enableMouse();
-			} else {
-				disableMouse();
-			}
-			break;
 		case 0x442:	// Mouse cursor X position (pixel coords)
-			uint16_t mouseY;
-			readVariable(0x423, &mouseY);
-			setMousePos(value, mouseY);
-			setMouseCursorPos(value, mouseY);
-			break;
 		case 0x443:	// Mouse cursor Y position
-			uint16_t mouseX;
-			readVariable(0x422, &mouseX);
-			setMousePos(mouseX, value);
-			setMouseCursorPos(mouseX, value);
-			break;
 		case 0x444:	// Mouse cursor button status
-			break;
-		// case 0x445:	// Mouse wheel delta
+		case 0x445:	// Mouse wheel delta
 		case 0x446:	// Mouse sample rate
-			setMouseSampleRate(value);
-			break;
 		case 0x447:	// Mouse resolution
-			setMouseResolution(value);
-			break;
 		case 0x448:	// Mouse scaling
-			setMouseScaling(value);
-			break;
 		case 0x449:	// Mouse acceleration
-			setMouseAcceleration(value);
-			break;
 		case 0x44A:	// Mouse wheel acceleration
-			setMouseWheelAcceleration(value);
+			setVDPVariable((var - 0x440) + VDPVAR_MOUSE_CURSOR, value);
 			break;
-		// 0x44B-0x44E reserved for mouse area
-
+		// Candidate variables for mouse area (0x44C-0x44F) won't be passed through
 	}
 }
 
@@ -1276,8 +1288,12 @@ void Context::setProcessorState(VDUProcessorState state) {
 		case VDUProcessorState::PagedModePaused:
 		case VDUProcessorState::CtrlShiftPaused:
 			if (state != processorState) {
-				cursorScrollOrWrap();
 				processorState = state;
+				idleFrameCount = 0;
+				// When resuming from pause, handle any pending auto-newline for the text cursor
+				if (state == VDUProcessorState::Active && (!cursorBehaviour.scrollProtect || !cursorIsOnBottomRow())) {
+					cursorAutoNewline();
+				}
 			}
 			break;
 	}
@@ -1293,9 +1309,21 @@ void Context::setWaitForFrames(uint8_t frames) {
 	setProcessorState(VDUProcessorState::WaitingForFrames);
 }
 
-bool Context::checkForVSYNC() {
+bool Context::checkForVSYNC(bool hasPendingCommands) {
+	if (hasPendingCommands) {
+		idleFrameCount = 0;
+	}
 	if (_VGAController->frameCounter != lastFrameCounter) {
 		lastFrameCounter = _VGAController->frameCounter;
+		if (!hasPendingCommands & processorState == VDUProcessorState::Active) {
+			if (idleFrameCount <= 3) {
+				idleFrameCount++;
+			}
+			if (idleFrameCount == 3) {
+				resetPagedModeCount();
+				showCursor();
+			}
+		}
 		if (processorState == VDUProcessorState::WaitingForFrames) {
 			waitForFrames--;
 			if (waitForFrames == 0) {
