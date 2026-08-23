@@ -87,6 +87,10 @@ ESP32Time		rtc(0);							// The RTC
 #include "vdu_stream_processor.h"
 #include "hexload.h"
 
+#ifdef PINGO2_TARGET_PROBE
+#include "pingo2_target_probe.h"
+#endif
+
 std::unique_ptr<fabgl::Terminal>	Terminal;	// Used for Terminal emulation mode (for CP/M, etc)
 VDUStreamProcessor *	processor;				// VDU Stream Processor
 
@@ -117,6 +121,20 @@ void setup() {
 	);
 	initAudio();
 	boot_screen();
+	#ifdef PINGO2_TARGET_PROBE
+		Pingo2TargetProbeResult pingo2_probe;
+		int pingo2_probe_status = pingo2_target_probe_run(&pingo2_probe);
+		force_debug_log(
+			"Pingo2 target probe: status=%d render=%d pixels=%lu depth=%lu "
+			"frame=%08lx zeta=%08lx\n\r",
+			pingo2_probe_status,
+			pingo2_probe.render_status,
+			(unsigned long)pingo2_probe.drawn_pixels,
+			(unsigned long)pingo2_probe.depth_pixels,
+			(unsigned long)pingo2_probe.framebuffer_fnv1a,
+			(unsigned long)pingo2_probe.depth_fnv1a
+		);
+	#endif
 	debug_log("Setup ran on core %d, busy core is %d\n\r", xPortGetCoreID(), CoreUsage::busiestCore());
 }
 
