@@ -1,105 +1,86 @@
 #include "pixel.h"
 
-#ifdef PINGO_PIXEL_UINT8
+#ifdef P2C_PIXEL_RGBA2222
 
-extern Pixel pixelRandom() {
-    return (Pixel){(uint8_t)rand()};
+static uint8_t channel_from_u8(uint8_t value) {
+    return value >> 6;
 }
 
-uint8_t pixelToUInt8(Pixel * p)
-{
-    return p->g;
+static uint8_t channel_to_u8(uint8_t value) {
+    return (uint8_t)(value * 85u);
 }
 
-extern Pixel pixelFromUInt8( uint8_t g){
-    return (Pixel){g};
+Pixel pixelRandom(void) {
+    return (Pixel){(uint8_t)((uint8_t)rand() | 0xC0u)};
 }
 
-extern Pixel pixelMul(Pixel p, float f)
-{
-    return (Pixel){p.g*f};
+Pixel pixelFromUInt8(uint8_t gray) {
+    uint8_t packed = channel_from_u8(gray);
+    return (Pixel){(uint8_t)(0xC0u | (packed << 4) |
+                            (packed << 2) | packed)};
 }
 
-extern Pixel pixelFromRGBA( uint8_t r, uint8_t g, uint8_t b, uint8_t a)
-{
-    return (Pixel){((r + g + b) / 3)};
-}
-#endif
-
-#ifdef PINGO_PIXEL_RGB888
-extern Pixel pixelRandom() {
-    return (Pixel){(uint8_t)rand(),(uint8_t)rand(),(uint8_t)rand()};
+uint8_t pixelToUInt8(Pixel *pixel) {
+    uint16_t red = channel_to_u8(pixel->c & 0x03u);
+    uint16_t green = channel_to_u8((pixel->c >> 2) & 0x03u);
+    uint16_t blue = channel_to_u8((pixel->c >> 4) & 0x03u);
+    return (uint8_t)((red + green + blue) / 3u);
 }
 
-uint32_t pixelToRGBA(Pixel * p)
-{
-    uint8_t g = p->g;
-    uint32_t a = p->r | p->g <<8 | p->b<<16| 255<<24;
-    return a;
+Pixel pixelFromRGBA(uint8_t red, uint8_t green, uint8_t blue,
+                    uint8_t alpha) {
+    return (Pixel){(uint8_t)(
+        (channel_from_u8(alpha) << 6) |
+        (channel_from_u8(blue) << 4) |
+        (channel_from_u8(green) << 2) |
+        channel_from_u8(red)
+    )};
 }
 
-extern Pixel pixelMul(Pixel p, float f)
-{
-    return (Pixel){p.r*f,p.g*f,p.b*f};
+Pixel pixelMul(Pixel pixel, float factor) {
+    uint8_t red = (uint8_t)(channel_to_u8(pixel.c & 0x03u) * factor);
+    uint8_t green = (uint8_t)(
+        channel_to_u8((pixel.c >> 2) & 0x03u) * factor
+    );
+    uint8_t blue = (uint8_t)(
+        channel_to_u8((pixel.c >> 4) & 0x03u) * factor
+    );
+    return (Pixel){(uint8_t)(
+        (pixel.c & 0xC0u) |
+        (channel_from_u8(blue) << 4) |
+        (channel_from_u8(green) << 2) |
+        channel_from_u8(red)
+    )};
 }
 
-extern Pixel pixelFromUInt8( uint8_t g){
-    return (Pixel){g,g,g};
+#else
+
+Pixel pixelRandom(void) {
+    return (Pixel){
+        (uint8_t)rand(), (uint8_t)rand(), (uint8_t)rand(), 255
+    };
 }
 
-extern uint8_t pixelToUInt8( Pixel * p){
-    return (p->r + p->g + p->b) / 3;
+Pixel pixelFromUInt8(uint8_t gray) {
+    return (Pixel){gray, gray, gray, 255};
 }
 
-extern Pixel pixelFromRGBA( uint8_t r, uint8_t g, uint8_t b, uint8_t a){
-    return (Pixel){r,g,b};
-}
-#endif
-
-#ifdef PINGO_PIXEL_RGBA8888
-extern Pixel pixelRandom() {
-    return (Pixel){(uint8_t)rand(),(uint8_t)rand(),(uint8_t)rand(),255};
+uint8_t pixelToUInt8(Pixel *pixel) {
+    return (uint8_t)((pixel->r + pixel->g + pixel->b) / 3);
 }
 
-extern Pixel pixelFromUInt8( uint8_t g){
-    return (Pixel){g,g,g, 255};
-}
-extern uint8_t pixelToUInt8( Pixel * p){
-    return (p->r + p->g + p->b) / 3;
+Pixel pixelFromRGBA(uint8_t red, uint8_t green, uint8_t blue,
+                    uint8_t alpha) {
+    return (Pixel){blue, green, red, alpha};
 }
 
-extern Pixel pixelFromRGBA( uint8_t r, uint8_t g, uint8_t b, uint8_t a){
-    return (Pixel){r,g,b,a};
-}
-
-extern Pixel pixelMul(Pixel p, float f)
-{
-    return (Pixel){p.r*f,p.g*f,p.b*f,p.a};
-}
-
-#endif
-
-
-#ifdef PINGO_PIXEL_BGRA8888
-extern Pixel pixelRandom() {
-    return (Pixel){(uint8_t)rand(),(uint8_t)rand(),(uint8_t)rand(),255};
-}
-
-extern Pixel pixelFromUInt8( uint8_t g){
-    return (Pixel){g,g,g, 255};
-}
-
-extern uint8_t pixelToUInt8( Pixel * p){
-    return (p->r + p->g + p->b) / 3;
-}
-
-extern Pixel pixelFromRGBA( uint8_t r, uint8_t g, uint8_t b, uint8_t a){
-    return (Pixel){b,g,r,a};
-}
-
-extern Pixel pixelMul(Pixel p, float f)
-{
-    return (Pixel){p.b*f,p.g*f,p.r*f,p.a};
+Pixel pixelMul(Pixel pixel, float factor) {
+    return (Pixel){
+        (uint8_t)(pixel.b * factor),
+        (uint8_t)(pixel.g * factor),
+        (uint8_t)(pixel.r * factor),
+        pixel.a,
+    };
 }
 
 #endif

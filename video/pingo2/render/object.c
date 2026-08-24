@@ -12,6 +12,19 @@
 #include <math.h>
 #include <stdint.h>
 
+#ifdef P2C_DIAGNOSTICS
+void p2c_diagnostic_object(Renderer *renderer);
+void p2c_diagnostic_input_triangle(Renderer *renderer);
+void p2c_diagnostic_input_clipped(Renderer *renderer);
+void p2c_diagnostic_raster_triangle(Renderer *renderer);
+void p2c_diagnostic_raster_rejected(Renderer *renderer);
+void p2c_diagnostic_candidates(Renderer *renderer, uint64_t count);
+void p2c_diagnostic_covered(Renderer *renderer);
+void p2c_diagnostic_depth_passing(Renderer *renderer);
+void p2c_diagnostic_shaded(Renderer *renderer);
+void p2c_diagnostic_texture_divisions(Renderer *renderer, uint64_t count);
+#endif
+
 static int project_clip_vertex(Vec4f *point, Vec2i screen_size,
                                Vec2i *screen) {
     if (!point || !screen || !isfinite(point->x) || !isfinite(point->y) ||
@@ -49,6 +62,9 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                                PingoClipVertex second,
                                PingoClipVertex third,
                                float diffuse_light) {
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_raster_triangle(renderer);
+#endif
     Vec4f a = first.position;
     Vec4f b = second.position;
     Vec4f c = third.position;
@@ -58,10 +74,16 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
     if (!project_clip_vertex(&a, renderer->framebuffer.size, &a_screen) ||
         !project_clip_vertex(&b, renderer->framebuffer.size, &b_screen) ||
         !project_clip_vertex(&c, renderer->framebuffer.size, &c_screen)) {
+#ifdef P2C_DIAGNOSTICS
+        p2c_diagnostic_raster_rejected(renderer);
+#endif
         return;
     }
 
     if (isClockWise(a.x, a.y, b.x, b.y, c.x, c.y) >= 0.0f) {
+#ifdef P2C_DIAGNOSTICS
+        p2c_diagnostic_raster_rejected(renderer);
+#endif
         return;
     }
 
@@ -77,8 +99,15 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
     Vec2i minimum = {min_x, min_y};
     int32_t area = orient2d(a_screen, b_screen, c_screen);
     if (area == 0) {
+#ifdef P2C_DIAGNOSTICS
+        p2c_diagnostic_raster_rejected(renderer);
+#endif
         return;
     }
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_candidates(
+        renderer, (uint64_t)(max_x - min_x) * (uint64_t)(max_y - min_y));
+#endif
     float inverse_area = 1.0f / area;
 
     int32_t a01 = a_screen.y - b_screen.y;
@@ -114,6 +143,9 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                 (area < 0 && (w0 > 0 || w1 > 0 || w2 > 0))) {
                 continue;
             }
+#ifdef P2C_DIAGNOSTICS
+            p2c_diagnostic_covered(renderer);
+#endif
 
             float ndc_z = (w0 * a.z + w1 * b.z + w2 * c.z) * inverse_area;
             float distance = -ndc_z;
@@ -127,6 +159,9 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                 if (!isfinite(reciprocal_w) || !(reciprocal_w > 0.0f)) {
                     continue;
                 }
+#ifdef P2C_DIAGNOSTICS
+                p2c_diagnostic_texture_divisions(renderer, 2);
+#endif
                 float u = (w0 * first_over_w.x +
                            w1 * second_over_w.x +
                            w2 * third_over_w.x) * inverse_area / reciprocal_w;
@@ -146,7 +181,13 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
             if (!depth_try_write(depth, pixel_index, 1.0f - distance)) {
                 continue;
             }
+#ifdef P2C_DIAGNOSTICS
+            p2c_diagnostic_depth_passing(renderer);
+#endif
             texture_draw(&renderer->framebuffer, (Vec2i){x, y}, color);
+#ifdef P2C_DIAGNOSTICS
+            p2c_diagnostic_shaded(renderer);
+#endif
         }
     }
 }
@@ -158,10 +199,17 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
     IF_NULL_RETURN(object, RENDER_ERROR);
     IF_NULL_RETURN(renderer, RENDER_ERROR);
 
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_object(renderer);
+#endif
+
     Mat4 view = mat4Inverse(&renderer->camera_view);
     Mat4 projection = renderer->camera_projection;
 
     for (int i = 0; i < object->mesh->indexes_count; i += 3) {
+#ifdef P2C_DIAGNOSTICS
+        p2c_diagnostic_input_triangle(renderer);
+#endif
         Vec3f *position_a =
             &object->mesh->positions[object->mesh->pos_indices[i + 0]];
         Vec3f *position_b =
@@ -190,7 +238,10 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
         Vec3f normal_b = vec3fsubV(
             (Vec3f){a.x, a.y, a.z}, (Vec3f){c.x, c.y, c.z});
         Vec3f normal = vec3Normalize(vec3Cross(normal_a, normal_b));
-        Vec3f light = vec3Normalize((Vec3f){-8.0f, 5.0f, 5.0f});
+        Vec4f world_light = {-8.0f, 5.0f, 5.0f, 0.0f};
+        Vec4f view_light = mat4MultiplyVec4(&world_light, &view);
+        Vec3f light = vec3Normalize(
+            (Vec3f){view_light.x, view_light.y, view_light.z});
         float diffuse_light = (1.0f + vec3Dot(normal, light)) * 0.5f;
         diffuse_light = MIN(1.0f, MAX(diffuse_light, 0.0f));
 
@@ -205,6 +256,9 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
         PingoClipVertex clipped[PINGO_CLIP_MAX_VERTICES];
         uint8_t clipped_count = pingoClipTriangle(
             input, PINGO_CLIP_PLANES, clipped);
+#ifdef P2C_DIAGNOSTICS
+        if (clipped_count < 3) p2c_diagnostic_input_clipped(renderer);
+#endif
         for (uint8_t fan = 1; fan + 1 < clipped_count; ++fan) {
             rasterize_triangle(object, renderer, clipped[0], clipped[fan],
                                clipped[fan + 1], diffuse_light);
