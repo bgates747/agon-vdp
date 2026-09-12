@@ -15,6 +15,8 @@
 #ifdef P2C_DIAGNOSTICS
 void p2c_diagnostic_object(Renderer *renderer);
 void p2c_diagnostic_input_triangle(Renderer *renderer);
+void p2c_diagnostic_view_model_composition(Renderer *renderer);
+void p2c_diagnostic_light_normalization(Renderer *renderer);
 void p2c_diagnostic_input_clipped(Renderer *renderer);
 void p2c_diagnostic_raster_triangle(Renderer *renderer);
 void p2c_diagnostic_raster_rejected(Renderer *renderer);
@@ -203,8 +205,20 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
     p2c_diagnostic_object(renderer);
 #endif
 
-    Mat4 view = mat4Inverse(&renderer->camera_view);
+    Mat4 *view = &renderer->prepared_view;
     Mat4 projection = renderer->camera_projection;
+
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_view_model_composition(renderer);
+#endif
+    Mat4 view_model = mat4MultiplyM(&model, view);
+    Vec4f world_light = {-8.0f, 5.0f, 5.0f, 0.0f};
+    Vec4f view_light = mat4MultiplyVec4(&world_light, view);
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_light_normalization(renderer);
+#endif
+    Vec3f light = vec3Normalize(
+        (Vec3f){view_light.x, view_light.y, view_light.z});
 
     for (int i = 0; i < object->mesh->indexes_count; i += 3) {
 #ifdef P2C_DIAGNOSTICS
@@ -228,7 +242,6 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
         Vec4f a = {position_a->x, position_a->y, position_a->z, 1.0f};
         Vec4f b = {position_b->x, position_b->y, position_b->z, 1.0f};
         Vec4f c = {position_c->x, position_c->y, position_c->z, 1.0f};
-        Mat4 view_model = mat4MultiplyM(&model, &view);
         a = mat4MultiplyVec4(&a, &view_model);
         b = mat4MultiplyVec4(&b, &view_model);
         c = mat4MultiplyVec4(&c, &view_model);
@@ -238,10 +251,6 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
         Vec3f normal_b = vec3fsubV(
             (Vec3f){a.x, a.y, a.z}, (Vec3f){c.x, c.y, c.z});
         Vec3f normal = vec3Normalize(vec3Cross(normal_a, normal_b));
-        Vec4f world_light = {-8.0f, 5.0f, 5.0f, 0.0f};
-        Vec4f view_light = mat4MultiplyVec4(&world_light, &view);
-        Vec3f light = vec3Normalize(
-            (Vec3f){view_light.x, view_light.y, view_light.z});
         float diffuse_light = (1.0f + vec3Dot(normal, light)) * 0.5f;
         diffuse_light = MIN(1.0f, MAX(diffuse_light, 0.0f));
 

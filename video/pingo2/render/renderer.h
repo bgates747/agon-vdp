@@ -16,6 +16,9 @@ typedef struct Renderer {
   Mat4 camera_projection;
   Mat4 camera_view;
 
+  /* Frame-owned inverse of camera_view, refreshed by renderer_render(). */
+  Mat4 prepared_view;
+
   Backend *backend;
 
 } Renderer;

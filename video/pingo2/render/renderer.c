@@ -7,6 +7,10 @@
 #include "depth.h"
 #include "backend.h"
 
+#ifdef P2C_DIAGNOSTICS
+void p2c_diagnostic_camera_inverse(Renderer *renderer);
+#endif
+
 int renderer_init(Renderer * r, Vec2i size, Backend * backend) {
     r->root_renderable = 0;
     r->clear = 1;
@@ -42,6 +46,11 @@ int renderer_render(Renderer *r)
             framebuffer[index] = r->clear_color;
         }
     }
+
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_camera_inverse(r);
+#endif
+    r->prepared_view = mat4Inverse(&r->camera_view);
 
     r->root_renderable->render(r->root_renderable, mat4Identity(), r);
 

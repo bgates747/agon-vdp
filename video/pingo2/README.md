@@ -10,3 +10,11 @@ BGRA8888; `esp32dev-pingo2-probe-rgba2222` selects direct FabGL `AABBGGRR`.
 
 The retained license is the donor repository's `LICENSE`. This import contains
 no Wolf renderer, Wolf protocol, registry, or combined-VDP customization.
+
+## PINGO-017 O01 migration checkpoint
+
+The corrected closure includes frame-owned camera inversion and per-object
+view/model composition and light normalization. It matches the effective
+FSIM source at commit `8f886459a7f275e49187c395ec493c9db32565a1`.
+See [the agent handoff](AGENT-HANDOFF.md) for provenance, validation, remaining
+acceptance gates, and the boundary between probe builds and runtime support.
