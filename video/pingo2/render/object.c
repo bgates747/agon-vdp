@@ -7,6 +7,7 @@
 #include "mesh.h"
 #include "render/material.h"
 #include "renderer.h"
+#include "span.h"
 #include "state.h"
 
 #include <math.h>
@@ -14,6 +15,8 @@
 
 #ifdef P2C_DIAGNOSTICS
 void p2c_diagnostic_object(Renderer *renderer);
+void p2c_diagnostic_bounds_test(Renderer *renderer);
+void p2c_diagnostic_bounds_rejected(Renderer *renderer, uint64_t triangles);
 void p2c_diagnostic_input_triangle(Renderer *renderer);
 void p2c_diagnostic_view_model_composition(Renderer *renderer);
 void p2c_diagnostic_light_normalization(Renderer *renderer);
@@ -21,6 +24,7 @@ void p2c_diagnostic_input_clipped(Renderer *renderer);
 void p2c_diagnostic_raster_triangle(Renderer *renderer);
 void p2c_diagnostic_raster_rejected(Renderer *renderer);
 void p2c_diagnostic_candidates(Renderer *renderer, uint64_t count);
+void p2c_diagnostic_span_candidates(Renderer *renderer, uint64_t count);
 void p2c_diagnostic_covered(Renderer *renderer);
 void p2c_diagnostic_depth_passing(Renderer *renderer);
 void p2c_diagnostic_shaded(Renderer *renderer);
@@ -133,18 +137,40 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
     };
     PingoDepth *depth = renderer->backend->getZetaBuffer(
         renderer, renderer->backend);
+    Pixel *framebuffer = renderer->framebuffer.frameBuffer;
+    const int32_t stride = renderer->framebuffer.size.x;
+    Material *material = object->material;
+    Texture *texture = material ? material->texture : NULL;
+#ifdef P2C_PIXEL_RGBA2222
+    uint8_t shade_levels[4];
+    pixelShadePrepare(shade_levels, diffuse_light);
+#endif
 
     for (int32_t y = min_y; y < max_y;
          ++y, w0_row += b12, w1_row += b20, w2_row += b01) {
-        int32_t w0 = w0_row;
-        int32_t w1 = w1_row;
-        int32_t w2 = w2_row;
-        for (int32_t x = min_x; x < max_x;
-             ++x, w0 += a12, w1 += a20, w2 += a01) {
+        int32_t first = 0, end = max_x - min_x;
+#ifndef P2C_SPAN_REFERENCE
+        if (!pingoRowSpan(area, end, w0_row, w1_row, w2_row,
+                          a12, a20, a01, &first, &end)) continue;
+#endif
+#ifdef P2C_DIAGNOSTICS
+        p2c_diagnostic_span_candidates(renderer, (uint64_t)(end - first));
+#endif
+        /* Wide jump preserves exactly the integer values reached by the old
+         * walk, without overflowing the multiplication before cancellation. */
+        int32_t w0 = (int32_t)(w0_row + (int64_t)a12 * first);
+        int32_t w1 = (int32_t)(w1_row + (int64_t)a20 * first);
+        int32_t w2 = (int32_t)(w2_row + (int64_t)a01 * first);
+        int32_t pixel_index = min_x + first + y * stride;
+        for (int32_t x = first; x < end;
+             ++x, ++pixel_index, w0 += a12, w1 += a20, w2 += a01) {
+#if defined(P2C_SPAN_REFERENCE) || defined(P2C_SPAN_GUARD)
+            /* Test-only old-walk/guarded oracles; no release fragment test. */
             if ((area > 0 && (w0 < 0 || w1 < 0 || w2 < 0)) ||
                 (area < 0 && (w0 > 0 || w1 > 0 || w2 > 0))) {
                 continue;
             }
+#endif
 #ifdef P2C_DIAGNOSTICS
             p2c_diagnostic_covered(renderer);
 #endif
@@ -155,7 +181,7 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                 continue;
             }
             Pixel color;
-            if (object->material != 0) {
+            if (material != 0) {
                 float reciprocal_w =
                     (w0 * a.w + w1 * b.w + w2 * c.w) * inverse_area;
                 if (!isfinite(reciprocal_w) || !(reciprocal_w > 0.0f)) {
@@ -173,20 +199,26 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                 if (!isfinite(u) || !isfinite(v)) {
                     continue;
                 }
-                Pixel texel = texture_readF(object->material->texture,
-                                             (Vec2f){u, v});
-                color = pixelMul(texel, diffuse_light);
+                Pixel texel = textureReadFInline(texture, (Vec2f){u, v});
+#ifdef P2C_PIXEL_RGBA2222
+                color = pixelShadeLookup(texel, shade_levels);
+#else
+                color = pixelMulInline(texel, diffuse_light);
+#endif
             } else {
-                color = pixelMul(pixelFromUInt8(255), diffuse_light);
+#ifdef P2C_PIXEL_RGBA2222
+                color = pixelShadeLookup(PIXELWHITE, shade_levels);
+#else
+                color = pixelMulInline(PIXELWHITE, diffuse_light);
+#endif
             }
-            int32_t pixel_index = x + y * renderer->framebuffer.size.x;
             if (!depth_try_write(depth, pixel_index, 1.0f - distance)) {
                 continue;
             }
 #ifdef P2C_DIAGNOSTICS
             p2c_diagnostic_depth_passing(renderer);
 #endif
-            texture_draw(&renderer->framebuffer, (Vec2i){x, y}, color);
+            framebuffer[pixel_index] = color;
 #ifdef P2C_DIAGNOSTICS
             p2c_diagnostic_shaded(renderer);
 #endif
@@ -200,6 +232,11 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
 
     IF_NULL_RETURN(object, RENDER_ERROR);
     IF_NULL_RETURN(renderer, RENDER_ERROR);
+    IF_NULL_RETURN(object->mesh, RENDER_ERROR);
+    Mesh *mesh = object->mesh;
+    if (mesh->indexes_count < 0 || mesh->indexes_count % 3 != 0 ||
+        (mesh->indexes_count && (!mesh->positions || !mesh->pos_indices ||
+                                !mesh->positions_count))) return RENDER_ERROR;
 
 #ifdef P2C_DIAGNOSTICS
     p2c_diagnostic_object(renderer);
@@ -212,6 +249,15 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
     p2c_diagnostic_view_model_composition(renderer);
 #endif
     Mat4 view_model = mat4MultiplyM(&model, view);
+#ifdef P2C_DIAGNOSTICS
+    p2c_diagnostic_bounds_test(renderer);
+#endif
+    if (mesh_bounds_outside(mesh, &view_model, &projection)) {
+#ifdef P2C_DIAGNOSTICS
+        p2c_diagnostic_bounds_rejected(renderer, mesh->indexes_count / 3);
+#endif
+        return OK;
+    }
     Vec4f world_light = {-8.0f, 5.0f, 5.0f, 0.0f};
     Vec4f view_light = mat4MultiplyVec4(&world_light, view);
 #ifdef P2C_DIAGNOSTICS
@@ -224,6 +270,10 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
 #ifdef P2C_DIAGNOSTICS
         p2c_diagnostic_input_triangle(renderer);
 #endif
+        /* A failed bounds refresh is not permission to dereference bad indices. */
+        if (mesh->pos_indices[i] >= mesh->positions_count ||
+            mesh->pos_indices[i + 1] >= mesh->positions_count ||
+            mesh->pos_indices[i + 2] >= mesh->positions_count) continue;
         Vec3f *position_a =
             &object->mesh->positions[object->mesh->pos_indices[i + 0]];
         Vec3f *position_b =

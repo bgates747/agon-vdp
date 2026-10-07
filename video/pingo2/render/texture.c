@@ -30,11 +30,5 @@ Pixel texture_read(Texture *f, Vec2i pos)
 
 Pixel texture_readF(Texture *f, Vec2f pos)
 {
-    float u = fminf(fmaxf(pos.x, 0.0f), 1.0f);
-    float v = fminf(fmaxf(pos.y, 0.0f), 1.0f);
-    uint16_t x = (uint16_t)(u * (f->size.x - 1));
-    uint16_t y = (uint16_t)((1.0f - v) * (f->size.y - 1));
-    uint32_t index = x + y * f->size.x;
-    Pixel value = f->frameBuffer[index];
-    return value;
+    return textureReadFInline(f, pos);
 }

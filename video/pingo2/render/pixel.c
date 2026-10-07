@@ -38,19 +38,7 @@ Pixel pixelFromRGBA(uint8_t red, uint8_t green, uint8_t blue,
 }
 
 Pixel pixelMul(Pixel pixel, float factor) {
-    uint8_t red = (uint8_t)(channel_to_u8(pixel.c & 0x03u) * factor);
-    uint8_t green = (uint8_t)(
-        channel_to_u8((pixel.c >> 2) & 0x03u) * factor
-    );
-    uint8_t blue = (uint8_t)(
-        channel_to_u8((pixel.c >> 4) & 0x03u) * factor
-    );
-    return (Pixel){(uint8_t)(
-        (pixel.c & 0xC0u) |
-        (channel_from_u8(blue) << 4) |
-        (channel_from_u8(green) << 2) |
-        channel_from_u8(red)
-    )};
+    return pixelMulInline(pixel, factor);
 }
 
 #else
@@ -75,12 +63,7 @@ Pixel pixelFromRGBA(uint8_t red, uint8_t green, uint8_t blue,
 }
 
 Pixel pixelMul(Pixel pixel, float factor) {
-    return (Pixel){
-        (uint8_t)(pixel.b * factor),
-        (uint8_t)(pixel.g * factor),
-        (uint8_t)(pixel.r * factor),
-        pixel.a,
-    };
+    return pixelMulInline(pixel, factor);
 }
 
 #endif

@@ -91,7 +91,7 @@ int pingo2_target_probe_run(Pingo2TargetProbeResult *result) {
     Renderable root_payload;
     Entity root;
     Entity child;
-    Mesh mesh;
+    Mesh mesh = {0};
     Texture texture;
     Material material;
     Object object;
@@ -131,6 +131,9 @@ int pingo2_target_probe_run(Pingo2TargetProbeResult *result) {
     mesh.tex_indices = texcoord_indices;
     mesh.positions = positions;
     mesh.textCoord = texcoords;
+    if (!mesh_prepare_bounds(&mesh, sizeof(positions) / sizeof(positions[0]))) {
+        return INIT_ERROR;
+    }
 
     if (texture_init(&texture, (Vec2i){2, 2}, texture_pixels) != OK ||
         material_init(&material, &texture) != OK ||
