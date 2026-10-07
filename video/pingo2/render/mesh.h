@@ -6,6 +6,9 @@
 #include "math/vec3.h"
 #include "math/mat4.h"
 
+enum { PINGO_TEXTURED = 0, PINGO_FLAT_PALETTE = 1 };
+enum { PINGO_INHERIT_LIGHT = 0, PINGO_SELF_LIT = 1 };
+
 /* Zero-initialize before filling. Arrays are caller-owned and immutable during
  * render. positions_count declares real allocated Vec3f elements; indices do
  * not establish an allocation extent. Invalidate BEFORE any in-place edit,
@@ -25,6 +28,10 @@ typedef struct Mesh {
     uint32_t bounds_positions_count;
     int bounds_indexes_count;
     bool bounds_valid;
+    /* Zero initialization preserves textured, scene-lit rendering. Flat
+     * palette faces sample the original first UV once, before clipping. */
+    uint8_t shading_mode;
+    uint8_t illumination_policy;
 } Mesh;
 
 #ifdef __cplusplus

@@ -16,8 +16,11 @@
 #endif
 
 #ifdef PINGO2_BRIDGE_DIAGNOSTICS
+#include <cstddef>
 static int64_t pingoAllocationFailAfter = -1;
 static size_t pingoLiveAllocations = 0;
+static size_t pingoLiveBytes = 0, pingoPeakBytes = 0, pingoLargestAllocation = 0;
+union PingoAllocationHeader { std::max_align_t alignment; size_t bytes; };
 #endif
 extern "C" void *p2bridge_calloc(size_t count, size_t size) {
     if (!count || !size || count > SIZE_MAX / size) return nullptr;
@@ -25,11 +28,23 @@ extern "C" void *p2bridge_calloc(size_t count, size_t size) {
     if (pingoAllocationFailAfter == 0) return nullptr;
     if (pingoAllocationFailAfter > 0) --pingoAllocationFailAfter;
 #endif
-    void *p = PreferPSRAMAlloc(count * size);
+    size_t bytes = count * size;
+#ifdef PINGO2_BRIDGE_DIAGNOSTICS
+    if (bytes > SIZE_MAX - sizeof(PingoAllocationHeader)) return nullptr;
+    auto header = static_cast<PingoAllocationHeader *>(
+        PreferPSRAMAlloc(bytes + sizeof(PingoAllocationHeader)));
+    void *p = header ? header + 1 : nullptr;
+    if (header) header->bytes = bytes;
+#else
+    void *p = PreferPSRAMAlloc(bytes);
+#endif
     if (p) {
         memset(p, 0, count * size);
 #ifdef PINGO2_BRIDGE_DIAGNOSTICS
         ++pingoLiveAllocations;
+        pingoLiveBytes += bytes;
+        pingoPeakBytes = std::max(pingoPeakBytes, pingoLiveBytes);
+        pingoLargestAllocation = std::max(pingoLargestAllocation, bytes);
 #endif
     }
     return p;
@@ -38,6 +53,9 @@ extern "C" void p2bridge_free(void *p) {
     if (!p) return;
 #ifdef PINGO2_BRIDGE_DIAGNOSTICS
     --pingoLiveAllocations;
+    auto header = static_cast<PingoAllocationHeader *>(p) - 1;
+    pingoLiveBytes -= header->bytes;
+    p = header;
 #endif
     free(p);
 }

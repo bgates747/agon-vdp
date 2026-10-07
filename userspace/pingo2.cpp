@@ -104,5 +104,9 @@ extern "C" unsigned pingo2_test_kinds(uint16_t id) {
 extern "C" int pingo2_test_status() { return pingoLastStatus; }
 extern "C" void pingo2_test_fail(int64_t count) { pingoAllocationFailAfter = count; }
 extern "C" size_t pingo2_test_live() { return pingoLiveAllocations; }
+extern "C" void pingo2_test_memory(size_t out[3], bool reset) {
+    out[0] = pingoLiveBytes; out[1] = pingoPeakBytes; out[2] = pingoLargestAllocation;
+    if (reset) { pingoPeakBytes = pingoLiveBytes; pingoLargestAllocation = 0; }
+}
 #endif
 #endif

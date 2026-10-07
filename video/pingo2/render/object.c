@@ -68,7 +68,8 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                                PingoClipVertex first,
                                PingoClipVertex second,
                                PingoClipVertex third,
-                               float diffuse_light) {
+                               float diffuse_light, int flat,
+                               Pixel flat_color) {
 #ifdef P2C_DIAGNOSTICS
     p2c_diagnostic_raster_triangle(renderer);
 #endif
@@ -145,7 +146,7 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
     float q_vertices[3] = {a.w, b.w, c.w};
     float s_vertices[3] = {first_over_w.x, second_over_w.x, third_over_w.x};
     float t_vertices[3] = {first_over_w.y, second_over_w.y, third_over_w.y};
-    int affine_safe = material && pingoPerspectiveSafe(
+    int affine_safe = !flat && material && pingoPerspectiveSafe(
         inverse_area, q_vertices, s_vertices, t_vertices);
     float dq = (a12*a.w + a20*b.w + a01*c.w) * inverse_area;
     float ds = (a12*first_over_w.x + a20*second_over_w.x + a01*third_over_w.x) * inverse_area;
@@ -171,7 +172,7 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
         int32_t w1 = (int32_t)(w1_row + (int64_t)a20 * first);
         int32_t w2 = (int32_t)(w2_row + (int64_t)a01 * first);
         int32_t pixel_index = min_x + first + y * stride;
-        PingoPerspectiveSpan mapper;
+        PingoPerspectiveSpan mapper = {0};
         if (affine_safe) {
             float q = (w0*a.w + w1*b.w + w2*c.w) * inverse_area;
             float s = (w0*first_over_w.x + w1*second_over_w.x + w2*third_over_w.x) * inverse_area;
@@ -212,7 +213,9 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
                 continue;
             }
             Pixel color;
-            if (material != 0) {
+            if (flat) {
+                color = flat_color;
+            } else if (material != 0) {
               if (!approximate) {
                 float reciprocal_w =
                     (w0 * a.w + w1 * b.w + w2 * c.w) * inverse_area;
@@ -268,8 +271,18 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
     IF_NULL_RETURN(object->mesh, RENDER_ERROR);
     Mesh *mesh = object->mesh;
     if (mesh->indexes_count < 0 || mesh->indexes_count % 3 != 0 ||
+        mesh->shading_mode > PINGO_FLAT_PALETTE ||
+        mesh->illumination_policy > PINGO_SELF_LIT ||
         (mesh->indexes_count && (!mesh->positions || !mesh->pos_indices ||
                                 !mesh->positions_count))) return RENDER_ERROR;
+    if (object->material && (!object->material->texture ||
+        !object->material->texture->frameBuffer ||
+        object->material->texture->size.x <= 0 ||
+        object->material->texture->size.y <= 0 ||
+        !mesh->textCoord || !mesh->tex_indices)) return RENDER_ERROR;
+    const int flat = mesh->shading_mode == PINGO_FLAT_PALETTE;
+    const int illuminate = renderer->illumination_enabled &&
+        mesh->illumination_policy == PINGO_INHERIT_LIGHT;
 
 #ifdef P2C_DIAGNOSTICS
     p2c_diagnostic_object(renderer);
@@ -291,7 +304,8 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
 #endif
         return OK;
     }
-    Vec4f world_light = {-8.0f, 5.0f, 5.0f, 0.0f};
+    Vec4f world_light = {renderer->light_direction.x,
+        renderer->light_direction.y, renderer->light_direction.z, 0.0f};
     Vec4f view_light = mat4MultiplyVec4(&world_light, view);
 #ifdef P2C_DIAGNOSTICS
     p2c_diagnostic_light_normalization(renderer);
@@ -318,8 +332,8 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
         Vec2f uv_c = {0.0f, 0.0f};
         if (object->material != 0) {
             uv_a = object->mesh->textCoord[object->mesh->tex_indices[i + 0]];
-            uv_b = object->mesh->textCoord[object->mesh->tex_indices[i + 1]];
-            uv_c = object->mesh->textCoord[object->mesh->tex_indices[i + 2]];
+            uv_b = flat ? uv_a : mesh->textCoord[mesh->tex_indices[i + 1]];
+            uv_c = flat ? uv_a : mesh->textCoord[mesh->tex_indices[i + 2]];
         }
 
         Vec4f a = {position_a->x, position_a->y, position_a->z, 1.0f};
@@ -336,6 +350,8 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
         Vec3f normal = vec3Normalize(vec3Cross(normal_a, normal_b));
         float diffuse_light = (1.0f + vec3Dot(normal, light)) * 0.5f;
         diffuse_light = MIN(1.0f, MAX(diffuse_light, 0.0f));
+        diffuse_light = illuminate ? MAX(renderer->ambient_light,
+            diffuse_light * renderer->light_intensity) : 1.0f;
 
         a = mat4MultiplyVec4(&a, &projection);
         b = mat4MultiplyVec4(&b, &projection);
@@ -351,9 +367,15 @@ int object_render(void *this, Mat4 model, Renderer *renderer)
 #ifdef P2C_DIAGNOSTICS
         if (clipped_count < 3) p2c_diagnostic_input_clipped(renderer);
 #endif
+        Pixel flat_color = PIXELWHITE;
+        if (flat && clipped_count >= 3) {
+            Pixel texel = object->material ?
+                textureReadFInline(object->material->texture, uv_a) : PIXELWHITE;
+            flat_color = pixelMulInline(texel, diffuse_light);
+        }
         for (uint8_t fan = 1; fan + 1 < clipped_count; ++fan) {
             rasterize_triangle(object, renderer, clipped[0], clipped[fan],
-                               clipped[fan + 1], diffuse_light);
+                               clipped[fan + 1], diffuse_light, flat, flat_color);
         }
     }
 

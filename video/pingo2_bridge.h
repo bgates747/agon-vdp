@@ -114,7 +114,7 @@ void VDUStreamProcessor::bufferUsePingo2(uint16_t id) {
             replacement->next = *slot; *slot = replacement;
         } else pingoControlRelease(replacement);
     } else if (command == 0) result = P2CMD_INVALID;
-    else if (command >= 43 && command <= 50) result = P2CMD_UNSUPPORTED;
+    else if (command == 49 || command == 50) result = P2CMD_UNSUPPORTED;
     else if (command == 39) {
         if (control) { bufferClear(id); result = P2CMD_OK; }
     } else if (control) {

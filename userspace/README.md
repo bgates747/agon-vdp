@@ -1,10 +1,13 @@
 # Native Pingo 2 VDP module
 
 This adapter builds the accepted Pingo 2 engine, bounded startup probe and
-PINGO-023 scene bridge inside the owned stock VDP firmware, using official Fab
+PINGO-023 scene bridge plus PINGO-025's R02 integration inside the owned stock VDP firmware, using official Fab
 1.2.5's exact loader glue and userspace compatibility sources. It implements
-the accepted Pingo-only 0x49 commands 0–41 and 51–55, not Wolf or the deferred
-lighting/transaction features. A successful native test does not qualify
+the accepted Pingo-only 0x49 commands 0–41, 43–48 and 51–55, not Wolf or the
+deferred transaction features. Commands 22–25 now use signed i24 positions
+and 53 unsigned u24 far distance: regenerate clients; do not mix P023 streams
+with this parser. Lighting/solid-face behavior is the accepted P024 R02 engine.
+A successful native test does not qualify
 stock-MOS client handling, emulator visuals or physical hardware.
 
 ## Build and qualify
@@ -58,15 +61,16 @@ process without `dlclose` or global C++ teardown. Unload/restart safety is not
 claimed or retrofitted here.
 
 The consuming flight-simulator PINGO-012/013 boundary/profile gates are
-accepted. PINGO-023 owns the new scene bridge and its separate Author-run
-cube/Lara and stock-MOS gate. Keep this tranche uncommitted until the Author
-accepts the behavior and approves publication. No profile is created or
-launched by this build target.
+accepted, as are PINGO-023's cube/Lara bridge and PINGO-025's bounded
+lighting/terrain gates. On 2026-10-07 the Author confirmed the near-terrain
+emulator view works and authorized publication. This is not full-corpus or
+physical qualification. No profile is created or launched by this build target.
 
 ## Scene bridge qualification
 
 `video/pingo2_commands.c` is the plain-C scene/resource owner, adapted from
-fsim's accepted PINGO-022 owner without changing the frozen engine closure.
+fsim's accepted PINGO-022 owner, with P024's accepted lighting/far/camera
+changes. The engine is the exact 41-file R02 closure pinned by `smoke.py`.
 `pingo2_control.h` keeps typed controls in a private checked-allocation list;
 they are never mutable ordinary byte buffers. Canonical buffer mutations
 destroy affected controls or reject typed sources. `pingo2_bridge.h` drains

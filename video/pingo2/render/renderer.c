@@ -1,5 +1,6 @@
 #include <string.h>
 #include <stdio.h>
+#include <math.h>
 #include "math/mat4.h"
 #include "render/state.h"
 #include "renderer.h"
@@ -15,6 +16,11 @@ int renderer_init(Renderer * r, Vec2i size, Backend * backend) {
     r->root_renderable = 0;
     r->clear = 1;
     r->clear_color = PIXELBLACK;
+    /* Keep the original raw direction for byte-identical default lighting. */
+    r->light_direction = (Vec3f){-8.0f, 5.0f, 5.0f};
+    r->light_intensity = 1.0f;
+    r->ambient_light = 0.0f;
+    r->illumination_enabled = true;
     r->backend = backend;
     r->backend->init(r, r->backend, (Vec4i) { 0, 0, 0, 0 });
 
@@ -65,5 +71,17 @@ int renderer_set_root_renderable(Renderer *renderer, Renderable *root)
     IF_NULL_RETURN(root, SET_ERROR);
 
     renderer->root_renderable = root;
+    return 0;
+}
+
+int renderer_set_light_direction(Renderer *renderer, Vec3f direction)
+{
+    if (!renderer || !isfinite(direction.x) || !isfinite(direction.y) ||
+        !isfinite(direction.z)) return SET_ERROR;
+    float scale = fmaxf(fabsf(direction.x),
+                       fmaxf(fabsf(direction.y), fabsf(direction.z)));
+    if (!(scale > 0.0f)) return SET_ERROR;
+    direction.x /= scale; direction.y /= scale; direction.z /= scale;
+    renderer->light_direction = vec3Normalize(direction);
     return 0;
 }

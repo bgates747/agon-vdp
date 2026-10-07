@@ -1,4 +1,4 @@
-/* Target bridge resource owner, derived from fsim 33b8450 PINGO-022.
+/* Target bridge resource owner, derived from fsim PINGO-022 and PINGO-024.
  * Not part of the frozen Pingo engine closure. Platform storage stays here. */
 #include "pingo2_commands.h"
 #include "math/mat4.h"
@@ -544,8 +544,8 @@ static int render(P2Commands *h, Scene *s, uint16_t bid) {
 int p2cmd_payload_length(unsigned c, const uint8_t *p, size_t n, size_t *want) {
     static const uint8_t fixed[56] = {
         4,0,0,0,0,6,4,4,4,8,4,4,4,8,4,4,4,8,
-        2,2,2,6,2,2,2,6,2,2,2,6,2,2,2,6,2,2,2,6,2,0,0,3,
-        0,6,1,1,1,3,3,8,12,3,11,2,4,2};
+        2,2,2,6,3,3,3,9,2,2,2,6,2,2,2,6,2,2,2,6,2,0,0,3,
+        0,6,1,1,1,3,3,8,12,3,11,3,4,2};
     if (c > 55 || c == 42) { *want = 0; return P2CMD_UNSUPPORTED; }
     if ((c >= 1 && c <= 4) || c == 40) {
         if (n < 4) return P2CMD_TRUNCATED;
@@ -572,7 +572,7 @@ int p2cmd_execute(P2Commands *h, const uint8_t *wire, size_t length, size_t *con
     if (status == P2CMD_TRUNCATED) { *consumed = length; return status; }
     *consumed += want;
     if (status != P2CMD_OK) return status;
-    if (c >= 43 && c <= 50) return P2CMD_UNSUPPORTED;
+    if (c == 49 || c == 50) return P2CMD_UNSUPPORTED;
     uint16_t sid = word(wire + 3);
     if (c == 0) return scene_create(h, sid, word(p), word(p + 2));
     Scene *s = scene_find(h, sid);
@@ -591,6 +591,11 @@ int p2cmd_execute(P2Commands *h, const uint8_t *wire, size_t length, size_t *con
         } else if (c <= 25) { pose = &s->camera; relative = c - 18 + 4; }
         else { pose = &s->root_pose; relative = c - 26; }
         unsigned group = relative / 4, axis = relative % 4;
+        if (c >= 22 && c <= 25) {
+            for (unsigned i = 0; i < (axis == 3 ? 3u : 1u); ++i)
+                set_component(&pose->translation, axis == 3 ? i : axis, wide(p + 3*i));
+            return P2CMD_OK;
+        }
         Vec3f *v = group == 0 ? &pose->scale : group == 1 ? &pose->rotation : &pose->translation;
         for (unsigned i = 0; i < (axis == 3 ? 3u : 1u); ++i) {
             float value = group == 0 ? word(p + 2*i) * (1.0f/256.0f) :
@@ -601,6 +606,30 @@ int p2cmd_execute(P2Commands *h, const uint8_t *wire, size_t length, size_t *con
     }
     if (c == 38) return render(h, s, word(p));
     if (c == 41) { s->notify = p[0] == 1; s->token = word(p + 1); return P2CMD_OK; }
+    if (c == 43) {
+        return renderer_set_light_direction(&s->renderer, (Vec3f){
+            signed_word(p), signed_word(p+2), signed_word(p+4)}) ?
+            P2CMD_INVALID : P2CMD_OK;
+    }
+    if (c == 44) { s->renderer.light_intensity = p[0] / 127.0f; return P2CMD_OK; }
+    if (c == 45) { s->renderer.ambient_light = p[0] / 127.0f; return P2CMD_OK; }
+    if (c == 46) {
+        if (p[0] > 1) return P2CMD_INVALID;
+        s->renderer.illumination_enabled = p[0] != 0; return P2CMD_OK;
+    }
+    if (c == 47 || c == 48) {
+        if (p[2] > 1) return P2CMD_INVALID;
+        uint16_t mid = word(p);
+        Geometry **gp = mesh_slot(s, mid), *g = *gp;
+        if (!g || g->id != mid) {
+            g = allocate(h, 1, sizeof(*g));
+            if (!g) return P2CMD_ALLOC;
+            g->id = mid; g->next = *gp; *gp = g;
+        }
+        if (c == 47) g->mesh.shading_mode = p[2];
+        else g->mesh.illumination_policy = p[2];
+        refresh_mesh(s, g); return P2CMD_OK;
+    }
     if (c == 51 || c == 52) {
         if (c == 51 && p[2] > 1) return P2CMD_INVALID;
         Instance *o = object_find(s, word(p));
@@ -610,7 +639,7 @@ int p2cmd_execute(P2Commands *h, const uint8_t *wire, size_t length, size_t *con
         return P2CMD_OK;
     }
     if (c == 53) {
-        uint16_t far = word(p);
+        uint32_t far = (uint32_t)word(p) | ((uint32_t)p[2] << 16);
         if (far < 2 || far <= s->info.near_plane) return P2CMD_INVALID;
         s->info.far_plane = far; return P2CMD_OK;
     }

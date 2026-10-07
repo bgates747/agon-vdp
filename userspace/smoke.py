@@ -17,7 +17,7 @@ import time
 ROOT = Path(__file__).resolve().parent.parent
 FAB_COMMIT = "c22876d1f7ad903537c308cf65afd6553b37cdb8"
 GL_COMMIT = "cdd57fd4d709427b2e89738ae3b086720d8cf013"
-ENGINE_SHA = "d4dfe19205d715cefebd1e41b9bf9905f35d9290c94883cabcbadb62c66c8c8a"
+ENGINE_SHA = "d4fd34cbe948e668e96eb230571cbcbac41286b1e7a8d25ce98b4428aab29e0b"
 PROBE_RECORD = ("Pingo2 target probe: status=0 render=0 pixels=342 depth=342 "
                 "frame=ebfd0b25 zeta=0c76557b")
 U8P = C.POINTER(C.c_uint8)
