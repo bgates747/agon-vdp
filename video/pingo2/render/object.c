@@ -8,6 +8,7 @@
 #include "render/material.h"
 #include "renderer.h"
 #include "span.h"
+#include "perspective_span.h"
 #include "state.h"
 
 #include <math.h>
@@ -141,6 +142,14 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
     const int32_t stride = renderer->framebuffer.size.x;
     Material *material = object->material;
     Texture *texture = material ? material->texture : NULL;
+    float q_vertices[3] = {a.w, b.w, c.w};
+    float s_vertices[3] = {first_over_w.x, second_over_w.x, third_over_w.x};
+    float t_vertices[3] = {first_over_w.y, second_over_w.y, third_over_w.y};
+    int affine_safe = material && pingoPerspectiveSafe(
+        inverse_area, q_vertices, s_vertices, t_vertices);
+    float dq = (a12*a.w + a20*b.w + a01*c.w) * inverse_area;
+    float ds = (a12*first_over_w.x + a20*second_over_w.x + a01*third_over_w.x) * inverse_area;
+    float dt = (a12*first_over_w.y + a20*second_over_w.y + a01*third_over_w.y) * inverse_area;
 #ifdef P2C_PIXEL_RGBA2222
     uint8_t shade_levels[4];
     pixelShadePrepare(shade_levels, diffuse_light);
@@ -162,6 +171,17 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
         int32_t w1 = (int32_t)(w1_row + (int64_t)a20 * first);
         int32_t w2 = (int32_t)(w2_row + (int64_t)a01 * first);
         int32_t pixel_index = min_x + first + y * stride;
+        PingoPerspectiveSpan mapper;
+        if (affine_safe) {
+            float q = (w0*a.w + w1*b.w + w2*c.w) * inverse_area;
+            float s = (w0*first_over_w.x + w1*second_over_w.x + w2*third_over_w.x) * inverse_area;
+            float t = (w0*first_over_w.y + w1*second_over_w.y + w2*third_over_w.y) * inverse_area;
+            pingoPerspectiveBegin(&mapper,q,s,t,dq,ds,dt);
+#ifdef P2C_DIAGNOSTICS
+            p2c_diagnostic_texture_divisions(renderer, mapper.divisions);
+            mapper.divisions = 0;
+#endif
+        }
         for (int32_t x = first; x < end;
              ++x, ++pixel_index, w0 += a12, w1 += a20, w2 += a01) {
 #if defined(P2C_SPAN_REFERENCE) || defined(P2C_SPAN_GUARD)
@@ -174,6 +194,17 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
 #ifdef P2C_DIAGNOSTICS
             p2c_diagnostic_covered(renderer);
 #endif
+            float u=0.0f, v=0.0f;
+            int approximate = 0;
+            if (affine_safe) {
+                /* Advance before any depth/finite rejection, never only when
+                 * a fragment survives. Sampling/writes keep their old order. */
+                approximate = pingoPerspectiveNext(&mapper,end-x,&u,&v);
+#ifdef P2C_DIAGNOSTICS
+                p2c_diagnostic_texture_divisions(renderer, mapper.divisions);
+                mapper.divisions = 0;
+#endif
+            }
 
             float ndc_z = (w0 * a.z + w1 * b.z + w2 * c.z) * inverse_area;
             float distance = -ndc_z;
@@ -182,6 +213,7 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
             }
             Pixel color;
             if (material != 0) {
+              if (!approximate) {
                 float reciprocal_w =
                     (w0 * a.w + w1 * b.w + w2 * c.w) * inverse_area;
                 if (!isfinite(reciprocal_w) || !(reciprocal_w > 0.0f)) {
@@ -190,15 +222,16 @@ static void rasterize_triangle(Object *object, Renderer *renderer,
 #ifdef P2C_DIAGNOSTICS
                 p2c_diagnostic_texture_divisions(renderer, 2);
 #endif
-                float u = (w0 * first_over_w.x +
+                u = (w0 * first_over_w.x +
                            w1 * second_over_w.x +
                            w2 * third_over_w.x) * inverse_area / reciprocal_w;
-                float v = (w0 * first_over_w.y +
+                v = (w0 * first_over_w.y +
                            w1 * second_over_w.y +
                            w2 * third_over_w.y) * inverse_area / reciprocal_w;
                 if (!isfinite(u) || !isfinite(v)) {
                     continue;
                 }
+              }
                 Pixel texel = textureReadFInline(texture, (Vec2f){u, v});
 #ifdef P2C_PIXEL_RGBA2222
                 color = pixelShadeLookup(texel, shade_levels);

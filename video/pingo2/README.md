@@ -70,3 +70,32 @@ See FSIM PINGO-020 and the engine ledger for exhaustive coverage proof, exact
 host qualification and target costs. The Author accepted O06 on 2026-10-06
 and authorized committing/pushing the accumulated exact-output work before
 the separately accepted PINGO-021 texture approximation is integrated.
+
+## PINGO-021 O07 accepted perspective subdivision
+
+The normal textured path now recovers perspective-correct U/V at carried
+eight-pixel boundaries and interpolates between them using float additions.
+The final tail ends at its last covered pixel. Invalid arithmetic falls back
+to the original exact mapper; texture state advances for every covered pixel,
+including depth rejects. Depth, coverage, clipping, lighting, sample/write
+order, ABI and caller ownership remain unchanged. No Wolf, VDU, emulator or
+application feature is introduced.
+
+Matched FSIM engine identity:
+`d4dfe19205d715cefebd1e41b9bf9905f35d9290c94883cabcbadb62c66c8c8a`.
+The Author accepted the colour-only approximation and disclosed costs on
+2026-10-06, and authorized integration and grouped commits/pushes. Exact O06
+remains available at this repository's commit `173b2c9`.
+
+The native corpus changes 19/128,000 colour pixels; the worst reviewed
+checkerboard changes 542/51,200. These are corpus results, not universal error
+bounds. Isolated target builds add 1,632/1,684 flash bytes (native/BGRA),
+144 bytes to the compiler's object stack frame, and no static RAM. Host tests
+and build evidence do not establish physical ESP32 speed or emulator runtime
+qualification. See FSIM PINGO-021, its retained tests and engine ledger.
+
+Final retained validation passes all 64 FSIM tests, both leak-enabled
+ASan/UBSan builds, native execution of the unchanged target probe, and all
+three ESP32 profiles in this worktree. Flash/RAM/stack match the reviewed
+candidate costs exactly. PINGO-006 ancestry is preserved. The emulator module
+and physical hardware validation remain separate, unstarted successor work.
