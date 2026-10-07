@@ -69,6 +69,8 @@ uint8_t getIHexNibble(bool addcrc) {
 	else nibble = input - 'A' + 10;
 	// illegal characters will be dealt with by checksum later
 	return nibble;
+#else
+	return 0; // The userspace hex-loader command is disabled below.
 #endif /* !USERSPACE */
 }
 

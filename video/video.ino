@@ -89,6 +89,9 @@ ESP32Time		rtc(0);							// The RTC
 
 #ifdef PINGO2_TARGET_PROBE
 #include "pingo2_target_probe.h"
+#ifdef USERSPACE
+#include <stdio.h>
+#endif
 #endif
 
 std::unique_ptr<fabgl::Terminal>	Terminal;	// Used for Terminal emulation mode (for CP/M, etc)
@@ -124,7 +127,11 @@ void setup() {
 	#ifdef PINGO2_TARGET_PROBE
 		Pingo2TargetProbeResult pingo2_probe;
 		int pingo2_probe_status = pingo2_target_probe_run(&pingo2_probe);
+		#ifdef USERSPACE
+		fprintf(stderr,
+		#else
 		force_debug_log(
+		#endif
 			"Pingo2 target probe: status=%d render=%d pixels=%lu depth=%lu "
 			"frame=%08lx zeta=%08lx\n\r",
 			pingo2_probe_status,
@@ -134,6 +141,9 @@ void setup() {
 			(unsigned long)pingo2_probe.framebuffer_fnv1a,
 			(unsigned long)pingo2_probe.depth_fnv1a
 		);
+		#ifdef USERSPACE
+		fflush(stderr);
+		#endif
 	#endif
 	debug_log("Setup ran on core %d, busy core is %d\n\r", xPortGetCoreID(), CoreUsage::busiestCore());
 }
