@@ -11,6 +11,7 @@
 #include "buffer_stream.h"
 #include "span.h"
 #include "types.h"
+#include "pingo2_control.h"
 
 using BufferVector = std::vector<std::shared_ptr<BufferStream>, psram_allocator<std::shared_ptr<BufferStream>>>;
 std::unordered_map<uint16_t, BufferVector, std::hash<uint16_t>, std::equal_to<uint16_t>, psram_allocator<std::pair<const uint16_t, BufferVector>>> buffers;

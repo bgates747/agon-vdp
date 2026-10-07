@@ -22,6 +22,9 @@
 #include "vdp_variables.h"
 #include "types.h"
 #include "vdu_stream_processor.h"
+#ifdef PINGO2_SCENE_BRIDGE
+#include "pingo2_bridge.h"
+#endif
 
 // VDU 23, 0, &A0, bufferId; command: Buffered command support
 //
@@ -30,6 +33,9 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 	auto command = readByte_t(); if (command == -1) return;
 
 	switch (command) {
+#ifdef PINGO2_SCENE_BRIDGE
+		case 0x49: bufferUsePingo2(bufferId); break;
+#endif
 		case BUFFERED_WRITE: {
 			auto length = readWord_t(); if (length == -1) return;
 			bufferWrite(bufferId, length);
@@ -259,6 +265,10 @@ void IRAM_ATTR VDUStreamProcessor::vdu_sys_buffered() {
 			bufferRemoveCallback(bufferId, type);
 		}	break;
 		case BUFFERED_DEBUG_INFO: {
+			if (pingoIsControl(bufferId)) {
+				force_debug_log("Pingo2 typed control %u (not a byte buffer)\n\r", bufferId);
+				return;
+			}
 			// force_debug_log("vdu_sys_buffered: debug info stack highwater %d\n\r",uxTaskGetStackHighWaterMark(nullptr));
 			force_debug_log("vdu_sys_buffered: buffer %d, %d streams stored\n\r", bufferId, buffers[bufferId].size());
 			if (buffers[bufferId].empty()) {
@@ -315,6 +325,7 @@ uint32_t VDUStreamProcessor::bufferWrite(uint16_t bufferId, uint32_t length) {
 		return remaining;
 	}
 
+	pingoControlDestroy(bufferId);
 	buffers[bufferId].push_back(std::move(bufferStream));
 	debug_log("bufferWrite: stored stream in buffer %d, length %d, %d streams stored\n\r", bufferId, length, buffers[bufferId].size());
 	return remaining;
@@ -383,6 +394,7 @@ void VDUStreamProcessor::bufferCall(uint16_t callBufferId, AdvancedOffset offset
 }
 
 void VDUStreamProcessor::bufferRemoveUsers(uint16_t bufferId) {
+	pingoControlDestroy(bufferId);
 	// remove all users of the given buffer
 	context->unmapBitmapFromChars(bufferId);
 	clearBitmap(bufferId);
@@ -399,6 +411,7 @@ void VDUStreamProcessor::bufferClear(uint16_t bufferId) {
 	debug_log("bufferClear: buffer %d\n\r", bufferId);
 	if (bufferId == 65535) {
 		buffers.clear();
+		pingoControlDestroyAll();
 		matrixMetadata.clear();
 		resetMouseCursors();
 		resetBitmaps();
@@ -409,6 +422,7 @@ void VDUStreamProcessor::bufferClear(uint16_t bufferId) {
 		resetSamples();
 		return;
 	}
+	pingoControlDestroy(bufferId);
 	auto bufferIter = buffers.find(bufferId);
 	if (bufferIter == buffers.end()) {
 		debug_log("bufferClear: buffer %d not found\n\r", bufferId);
@@ -437,6 +451,7 @@ std::shared_ptr<WritableBufferStream> VDUStreamProcessor::bufferCreate(uint16_t 
 		debug_log("bufferCreate: failed to create buffer %d\n\r", bufferId);
 		return nullptr;
 	}
+	pingoControlDestroy(bufferId);
 	buffers[bufferId].push_back(buffer);
 	debug_log("bufferCreate: created buffer %d, size %d\n\r", bufferId, size);
 	return buffer;
@@ -1206,6 +1221,7 @@ void VDUStreamProcessor::bufferJump(uint16_t bufferId, AdvancedOffset offset) {
 // Target buffer ID can be included in the source list
 //
 void VDUStreamProcessor::bufferCopy(uint16_t bufferId, tcb::span<const uint16_t> sourceBufferIds) {
+	for (auto sourceId : sourceBufferIds) if (pingoIsControl(sourceId)) return;
 	if (bufferId == 65535) {
 		debug_log("bufferCopy: ignoring buffer %d\n\r", bufferId);
 		return;
@@ -1244,6 +1260,8 @@ void VDUStreamProcessor::bufferCopy(uint16_t bufferId, tcb::span<const uint16_t>
 // This is useful for using bitmaps sent in multiple blocks
 //
 void VDUStreamProcessor::bufferConsolidate(uint16_t bufferId) {
+	// A typed control has no byte blocks to consolidate or expose.
+	if (pingoIsControl(bufferId)) return;
 	// Create a new stream big enough to contain all streams in the given buffer
 	// Copy all streams into the new stream
 	// Replace the given buffer with the new stream
@@ -1512,6 +1530,7 @@ void VDUStreamProcessor::bufferReverse(uint16_t bufferId, uint8_t options) {
 // If target buffer is included in the source list it will be skipped to prevent a reference loop
 //
 void VDUStreamProcessor::bufferCopyRef(uint16_t bufferId, tcb::span<const uint16_t> sourceBufferIds) {
+	for (auto sourceId : sourceBufferIds) if (pingoIsControl(sourceId)) return;
 	if (bufferId == 65535) {
 		debug_log("bufferCopyRef: ignoring buffer %d\n\r", bufferId);
 		return;
@@ -1546,6 +1565,7 @@ void VDUStreamProcessor::bufferCopyRef(uint16_t bufferId, tcb::span<const uint16
 // If target buffer is included in the source list it will be skipped.
 //
 void VDUStreamProcessor::bufferCopyAndConsolidate(uint16_t bufferId, tcb::span<const uint16_t> sourceBufferIds) {
+	for (auto sourceId : sourceBufferIds) if (pingoIsControl(sourceId)) return;
 	if (bufferId == 65535) {
 		debug_log("bufferCopyAndConsolidate: ignoring buffer %d\n\r", bufferId);
 		return;
@@ -1567,6 +1587,7 @@ void VDUStreamProcessor::bufferCopyAndConsolidate(uint16_t bufferId, tcb::span<c
 	}
 
 	// Ensure the buffer has 1 block of the correct size
+	pingoControlDestroy(bufferId);
 	auto &buffer = buffers[bufferId];
 	if (buffer.size() != 1 || buffer.front()->size() != length) {
 		bufferRemoveUsers(bufferId);

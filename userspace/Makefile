@@ -14,11 +14,26 @@ FAB_ROOT := $(abspath $(FAB_ROOT))
 GL := $(FAB_ROOT)/src/vdp/userspace-vdp-gl/src
 CRC_ROOT ?= $(ROOT)/.pio/libdeps/esp32dev/CRC
 BUILD := $(ROOT)/video/build/userspace/pingo2
+BRIDGE_DIAGNOSTICS ?= 0
+BRIDGE_TEST ?= 0
+ifeq ($(BRIDGE_DIAGNOSTICS),1)
+BUILD := $(ROOT)/video/build/userspace/pingo2-diagnostics
+endif
+ifeq ($(BRIDGE_TEST),1)
+BUILD := $(BUILD)-test
+endif
 MODULE := $(BUILD)/vdp_pingo2.so
 CPPFLAGS := -DUSERSPACE -DWIFI_TASK_CORE_ID=0 -DPINGO2_TARGET_PROBE=1 -DP2C_PIXEL_RGBA2222=1 \
  -I$(GL) -I$(GL)/dispdrivers -I$(GL)/comdrivers -I$(GL)/userspace-platform \
  -I$(GL)/userspace-platform/matrix -I$(FAB_ROOT)/src/vdp -I$(CRC_ROOT)/src \
  -I$(ROOT)/video -I$(ROOT)/video/pingo2
+CPPFLAGS += -DPINGO2_SCENE_BRIDGE=1
+ifeq ($(BRIDGE_TEST),1)
+CPPFLAGS += -DPINGO2_BRIDGE_TEST=1
+endif
+ifeq ($(BRIDGE_DIAGNOSTICS),1)
+CPPFLAGS += -DPINGO2_BRIDGE_DIAGNOSTICS=1
+endif
 CFLAGS := -std=c11 -O2 -g -fPIC -Wall -Werror=return-type -MMD -MP
 CXXFLAGS := -std=c++17 -O2 -g -fPIC -Wall -Werror=return-type -MMD -MP -pthread
 # Match the tagged userspace-vdp-gl source list. No stock Console8 firmware,
@@ -39,6 +54,7 @@ CRC_SOURCES := CRC16.cpp CRC32.cpp CrcFastReverse.cpp
 OBJECTS := $(BUILD)/pingo2.o $(BUILD)/rust_glue.o $(BUILD)/pingo2_target_probe.o \
  $(GL_SOURCES:%.cpp=$(BUILD)/gl/%.o) $(ENGINE_SOURCES:%.c=$(BUILD)/engine/%.o) \
  $(CRC_SOURCES:%.cpp=$(BUILD)/crc/%.o)
+OBJECTS += $(BUILD)/pingo2_commands.o
 
 .PHONY: all verify smoke FORCE
 all: verify $(MODULE)
@@ -58,6 +74,8 @@ $(BUILD)/pingo2.o: pingo2.cpp Makefile
 $(BUILD)/rust_glue.o: $(FAB_ROOT)/src/vdp/rust_glue.cpp Makefile
 	$(CXX) $(CPPFLAGS) $(CXXFLAGS) -c $< -o $@
 $(BUILD)/pingo2_target_probe.o: $(ROOT)/video/pingo2_target_probe.c Makefile
+	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
+$(BUILD)/pingo2_commands.o: $(ROOT)/video/pingo2_commands.c Makefile
 	$(CC) $(CPPFLAGS) $(CFLAGS) -c $< -o $@
 $(BUILD)/gl/%.o: $(GL)/%.cpp Makefile
 	@mkdir -p "$(@D)"

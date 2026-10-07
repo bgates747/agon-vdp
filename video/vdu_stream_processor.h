@@ -133,6 +133,9 @@ class VDUStreamProcessor {
 		uint32_t bufferWrite(uint16_t bufferId, uint32_t size);
 		void bufferCall(uint16_t bufferId, AdvancedOffset offset);
 		void bufferRemoveUsers(uint16_t bufferId);
+#ifdef PINGO2_SCENE_BRIDGE
+		void bufferUsePingo2(uint16_t bufferId);
+#endif
 		void bufferClear(uint16_t bufferId);
 		std::shared_ptr<WritableBufferStream> bufferCreate(uint16_t bufferId, uint32_t size);
 		void setOutputStream(uint16_t bufferId);

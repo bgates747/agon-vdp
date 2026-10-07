@@ -217,7 +217,8 @@ def main():
         require(not runs or report == runs[0]["result"], "nondeterministic fresh-process result")
         runs.append({"seconds": round(time.monotonic() - started, 3), "result": report})
         print(f"Fresh-process module smoke {run + 1}/3: PASS ({runs[-1]['seconds']} s)")
-    files = [ROOT / p for p in command("git", "-C", str(ROOT), "ls-files", "video").splitlines()]
+    files = [ROOT / p for p in command("git", "-C", str(ROOT), "ls-files",
+             "--cached", "--others", "--exclude-standard", "--", "video").splitlines()]
     files += [p for p in (ROOT / "userspace").iterdir() if p.is_file()]
     identities.update({"vdp_base_commit": command("git", "-C", str(ROOT), "rev-parse", "HEAD"),
                        "owned_source_sha256": closure(ROOT, files),

@@ -286,6 +286,7 @@ void VDUStreamProcessor::createEmptyBitmap(uint16_t bufferId, uint16_t width, ui
 }
 
 void VDUStreamProcessor::createBitmapFromBuffer(uint16_t bufferId, uint8_t format, uint16_t width, uint16_t height) {
+	if (pingoIsControl(bufferId)) return;
 	clearBitmap(bufferId);
 	// TODO unmap bitmap from characters for all contexts
 	context->unmapBitmapFromChars(bufferId);
