@@ -333,6 +333,15 @@ void VDUStreamProcessor::vdu_mode(uint8_t mode) {
 	bufferCallCallbacks(CALLBACK_MODE_CHANGE);
 	// update MOS with new info
 	sendModeInformation();
+#if defined(PINGO2_MEMORY_PREFLIGHT) && !defined(USERSPACE)
+	// P029 physical-only observation: no allocation, wire command or render change.
+	force_debug_log("P029 memory mode=%u error=%d psram_free=%u psram_largest=%u internal_free=%u internal_largest=%u\n\r",
+		(unsigned)videoMode, errVal,
+		(unsigned)heap_caps_get_free_size(MALLOC_CAP_SPIRAM),
+		(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM),
+		(unsigned)heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT),
+		(unsigned)heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT));
+#endif
 }
 
 // VDU 24 Graphics viewport
