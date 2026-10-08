@@ -39,6 +39,27 @@ static int pingoBorrowBitmap(P2Commands *owner, uint16_t id) {
     if (result != P2CMD_OK) pingoDropBitmap(retained);
     return result;
 }
+struct PingoBufferOwner { std::shared_ptr<BufferStream> backing; };
+static void pingoDropBuffer(void *opaque) {
+    auto owner = static_cast<PingoBufferOwner *>(opaque);
+    owner->~PingoBufferOwner();
+    p2bridge_free(owner);
+}
+static int pingoBorrowBuffer(P2Commands *owner, uint16_t id) {
+    if (!id || id == UINT16_MAX || pingoIsControl(id)) return P2CMD_INVALID;
+    auto found = buffers.find(id);
+    if (found == buffers.end()) return P2CMD_MISSING;
+    if (found->second.size() != 1) return P2CMD_INVALID;
+    auto backing = found->second.front();
+    if (!backing || !backing->getBuffer() || !backing->size()) return P2CMD_INVALID;
+    void *storage = p2bridge_calloc(1, sizeof(PingoBufferOwner));
+    if (!storage) return P2CMD_ALLOC;
+    auto retained = new(storage) PingoBufferOwner{backing};
+    int result = p2cmd_borrow_buffer(owner, id, backing->getBuffer(),
+        backing->size(), 1, retained, pingoDropBuffer);
+    if (result != P2CMD_OK) pingoDropBuffer(retained);
+    return result;
+}
 struct PingoNotice { bool ready = false; uint8_t packet[10] = {}; };
 static void pingoCollectNotice(void *context, uint16_t, const uint8_t packet[10]) {
     auto notice = static_cast<PingoNotice *>(context);
@@ -49,6 +70,7 @@ static void pingoCollectNotice(void *context, uint16_t, const uint8_t packet[10]
 static int pingoLastStatus = P2CMD_OK;
 static uint16_t pingoLastId = 0;
 static unsigned pingoLastCommand = 0;
+static uint64_t pingoReadNs = 0, pingoExecuteNs = 0, pingoNoticeNs = 0;
 #endif
 static void pingoCommandStatus(uint16_t id, unsigned command, int status) {
 #ifdef PINGO2_BRIDGE_DIAGNOSTICS
@@ -59,9 +81,13 @@ static void pingoCommandStatus(uint16_t id, unsigned command, int status) {
 }
 
 void VDUStreamProcessor::bufferUsePingo2(uint16_t id) {
+#ifdef PINGO2_BRIDGE_DIAGNOSTICS
+    uint64_t readStart = p2bridge_now_ns();
+    pingoReadNs = pingoExecuteNs = pingoNoticeNs = 0;
+#endif
     int command = readByte_t();
     if (command < 0) return;
-    uint8_t prefix[4] = {};
+    uint8_t prefix[5] = {}; // ID:u16 + count:u24, never the old four-byte prefix.
     size_t have = 0, wanted = 0;
     bool upload = (command >= 1 && command <= 4) || command == 40;
     if (upload) {
@@ -97,6 +123,10 @@ void VDUStreamProcessor::bufferUsePingo2(uint16_t id) {
         return;
     }
     int result = P2CMD_MISSING;
+#ifdef PINGO2_BRIDGE_DIAGNOSTICS
+    pingoReadNs = p2bridge_now_ns() - readStart;
+    uint64_t executeStart = p2bridge_now_ns();
+#endif
     size_t consumed = 0;
     auto control = pingoControlFind(id);
     PingoNotice notice;
@@ -114,17 +144,23 @@ void VDUStreamProcessor::bufferUsePingo2(uint16_t id) {
             replacement->next = *slot; *slot = replacement;
         } else pingoControlRelease(replacement);
     } else if (command == 0) result = P2CMD_INVALID;
-    else if (command == 49 || command == 50) result = P2CMD_UNSUPPORTED;
+    else if (command == 49) result = P2CMD_UNSUPPORTED;
     else if (command == 39) {
         if (control) { bufferClear(id); result = P2CMD_OK; }
     } else if (control) {
         auto owner = control->owner;
         uint16_t bitmapId = 0;
+        uint16_t sourceId = 0;
+        bool sourceBorrowed = false;
         bool bitmapCommand = command == 5 || command == 38;
         if (bitmapCommand) {
             const auto p = wire + (command == 5 ? 11 : 7);
             bitmapId = uint16_t(p[0]) | uint16_t(p[1]) << 8;
             result = pingoBorrowBitmap(owner, bitmapId);
+        } else if (command == 50) {
+            sourceId = uint16_t(wire[7]) | uint16_t(wire[8]) << 8;
+            result = pingoBorrowBuffer(owner, sourceId);
+            sourceBorrowed = result == P2CMD_OK;
         } else result = P2CMD_OK;
         if (result == P2CMD_OK) {
             if (command == 38) waitPlotCompletion();
@@ -133,12 +169,23 @@ void VDUStreamProcessor::bufferUsePingo2(uint16_t id) {
             p2cmd_completion(owner, nullptr, nullptr);
         }
         if (bitmapCommand) p2cmd_release_bitmap(owner, bitmapId);
+        if (sourceBorrowed) p2cmd_release_buffer(owner, sourceId);
     }
     if (wire != small) p2bridge_free(wire);
+#ifdef PINGO2_BRIDGE_DIAGNOSTICS
+    pingoExecuteNs = p2bridge_now_ns() - executeStart;
+#endif
     pingoCommandStatus(id, command, result);
     /* send_packet may run user VDP callbacks which clear this control.
        Nothing may dereference the control/owner after this point. */
-    if (result == P2CMD_OK && notice.ready)
+    if (result == P2CMD_OK && notice.ready) {
+#ifdef PINGO2_BRIDGE_DIAGNOSTICS
+        uint64_t start = p2bridge_now_ns();
+#endif
         send_packet(PACKET_KEYCODE, sizeof notice.packet, notice.packet);
+#ifdef PINGO2_BRIDGE_DIAGNOSTICS
+        pingoNoticeNs = p2bridge_now_ns() - start;
+#endif
+    }
 }
 #endif

@@ -1,12 +1,13 @@
 # Native Pingo 2 VDP module
 
 This adapter builds the accepted Pingo 2 engine, bounded startup probe and
-PINGO-023 scene bridge plus PINGO-025's R02 integration inside the owned stock VDP firmware, using official Fab
+PINGO-027 transactional scene bridge inside the owned stock VDP firmware, using official Fab
 1.2.5's exact loader glue and userspace compatibility sources. It implements
-the accepted Pingo-only 0x49 commands 0–41, 43–48 and 51–55, not Wolf or the
-deferred transaction features. Commands 22–25 now use signed i24 positions
-and 53 unsigned u24 far distance: regenerate clients; do not mix P023 streams
-with this parser. Lighting/solid-face behavior is the accepted P024 R02 engine.
+the accepted Pingo-only 0x49 commands 0–41, 43–48 and 50–55, not Wolf or
+retired dithering. Native tooling revision 30 pins PINGO-030's numeric widths;
+it is not a wire opcode or negotiation mechanism. Regenerate every client:
+historical P023/P025 streams are incompatible. Lighting/solid-face behavior
+remains the exact accepted P024 R02 engine.
 A successful native test does not qualify
 stock-MOS client handling, emulator visuals or physical hardware.
 
@@ -69,8 +70,9 @@ physical qualification. No profile is created or launched by this build target.
 ## Scene bridge qualification
 
 `video/pingo2_commands.c` is the plain-C scene/resource owner, adapted from
-fsim's accepted PINGO-022 owner, with P024's accepted lighting/far/camera
-changes. The engine is the exact 41-file R02 closure pinned by `smoke.py`.
+fsim's accepted PINGO-026 transaction/PINGO-030 wire owner, preserving target
+allocation and borrowed bitmap hooks. The engine is the exact 41-file R02
+closure pinned by `smoke.py`.
 `pingo2_control.h` keeps typed controls in a private checked-allocation list;
 they are never mutable ordinary byte buffers. Canonical buffer mutations
 destroy affected controls or reject typed sources. `pingo2_bridge.h` drains
@@ -92,3 +94,37 @@ ESP32 `esp32dev-pingo2` enables the bridge; ordinary `esp32dev` excludes both
 engine and bridge. The retained BGRA8888/native startup probe profiles also
 exclude the command owner. New bridge allocations use checked PSRAM-aware
 allocation; this does not retrofit or qualify every stock VDP STL allocator.
+
+## P027 wire, transaction and diagnostic boundaries
+
+1. IDs and indices stay u16. Position arrays use i24/32767; translations
+   (14–17, 22–25, 34–37, 52) use i24 times 256/32767. Object/scene scales
+   are u24/256. Command 53 far is u24 whole metres; 54 near is u24/256 plus
+   unchanged u16 FOV/16384. Counts in 1–4, 40 and 50 are u24. Position/UV
+   extents remain bounded to 65536 by u16 indices; triangle-entry counts may
+   exceed 65535. No ambiguous old-width fallback exists.
+2. Command 50 has a 16-byte payload: source/mesh u16 followed by four u24
+   counts. The source must be one consolidated ordinary buffer, ID 1–65534,
+   of exact packed length 9V+2I+4UV+2UI. Typed controls are never sources.
+   A temporary retained BufferStream wrapper borrows its bytes without a
+   second whole-source copy. Validate shared/private UVs and flat selectors,
+   stage four owned arrays, prepare bounds, then atomically refresh every
+   instance view. Rejection preserves the live mesh and all old output.
+   Release the source wrapper after either result; its stock bytes are unchanged.
+3. Mutation is rejected while the actual renderer is busy. Completion runs
+   after publication and return to idle; stock packet callbacks may replace
+   or destroy the control. No control access follows `send_packet`.
+4. Diagnostic clocks are nanoseconds (ESP32 microsecond clock multiplied by
+   1000, not nanosecond accuracy). Separate parser receive/execute/notice,
+   owner upload/validation/stage/commit/notification, and frame prepare/render/
+   output clocks; log I/O is outside measured rendering. Work counts are
+   submitted instance vertices/triangles, not rasterized fragments. Owner
+   requested/staged bytes exclude root, borrowed stock data and platform
+   metadata; platform counters include bridge wrappers and diagnostic headers,
+   not stock STL/PSRAM allocator overhead. Neither measures physical headroom.
+   Diagnostics-off returns zero clocks/hashes/counters and identical pixels.
+5. The consuming fsim `vdp_commands.py`, `check_review.py`, and leak-enabled
+   `check_vdp_owner.py` (also `--no-diagnostics`) qualify the parser, source
+   aliases, failure points, seeded lifecycles and generated application streams.
+   P027 freezes a new build candidate; P028 owns deployment and actual MOS/
+   keyboard/Author review. No active emulator or physical baseline is replaced.

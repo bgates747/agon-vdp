@@ -95,6 +95,37 @@ extern "C" int pingo2_test_matrices(uint16_t id, uint16_t object, float *out) {
     auto c = pingoControlFind(id);
     return c ? p2cmd_matrices(c->owner, id, object, out) : P2CMD_MISSING;
 }
+extern "C" int pingo2_test_views(uint16_t id, uint16_t object, uintptr_t out[3]) {
+    auto c = pingoControlFind(id);
+    return c ? p2cmd_views(c->owner, id, object, out) : P2CMD_MISSING;
+}
+extern "C" int pingo2_test_stats(uint16_t id, P2CommandStats *stats, bool reset) {
+    auto c = pingoControlFind(id);
+    return c ? p2cmd_stats(c->owner, stats, reset) : P2CMD_MISSING;
+}
+extern "C" int pingo2_test_work(uint16_t id, P2CommandWork *work) {
+    auto c = pingoControlFind(id);
+    return c ? p2cmd_work(c->owner, id, work) : P2CMD_MISSING;
+}
+extern "C" size_t pingo2_test_buffer(uint16_t id, uint8_t *target, size_t size) {
+    auto found = buffers.find(id);
+    if (found == buffers.end() || found->second.size() != 1) return 0;
+    auto buffer = found->second.front();
+    if (!buffer) return 0;
+    if (target && size >= buffer->size()) memcpy(target, buffer->getBuffer(), buffer->size());
+    return buffer->size();
+}
+extern "C" int pingo2_test_hook(uint16_t id, P2RenderHook hook, void *context) {
+    auto c = pingoControlFind(id);
+    if (!c) return P2CMD_MISSING;
+    p2cmd_render_hook(c->owner, hook, context);
+    return P2CMD_OK;
+}
+extern "C" int pingo2_test_owner_execute(uint16_t id, const uint8_t *wire,
+    size_t bytes, size_t *used) {
+    auto c = pingoControlFind(id);
+    return c ? p2cmd_execute(c->owner, wire, bytes, used) : P2CMD_MISSING;
+}
 extern "C" unsigned pingo2_test_kinds(uint16_t id) {
     return (pingoIsControl(id) ? 1u : 0u) | (buffers.count(id) ? 2u : 0u) |
         (bitmaps.count(id) ? 4u : 0u) | (fonts.count(id) ? 8u : 0u) |
@@ -107,6 +138,9 @@ extern "C" size_t pingo2_test_live() { return pingoLiveAllocations; }
 extern "C" void pingo2_test_memory(size_t out[3], bool reset) {
     out[0] = pingoLiveBytes; out[1] = pingoPeakBytes; out[2] = pingoLargestAllocation;
     if (reset) { pingoPeakBytes = pingoLiveBytes; pingoLargestAllocation = 0; }
+}
+extern "C" void pingo2_test_clocks(uint64_t out[3]) {
+    out[0] = pingoReadNs; out[1] = pingoExecuteNs; out[2] = pingoNoticeNs;
 }
 #endif
 #endif
