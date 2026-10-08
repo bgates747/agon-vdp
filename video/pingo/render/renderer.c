@@ -269,6 +269,20 @@ static uint8_t flatPatternIlluminationBand(
     return (uint8_t)(scaled + 0.5f);
 }
 
+#if !PINGO_DISABLE_ILLUMINATION
+static inline float faceIllumination(
+        const Renderer * r, Vec4f a, Vec4f b, Vec4f c) {
+    /* Keep the original model-space operands and evaluation order. */
+    Vec3f na = {a.x - b.x, a.y - b.y, a.z - b.z};
+    Vec3f nb = {a.x - c.x, a.y - c.y, a.z - c.z};
+    Vec3f normal = vec3Normalize(vec3Cross(na, nb));
+    float directional =
+        (1.0f + vec3Dot(normal, r->lightDirection)) * 0.5f;
+    directional = MIN(1.0f, MAX(directional, 0.0f));
+    return MAX(r->ambientLight, directional * r->lightIntensity);
+}
+#endif
+
 int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     Object * o = ren.impl;
@@ -412,23 +426,24 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         b = mat4MultiplyVec4( &b, &m);
         c = mat4MultiplyVec4( &c, &m);
 
-        // Calculate face illumination unless this experimental build removes
-        // the lighting path to measure its complete renderer cost.
+        // Preserve one original face normal across every generated clip fan.
+        // Flat-pattern lookup/error handling remains before geometric tests.
+        // Other paths evaluate lighting only at the first surviving fan.
 #if PINGO_DISABLE_ILLUMINATION
         const float diffuseLight = 1.0f;
 #else
+        Vec4f lightA, lightB, lightC;
         float diffuseLight = 1.0f;
+        bool faceLightReady = !applyIllumination;
         if (applyIllumination) {
-            /* Explicit components avoid aliasing Vec4f storage as Vec3f. */
-            Vec3f na = {a.x - b.x, a.y - b.y, a.z - b.z};
-            Vec3f nb = {a.x - c.x, a.y - c.y, a.z - c.z};
-            Vec3f normal = vec3Normalize(vec3Cross(na, nb));
-            float directional =
-                (1.0f + vec3Dot(normal, r->lightDirection)) * 0.5f;
-            directional = MIN(1.0f, MAX(directional, 0.0f));
-            diffuseLight = MAX(
-                r->ambientLight,
-                directional * r->lightIntensity);
+            /* Disabled/self-lit objects never need preserved light operands. */
+            lightA = a;
+            lightB = b;
+            lightC = c;
+            if (flatPatternShaded) {
+                diffuseLight = faceIllumination(r, lightA, lightB, lightC);
+                faceLightReady = true;
+            }
         }
 #endif
 
@@ -626,6 +641,12 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 #endif
             continue;
         }
+#if !PINGO_DISABLE_ILLUMINATION
+        if (!faceLightReady && minX < maxX && minY < maxY) {
+            diffuseLight = faceIllumination(r, lightA, lightB, lightC);
+            faceLightReady = true;
+        }
+#endif
         if (flatPaletteShaded && !flatColorReady) {
             /*
              * Delay the one face-source lookup until at least one clipped fan

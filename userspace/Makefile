@@ -47,6 +47,7 @@ MESH_VALIDATION_TEST_TARGET ?= $(BUILD_DIR)/pingo_mesh_validation_test
 CLIP_TEST_TARGET ?= $(BUILD_DIR)/pingo_clip_test
 DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
 FLAT_PATTERN_TEST_TARGET ?= $(BUILD_DIR)/pingo_flat_pattern_test
+LIGHTING_ORDER_TEST_TARGET ?= $(BUILD_DIR)/pingo_lighting_order_test
 SANITIZER_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_sanitizer_test
 FLAT_PATTERN_SANITIZER_TEST_TARGET ?= \
 	$(BUILD_DIR)/pingo_flat_pattern_sanitizer_test
@@ -349,6 +350,16 @@ $(FLAT_PATTERN_TEST_TARGET): pingo_flat_pattern_test.c \
 	@mkdir -p $(dir $@)
 	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
 		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -lm -o $@
+
+$(LIGHTING_ORDER_TEST_TARGET): pingo_lighting_order_test.c \
+		pingo_renderer_diagnostics_test.c $(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(DIAGNOSTIC_FLAGS) -DP039_EXPECT_DEFERRED=1 -Wall -Werror -O2 -g -std=c11 \
+		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -Wl,--wrap=vec3Normalize -lm -o $@
+
+.PHONY: lighting-order-test
+lighting-order-test: $(LIGHTING_ORDER_TEST_TARGET)
+	$(LIGHTING_ORDER_TEST_TARGET) $(BUILD_DIR)/lighting-order.raw
 
 $(SANITIZER_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 		$(PINGO_C_SOURCE_PATHS) $(ADAPTER_MAKEFILE)

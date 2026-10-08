@@ -194,3 +194,22 @@ Use `--extract oracle.txt` to retain only the canonical `PINGO_TARGET` records.
 The comparator also rejects missing, duplicate, reordered, or non-contiguous
 records. A passing comparison establishes exact color and depth-buffer
 equivalence; it does not replace final visual and hardware qualification.
+
+## Deferred-lighting regression
+
+This branch preserves the rejected FSIM PINGO-039/040 experiment, not an
+accepted performance baseline. The first variant improved physical lit terrain
+4.73% but regressed unlit terrain8.82%; the conditional-operand revision here
+still regressed unlit terrain9.14% (643.467 to702.300ms per render completion).
+The Author parked it because FSIM normally uses unlit rendering. Keep baseline
+`1a78d9886005b7bdc5eee759d24150a16a22a321` for further experiments; do not merge
+this branch into production on the strength of correctness tests alone.
+
+`make FAB_ROOT=/path/to/fab-agon-emulator DIAGNOSTICS=1 lighting-order-test`
+runs the retained renderer cases and 30,000 deterministic states, wrapping
+normalization only at link time. It asserts zero lighting for rejected,
+disabled and self-lit ordinary faces, once per contributing original face,
+including rejection of early clipped fans. The generated `lighting-order.raw`
+is transient exact framebuffer/depth evidence for comparison with the same
+test linked against the preceding renderer; do not commit it. Flat-pattern
+shading retains early validation and is covered by `flat-pattern-test`.
