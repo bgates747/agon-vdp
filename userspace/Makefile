@@ -47,6 +47,8 @@ MESH_VALIDATION_TEST_TARGET ?= $(BUILD_DIR)/pingo_mesh_validation_test
 CLIP_TEST_TARGET ?= $(BUILD_DIR)/pingo_clip_test
 DIAGNOSTICS_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_diagnostics_test
 FLAT_PATTERN_TEST_TARGET ?= $(BUILD_DIR)/pingo_flat_pattern_test
+PLACEMENT_TEST_TARGET ?= $(BUILD_DIR)/pingo_placement_test
+PLACEMENT_ARITHMETIC_TEST_TARGET ?= $(BUILD_DIR)/pingo_placement_arithmetic_test
 SANITIZER_TEST_TARGET ?= $(BUILD_DIR)/pingo_renderer_sanitizer_test
 FLAT_PATTERN_SANITIZER_TEST_TARGET ?= \
 	$(BUILD_DIR)/pingo_flat_pattern_sanitizer_test
@@ -349,6 +351,26 @@ $(FLAT_PATTERN_TEST_TARGET): pingo_flat_pattern_test.c \
 	@mkdir -p $(dir $@)
 	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
 		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -lm -o $@
+
+$(PLACEMENT_TEST_TARGET): pingo_placement_test.c \
+		pingo_renderer_diagnostics_test.c $(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(DIAGNOSTIC_FLAGS) -DP043_EXPECT_SPECIALIZED=1 -Wall -Werror -O2 -g -std=c11 \
+		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) -Wl,--wrap=mat4MultiplyVec4 -lm -o $@
+
+$(PLACEMENT_ARITHMETIC_TEST_TARGET): pingo_placement_test.c \
+		pingo_renderer_diagnostics_test.c $(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(DIAGNOSTIC_FLAGS) -DP043_EXPECT_SPECIALIZED=1 -DP043_TEST_PRIVATE=1 \
+		-Wall -Werror -O2 -g -std=c11 $(COMMON_INCLUDES) $< \
+		$(filter-out $(BUILD_DIR)/pingo/render/renderer.o,$(PINGO_OBJECTS)) \
+		-Wl,--wrap=mat4MultiplyVec4 -lm -o $@
+
+.PHONY: placement-test
+placement-test: $(PLACEMENT_TEST_TARGET) $(PLACEMENT_ARITHMETIC_TEST_TARGET)
+	$(PLACEMENT_TEST_TARGET) $(BUILD_DIR)/placement-render.raw
+	$(PLACEMENT_ARITHMETIC_TEST_TARGET) $(BUILD_DIR)/placement-arithmetic.raw
+	cmp $(BUILD_DIR)/placement-render.raw $(BUILD_DIR)/placement-arithmetic.raw
 
 $(SANITIZER_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 		$(PINGO_C_SOURCE_PATHS) $(ADAPTER_MAKEFILE)

@@ -194,3 +194,19 @@ Use `--extract oracle.txt` to retain only the canonical `PINGO_TARGET` records.
 The comparator also rejects missing, duplicate, reordered, or non-contiguous
 records. A passing comparison establishes exact color and depth-buffer
 equivalence; it does not replace final visual and hardware qualification.
+
+## Placement specialization experiment
+
+This branch starts at original P1 `1a78d98`, without rejected deferred lighting.
+FSIM PINGO-043 specializes only finite diagonal scale/translation model matrices;
+general transforms retain the original path. No mesh/cache/wire change.
+Physical unlit-terrain qualification remains PINGO-045; this is not yet an
+accepted faster renderer.
+
+`make FAB_ROOT=/path/to/fab-agon-emulator DIAGNOSTICS=1 placement-test`
+checks one million exact Vec4 cases, unsupported predicates, 30,000 rendering
+states and link-time-only general-transform call counts. The generated `.raw`
+files are temporary exact color/depth witnesses, not tracked artifacts. Compile
+the same test without `P043_EXPECT_SPECIALIZED` or `P043_TEST_PRIVATE` against
+the original engine for independent renderer comparison. Sanitizers and full
+scene/native/ESP32 qualification are recorded in the owning FSIM task.

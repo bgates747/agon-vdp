@@ -269,6 +269,56 @@ static uint8_t flatPatternIlluminationBand(
     return (uint8_t)(scaled + 0.5f);
 }
 
+/* Private model-stage specialization; positions have passed mesh validation. */
+static bool modelMatrixIsDiagonalAffine(const Mat4 * m) {
+    const float * e = m->elements;
+    if (e[1] != 0 || e[2] != 0 || e[4] != 0 || e[6] != 0 ||
+        e[8] != 0 || e[9] != 0 || e[12] != 0 || e[13] != 0 ||
+        e[14] != 0 || e[15] != 1) {
+        return false;
+    }
+    for (unsigned row = 0; row < 3; ++row) {
+        const float scale = e[row * 5];
+        const float translation = e[row * 4 + 3];
+        if (!isfinite(scale) || !isfinite(translation) ||
+            (translation == 0 && signbit(translation))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+#if defined(__GNUC__) && !defined(__clang__)
+/* Keep this rounding boundary local; caller/raster compiler options stay put. */
+__attribute__((noinline, optimize("fp-contract=off")))
+#endif
+static Vec4f modelTransformDiagonalAffine(const Vec4f * v, const Mat4 * m) {
+    const float * e = m->elements;
+    /*
+     * Preserve mat4MultiplyVec4's float product and double final addition.
+     * For finite vertices, discarded zero products cannot change a nonzero
+     * sum; a +0 translation erases any intermediate signed-zero difference.
+     * Negative-zero translations use the general path. No matrix fusion.
+     */
+    /* GCC's local rule avoids volatile-memory fences on the qualified target. */
+#if defined(__GNUC__) && !defined(__clang__)
+    const float x = v->x * e[0];
+    const float y = v->y * e[5];
+    const float z = v->z * e[10];
+#else
+    /* Conservative portable rounding fallback for other compilers. */
+    volatile float x = v->x * e[0];
+    volatile float y = v->y * e[5];
+    volatile float z = v->z * e[10];
+#endif
+    return (Vec4f){
+        (float)((double)x + (double)e[3]),
+        (float)((double)y + (double)e[7]),
+        (float)((double)z + (double)e[11]),
+        1.0f
+    };
+}
+
 int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     Object * o = ren.impl;
@@ -312,6 +362,7 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     // MODEL MATRIX
     Mat4 m = mat4MultiplyM( &o->transform, &object_transform  );
+    const bool diagonalModel = modelMatrixIsDiagonalAffine(&m);
 
     // Locally derived from upstream Pingo's transform-composition lineage
     // (notably a0ed0cb). Preserve this port's model-space lighting convention,
@@ -408,9 +459,15 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         Vec4f b =  { ver2->x, ver2->y, ver2->z, 1 };
         Vec4f c =  { ver3->x, ver3->y, ver3->z, 1 };
 
-        a = mat4MultiplyVec4( &a, &m);
-        b = mat4MultiplyVec4( &b, &m);
-        c = mat4MultiplyVec4( &c, &m);
+        if (diagonalModel) {
+            a = modelTransformDiagonalAffine(&a, &m);
+            b = modelTransformDiagonalAffine(&b, &m);
+            c = modelTransformDiagonalAffine(&c, &m);
+        } else {
+            a = mat4MultiplyVec4( &a, &m);
+            b = mat4MultiplyVec4( &b, &m);
+            c = mat4MultiplyVec4( &c, &m);
+        }
 
         // Calculate face illumination unless this experimental build removes
         // the lighting path to measure its complete renderer cost.
