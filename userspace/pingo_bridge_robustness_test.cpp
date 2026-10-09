@@ -2272,6 +2272,82 @@ void testTruncatedUploads(Harness& harness, std::uint32_t baseline) {
         "truncated-upload teardown leaked Pingo resources", harness);
 }
 
+void testVertexCacheOwnership(Harness& h, std::uint32_t baseline) {
+    constexpr std::uint16_t texture = 430, target = 431, mesh = 9, object = 9;
+    auto mode = [&](std::uint16_t control, std::uint8_t value) {
+        auto command = h.pingoPrefix(control, 47);
+        Harness::appendWord(command, mesh); command.push_back(value);
+        h.sendBytes(command);
+    };
+    auto active = [&](std::uint16_t control, std::uint8_t value) {
+        auto command = h.pingoPrefix(control, 51);
+        Harness::appendWord(command, object); command.push_back(value);
+        h.sendBytes(command);
+    };
+    auto initialize = [&](std::uint16_t control) {
+        h.sendPingo(control, 0, {64,64});
+        populateObject(h,control,object,mesh,texture);
+        /* The retained visible far-plane witness has diagonal placement. */
+        h.sendPingo(control,9,{object,UINT16_MAX,UINT16_MAX,UINT16_MAX});
+        h.sendPingoBytes(control,46,{0}); mode(control,1);
+        h.sendPingo(control,53,{8000});
+        auto command = h.pingoPrefix(control,52);
+        Harness::appendWord(command,object);
+        Harness::append24(command,0); Harness::append24(command,0);
+        Harness::append24(command,0xFA2400U); h.sendBytes(command);
+        require(h.synchronize(),"cache fixture initialization",h);
+    };
+    auto render = [&](std::uint16_t control) {
+        h.sendPingo(control,38,{target});
+        require(h.synchronize(),"cache fixture render barrier",h);
+    };
+    h.createBitmap2222(texture,4,4,0xFC);
+    h.createBitmap2222(target,64,64,0);
+    initialize(1120);
+    const auto before = h.ownedAllocations();
+    active(1120,0); render(1120);
+    require(h.ownedAllocations()==before,"inactive object allocated cache",h);
+    active(1120,1); mode(1120,0); render(1120);
+    require(h.ownedAllocations()==before,"textured object allocated cache",h);
+    mode(1120,1); h.sendPingoBytes(1120,46,{1}); render(1120);
+    require(h.ownedAllocations()==before,"lit object allocated cache",h);
+    h.sendPingoBytes(1120,46,{0});
+    auto far = h.pingoPrefix(1120,52); Harness::appendWord(far,object);
+    Harness::append24(far,0x7FFFFFU); Harness::append24(far,0);
+    Harness::append24(far,0xFA2400U); h.sendBytes(far); render(1120);
+    require(h.ownedAllocations()==before,"bounds rejection allocated cache",h);
+    auto restore = h.pingoPrefix(1120,52); Harness::appendWord(restore,object);
+    Harness::append24(restore,0); Harness::append24(restore,0);
+    Harness::append24(restore,0xFA2400U); h.sendBytes(restore);
+    h.failAllocationAfter(0); render(1120);
+    require(h.ownedAllocations()==before,"failed cache allocation changed ownership",h);
+    h.failAllocationAfter(-1); render(1120);
+    require(h.ownedAllocations()==before,"failed cache allocation retried",h);
+    std::uint8_t pixel=0;
+    require(h.bitmapPixel(target,32U*64U+32,&pixel) && pixel==0xFC,
+        "failed cache fallback did not render exact visible witness",h);
+    initialize(1120); /* Recreate clears failed state and restores visible pose. */
+    require(h.synchronize(),"cache recreation barrier",h);
+    const auto recreated=h.ownedAllocations();
+    render(1120);
+    require(h.ownedAllocations()==recreated+1,"cache recreation did not allocate once",h);
+    render(1120); render(1120);
+    require(h.ownedAllocations()==recreated+1,"warm cache allocated again",h);
+    populateObject(h,1120,object,mesh,texture);
+    render(1120);
+    require(h.ownedAllocations()==recreated+1,"mesh/object replacement changed scratch ownership",h);
+    initialize(1121); const auto two=h.ownedAllocations(); render(1121);
+    require(h.ownedAllocations()==two+1,"second control did not own separate cache",h);
+    h.sendPingo(1120,39); h.clearBuffer(1121);
+    require(h.synchronize() && h.ownedAllocations()==baseline,
+        "explicit/generic cache teardown leaked",h);
+    initialize(1120); render(1120);
+    h.clearBuffer(0xFFFF);
+    require(h.synchronize() && h.ownedAllocations()==baseline,
+        "global cache teardown leaked",h);
+    std::puts("P046 lazy/internal ownership, failure suppression, recreation and teardown passed");
+}
+
 } // namespace
 
 int main(int argc, char ** argv) {
@@ -2299,11 +2375,15 @@ int main(int argc, char ** argv) {
     testTeardownAndTextureLifetime(harness, baseline);
     testRegisteredControlIsolation(harness, baseline);
     testTruncatedUploads(harness, baseline);
+    testVertexCacheOwnership(harness, baseline);
 
     require(
         harness.ownedAllocations() == baseline,
         "Pingo robustness suite ended with owned allocations", harness);
     std::puts("Pingo bridge robustness test passed");
     harness.shutdown();
+    // Fab parks detached workers at their next delay after shutdown. Allow
+    // that handoff before process-global streams/controllers are destroyed.
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
     return 0;
 }

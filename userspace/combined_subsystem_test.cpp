@@ -98,6 +98,8 @@ public:
 	void shutdown() {
 		if (m_handle) {
 			m_shutdown();
+			// Let Fab's detached worker reach its shutdown delay before unload.
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
 			dlclose(m_handle);
 			m_handle = nullptr;
 		}

@@ -119,7 +119,7 @@ VDP_GL_CXXFLAGS := \
 	-g \
 	-fPIC \
 	-fdiagnostics-color=always \
-	-std=c++11 \
+	-std=c++17 \
 	-MMD \
 	-MP
 
@@ -371,6 +371,17 @@ placement-test: $(PLACEMENT_TEST_TARGET) $(PLACEMENT_ARITHMETIC_TEST_TARGET)
 	$(PLACEMENT_TEST_TARGET) $(BUILD_DIR)/placement-render.raw
 	$(PLACEMENT_ARITHMETIC_TEST_TARGET) $(BUILD_DIR)/placement-arithmetic.raw
 	cmp $(BUILD_DIR)/placement-render.raw $(BUILD_DIR)/placement-arithmetic.raw
+
+$(BUILD_DIR)/pingo_vertex_cache_test: pingo_vertex_cache_test.c \
+		pingo_renderer_diagnostics_test.c $(PINGO_OBJECTS) $(ADAPTER_MAKEFILE)
+	@mkdir -p $(dir $@)
+	$(CC) $(DIAGNOSTIC_FLAGS) -Wall -Werror -O2 -g -std=c11 \
+		$(COMMON_INCLUDES) $< $(PINGO_OBJECTS) \
+		-Wl,--wrap=mat4MultiplyVec4 -lm -o $@
+
+.PHONY: vertex-cache-test
+vertex-cache-test: $(BUILD_DIR)/pingo_vertex_cache_test
+	$(BUILD_DIR)/pingo_vertex_cache_test
 
 $(SANITIZER_TEST_TARGET): pingo_renderer_diagnostics_test.c \
 		$(PINGO_C_SOURCE_PATHS) $(ADAPTER_MAKEFILE)

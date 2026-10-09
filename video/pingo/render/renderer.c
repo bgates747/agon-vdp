@@ -319,6 +319,29 @@ static Vec4f modelTransformDiagonalAffine(const Vec4f * v, const Mat4 * m) {
     };
 }
 
+static Vec4f cachedClipPosition(
+        PingoVertexCache * cache, uint16_t index, const Vec3f * positions,
+        Mat4 * model, Mat4 * vp, Renderer * r) {
+    const uint32_t slot = index & (PINGO_VERTEX_CACHE_SLOTS - 1);
+    const uint32_t tag = (uint32_t)index + 1;
+    if (cache->tags[slot] == tag) {
+#if PINGO_RENDER_DIAGNOSTICS
+        r->diagnostics.vertex_cache_hits++;
+#endif
+        return cache->clips[slot];
+    }
+    const Vec3f * source = &positions[index];
+    Vec4f value = {source->x, source->y, source->z, 1};
+    value = modelTransformDiagonalAffine(&value, model);
+    value = mat4MultiplyVec4(&value, vp);
+    cache->clips[slot] = value;
+    cache->tags[slot] = tag;
+#if PINGO_RENDER_DIAGNOSTICS
+    r->diagnostics.vertex_cache_misses++;
+#endif
+    return value;
+}
+
 int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
 
     Object * o = ren.impl;
@@ -403,6 +426,19 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         o->material != 0 &&
         o->mesh->shading_mode == MESH_SHADING_FLAT_PALETTE;
     const bool flatShaded = flatPaletteShaded || flatPatternShaded;
+    PingoVertexCache * cache = 0;
+    if (diagonalModel && !r->illuminationEnabled && flatPaletteShaded &&
+        r->acquireVertexCache) {
+        PingoVertexCache * candidate = r->acquireVertexCache(r, backEnd);
+        if (candidate && !candidate->busy) {
+            candidate->busy = 1;
+            memset(candidate->tags, 0, sizeof(candidate->tags));
+            cache = candidate;
+#if PINGO_RENDER_DIAGNOSTICS
+            r->diagnostics.vertex_cache_draws++;
+#endif
+        }
+    }
 #if !PINGO_DISABLE_ILLUMINATION
     const bool applyIllumination =
         r->illuminationEnabled &&
@@ -455,18 +491,27 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
             }
         }
 
-        Vec4f a =  { ver1->x, ver1->y, ver1->z, 1 };
-        Vec4f b =  { ver2->x, ver2->y, ver2->z, 1 };
-        Vec4f c =  { ver3->x, ver3->y, ver3->z, 1 };
-
-        if (diagonalModel) {
-            a = modelTransformDiagonalAffine(&a, &m);
-            b = modelTransformDiagonalAffine(&b, &m);
-            c = modelTransformDiagonalAffine(&c, &m);
+        Vec4f a, b, c;
+        if (cache) {
+            a = cachedClipPosition(cache, o->mesh->pos_indices[i+0],
+                o->mesh->positions, &m, &vp, r);
+            b = cachedClipPosition(cache, o->mesh->pos_indices[i+1],
+                o->mesh->positions, &m, &vp, r);
+            c = cachedClipPosition(cache, o->mesh->pos_indices[i+2],
+                o->mesh->positions, &m, &vp, r);
         } else {
-            a = mat4MultiplyVec4( &a, &m);
-            b = mat4MultiplyVec4( &b, &m);
-            c = mat4MultiplyVec4( &c, &m);
+            a = (Vec4f){ ver1->x, ver1->y, ver1->z, 1 };
+            b = (Vec4f){ ver2->x, ver2->y, ver2->z, 1 };
+            c = (Vec4f){ ver3->x, ver3->y, ver3->z, 1 };
+            if (diagonalModel) {
+                a = modelTransformDiagonalAffine(&a, &m);
+                b = modelTransformDiagonalAffine(&b, &m);
+                c = modelTransformDiagonalAffine(&c, &m);
+            } else {
+                a = mat4MultiplyVec4( &a, &m);
+                b = mat4MultiplyVec4( &b, &m);
+                c = mat4MultiplyVec4( &c, &m);
+            }
         }
 
         // Calculate face illumination unless this experimental build removes
@@ -531,9 +576,11 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         r->diagnostics.triangles_submitted++;
 #endif
 
-        a = mat4MultiplyVec4( &a, &vp);
-        b = mat4MultiplyVec4( &b, &vp);
-        c = mat4MultiplyVec4( &c, &vp);
+        if (!cache) {
+            a = mat4MultiplyVec4( &a, &vp);
+            b = mat4MultiplyVec4( &b, &vp);
+            c = mat4MultiplyVec4( &c, &vp);
+        }
 
 #if PINGO_RENDER_DIAGNOSTICS
         phase_started = rendererDiagnosticsFinishPhase(
@@ -981,6 +1028,9 @@ int renderObject(Mat4 object_transform, Renderer * r, Renderable ren) {
         }
     }
 
+    if (cache) {
+        cache->busy = 0;
+    }
     return 0;
 };
 
@@ -1003,6 +1053,7 @@ int rendererInit(Renderer * r, Vec2i size, BackEnd * backEnd) {
     r->illuminationEnabled = 1;
     memset(&r->flatPatternLibrary, 0, sizeof(r->flatPatternLibrary));
     r->flatPatternLibraryValid = 0;
+    r->acquireVertexCache = 0;
 
 #if PINGO_RENDER_DIAGNOSTICS
     r->diagnostics_clock = 0;

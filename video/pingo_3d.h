@@ -280,6 +280,23 @@ namespace p3d {
 
 } // namespace p3d
 
+/* Clip scratch must stay in byte-addressable internal RAM. No PSRAM retry. */
+static p3d::PingoVertexCache * pingo_owned_vertex_cache() {
+    if (!pingo_allocation_permitted()) {
+        return nullptr;
+    }
+    auto cache = (p3d::PingoVertexCache *)heap_caps_malloc(
+        sizeof(p3d::PingoVertexCache), MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    if (cache) {
+        memset(cache, 0, sizeof(*cache));
+#ifdef USERSPACE
+        pingo_userspace_owned_allocations.fetch_add(1);
+#endif
+    }
+    return cache;
+}
+
+
 #define PINGO_3D_CONTROL_TAG    0x43443350 // "P3DC"
 #define PINGO_RENDER_NOTIFY_DISABLED 0
 #define PINGO_RENDER_NOTIFY_KEYCODE  1
@@ -408,6 +425,9 @@ extern "C" {
 
     p3d::PingoDepth* static_get_zeta_buffer(p3d::Renderer* ren, p3d::BackEnd* backEnd);
 
+    p3d::PingoVertexCache* static_acquire_vertex_cache(
+        p3d::Renderer* ren, p3d::BackEnd* backEnd);
+
 } // extern "C"
 
 typedef struct tag_Pingo3dControl {
@@ -432,6 +452,8 @@ typedef struct tag_Pingo3dControl {
     uint8_t             m_ambient_light;    // Minimum shade; 127 is unity
     uint8_t             m_illumination_enabled; // Zero writes native texture colors
     PingoFlatPatternBinding* m_flat_pattern_binding;
+    p3d::PingoVertexCache* m_vertex_cache;
+    bool m_vertex_cache_failed;
 
     void show_free_ram() {
         debug_log("Free PSRAM: %u\n", heap_caps_get_free_size(MALLOC_CAP_SPIRAM));
@@ -531,6 +553,9 @@ typedef struct tag_Pingo3dControl {
         m_size = 0;
 
         release_flat_pattern_binding();
+        pingo_owned_free(m_vertex_cache);
+        m_vertex_cache = nullptr;
+        m_vertex_cache_failed = false;
 
         if (m_objects) {
             for (auto& entry : *m_objects) {
@@ -2119,6 +2144,7 @@ typedef struct tag_Pingo3dControl {
         auto size = p3d::Vec2i{(p3d::I_TYPE)m_width, (p3d::I_TYPE)m_height};
         p3d::Renderer renderer;
         rendererInit(&renderer, size, &m_backend );
+        renderer.acquireVertexCache = static_acquire_vertex_cache;
         /* Control state is normalized transactionally when command 43 lands. */
         renderer.lightDirection = m_light_direction;
         p3d::rendererSetLightIntensity(&renderer, m_light_intensity);
@@ -2744,6 +2770,17 @@ extern "C" bool pingo_userspace_get_flat_pattern_state(
 #endif
 
 extern "C" {
+
+    p3d::PingoVertexCache* static_acquire_vertex_cache(
+            p3d::Renderer* ren, p3d::BackEnd* backEnd) {
+        (void)ren;
+        auto control = (tag_Pingo3dControl*)backEnd->clientCustomData;
+        if (!control->m_vertex_cache && !control->m_vertex_cache_failed) {
+            control->m_vertex_cache = pingo_owned_vertex_cache();
+            control->m_vertex_cache_failed = !control->m_vertex_cache;
+        }
+        return control->m_vertex_cache;
+    }
 
     void static_init(p3d::Renderer* ren, p3d::BackEnd* backEnd, p3d::Vec4i _rect) {
         //rect = _rect;

@@ -5,6 +5,7 @@
 #include "pixel.h"
 #include "../math/vec4.h"
 #include "../math/vec3.h"
+#include "vertex_cache.h"
 
 #ifndef PINGO_RENDER_DIAGNOSTICS
 #define PINGO_RENDER_DIAGNOSTICS 0
@@ -53,6 +54,9 @@ typedef struct tag_RendererDiagnostics {
     uint64_t raster_ticks;
 
     uint32_t objects;
+    uint32_t vertex_cache_draws;
+    uint32_t vertex_cache_hits;
+    uint32_t vertex_cache_misses;
     uint32_t objects_bounds_tested;
     uint32_t objects_frustum_rejected;
     uint32_t triangles_avoided;
@@ -100,6 +104,13 @@ typedef struct tag_Renderer{
 
     PingoFlatPatternLibrary flatPatternLibrary;
     uint8_t flatPatternLibraryValid;
+
+    /* Optional caller-owned scratch provider. NULL or failed acquisition uses
+     * the uncached path. Called only for eligible objects after bounds reject.
+     * The provider must not mutate scene/source data or return busy scratch
+     * owned by another control. A nested draw of this control falls back. */
+    PingoVertexCache * (*acquireVertexCache)(
+        struct tag_Renderer *, BackEnd *);
 
 #if PINGO_RENDER_DIAGNOSTICS
     /*
